@@ -1,0 +1,11 @@
+# Ignore generated or external results
+/data
+/results
+
+# MacOS Files
+.DS_Store
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class

@@ -1,5 +1,6 @@
 # Ignore generated or external results
 /data
+/data_qflow_v2
 /results
 
 # MacOS Files
@@ -9,3 +10,16 @@
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Any logs from MaskRCNN
+*logs
+
+# Any .ipynb garbage
+*.ipynb_checkpoints
+
+# Any trained weights
+*.pth
+*.h5
+
+# Any generated json
+*vgg.json

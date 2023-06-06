@@ -27,3 +27,4 @@ __pycache__/
 # Ignore detectron2 training files
 *csd
 *output
+*MACOSX

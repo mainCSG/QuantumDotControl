@@ -1,6 +1,6 @@
 # Ignore generated or external results
 /data
-/data_qflow_v2
+*qflow*
 /results
 
 # MacOS Files
@@ -23,3 +23,7 @@ __pycache__/
 
 # Any generated json
 *vgg.json
+
+# Ignore detectron2 training files
+*csd
+*output

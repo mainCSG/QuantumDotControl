@@ -6,8 +6,6 @@ CUDA_VERSION = torch.__version__.split("+")[-1]
 print("torch: ", TORCH_VERSION, "; cuda: ", CUDA_VERSION)
 print("detectron2:", detectron2.__version__)
 
-# Some basic setup:
-# Setup detectron2 logger
 import detectron2
 from detectron2.utils.logger import setup_logger
 setup_logger()
@@ -15,7 +13,6 @@ setup_logger()
 # import some common libraries
 import numpy as np
 import os, json, cv2, random
-# from google.colab.patches import cv2_imshow
 
 # import some common detectron2 utilities
 from detectron2 import model_zoo
@@ -44,7 +41,7 @@ def get_csd_dicts(img_dir):
         record = {}
         
         filename = os.path.join(img_dir, v["filename"])
-        height, width = 100, 100
+        height, width = v["height"], v["width"]
         
         record["file_name"] = filename
         record["image_id"] = idx
@@ -81,6 +78,7 @@ for d in ["train", "val"]:
     DatasetCatalog.register("csd_" + d, lambda d=d: get_csd_dicts(os.path.join(PROCESSED_DATA_DIR,d)))
     MetadataCatalog.get("csd_" + d).set(thing_classes=CLASSES)
     MetadataCatalog.get("csd_" + d).set(thing_colors=[(255,0,0),(0,255,0),(0,0,255)])
+
 csd_metadata = MetadataCatalog.get("csd_train")
 
 from detectron2.engine import DefaultTrainer
@@ -92,13 +90,12 @@ cfg.DATASETS.TEST = ()
 cfg.MODEL.DEVICE = "cpu"
 cfg.DATALOADER.NUM_WORKERS = 0
 # cfg.MODEL.WEIGHTS = model_zoo.get_checkpoint_url("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml")  # Let training initialize from model zoo
-cfg.SOLVER.IMS_PER_BATCH = custom_cfg.batch_num  # This is the real "batch size" commonly known to deep learning people
-cfg.SOLVER.BASE_LR = custom_cfg.learning_rate  # pick a good LR
-cfg.SOLVER.MAX_ITER = custom_cfg.num_epochs # 300 iterations seems good enough for this toy dataset; you will need to train longer for a practical dataset
-cfg.SOLVER.STEPS = []        # do not decay learning rate
-cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128   # The "RoIHead batch size". 128 is faster, and good enough for this toy dataset (default: 512)
-cfg.MODEL.ROI_HEADS.NUM_CLASSES = custom_cfg.num_classes  # only has one class (ballon). (see https://detectron2.readthedocs.io/tutorials/datasets.html#update-the-config-for-new-datasets)
-# NOTE: this config means the number of classes, but a few popular unofficial tutorials incorrect uses num_classes+1 here.
+cfg.SOLVER.IMS_PER_BATCH = custom_cfg.batch_num  
+cfg.SOLVER.BASE_LR = custom_cfg.learning_rate  
+cfg.SOLVER.MAX_ITER = custom_cfg.num_epochs 
+cfg.SOLVER.STEPS = []        
+cfg.MODEL.ROI_HEADS.BATCH_SIZE_PER_IMAGE = 128
+cfg.MODEL.ROI_HEADS.NUM_CLASSES = custom_cfg.num_classes 
 
 os.makedirs(cfg.OUTPUT_DIR, exist_ok=True)
 trainer = DefaultTrainer(cfg) 

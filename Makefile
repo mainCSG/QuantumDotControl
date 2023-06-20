@@ -38,20 +38,39 @@ check_config_file:
 		cp "$(config_file)" "$(csd_data_dir)/config_copy.py"; \
 	fi
 
-download_data: clean
+download_qflow_lite_data: clean
 	mkdir -p $(csd_data_dir)
 	mkdir -p $(csd_data_dir)/raw
 	wget -P $(csd_data_dir) -nc https://data.nist.gov/od/ds/66492819760D3FF6E05324570681BA721894/data_qflow_lite.zip
-	unzip -n $(csd_data_dir)/data_qflow_lite.zip -d $(csd_data_dir)/raw > /dev/null
-	mv -v $(csd_data_dir)/raw/data_qflow_lite/* $(csd_data_dir)/raw > /dev/null
-	rm -rf $(csd_data_dir)/raw/data_qflow_lite
-	rm -rf $(csd_data_dir)/raw/__MACOSX
+	unzip -n $(csd_data_dir)/data_qflow_lite.zip -d $(csd_data_dir) > /dev/null
+	mv -v $(csd_data_dir)/data_qflow_lite/* $(csd_data_dir)/raw > /dev/null
+	rm -rf $(csd_data_dir)/data_qflow_lite
+	rm -rf $(csd_data_dir)/__MACOSX
 
-process_data: download_data check_config_file 
+download_qflow_v2_data: clean
+	mkdir -p $(csd_data_dir)
+	mkdir -p $(csd_data_dir)/raw
+	wget -P $(csd_data_dir) -nc https://data.nist.gov/od/ds/66492819760D3FF6E05324570681BA721894/data_qflow_v2.zip
+	unzip -n $(csd_data_dir)/data_qflow_v2.zip -d $(csd_data_dir) > /dev/null
+	# mv -v $(csd_data_dir)/data_qflow_v2/simulated/sim_normal/* $(csd_data_dir)/raw > /dev/null
+	# mv -v $(csd_data_dir)/data_qflow_v2/simulated/sim_uniform/* $(csd_data_dir)/raw > /dev/null
+	mv -v $(csd_data_dir)/data_qflow_v2/simulated/noiseless_data.hdf5 $(csd_data_dir)/raw > /dev/null
+	rm -rf $(csd_data_dir)/data_qflow_v2
+	rm -rf $(csd_data_dir)/__MACOSX
+
+convert_hdf5_to_npy: download_qflow_lite_data download_qflow_v2_data check_config_file 
+	python ./autotuning/coarse_tuning/src/converter.py $(csd_data_dir) 
+	rm $(csd_data_dir)/raw/noiseless_data.hdf5
+
+process_training_data: convert_hdf5_to_npy
 	python ./autotuning/coarse_tuning/src/process.py $(csd_data_dir) 
 
-annotate_data: process_data
+annotate_training_data: process_training_data
 	python ./autotuning/coarse_tuning/src/annotate_data.py $(csd_data_dir)
 
-coarse_tuning: annotate_data
+training_data: process_training_data annotate_training_data
+
+val_data: clean
+
+coarse_tuning: training_data val_data
 	python ./autotuning/coarse_tuning/src/train_model.py $(csd_data_dir)

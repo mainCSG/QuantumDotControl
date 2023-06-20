@@ -33,27 +33,28 @@ class AnnotateData():
                     self.processed_folder = os.path.join(self.data_folder, "processed/val")
 
             for file in os.listdir(self.processed_folder):
-                filename, ext = os.path.splitext(file)
-
-                if os.path.isfile(os.path.join(self.raw_folder,filename+".npy")):
-                    self.process_npy_file(filename+".npy")
-                elif os.path.isfile(os.path.join(self.raw_folder,filename+".hdf5")):
-                    self.process_hdf5_file(os.path.join(self.raw_folder,filename+".hdf5"))
+                if file.endswith('.jpg'):
+                    filename, ext = os.path.splitext(file)
+                    self.process_npy_file(filename)
 
             self.dump_json()
 
     def process_npy_file(self, npy_file):
 
-        file_path =os.path.abspath(os.path.join(self.processed_folder, npy_file[:-4] + ".jpg"))
+        file_path =os.path.abspath(os.path.join(self.processed_folder, npy_file + ".jpg"))
         # Loads, *.npy file, extracts CSD
-        qflow_data = np.load(os.path.join(self.raw_folder,npy_file), allow_pickle=True).item()
+        qflow_data = np.load(os.path.join(self.raw_folder,npy_file+".npy"), allow_pickle=True).item()
 
         N = len(qflow_data["V_P1_vec"])
         M = len(qflow_data["V_P2_vec"])
 
-        csd_qd_states = np.array([
-            data['state'] for data in qflow_data['output']
-        ]).reshape((N,M))
+        try:
+            csd_qd_states = np.array([
+                data['state'] for data in qflow_data['output']
+            ]).reshape((N,M))
+
+        except TypeError:
+             csd_qd_states = qflow_data['output']['state']
 
         csd_qd_labelled_regions = sk.measure.label(csd_qd_states, background=-1, connectivity=1)
         csd_qd_regions = sk.measure.regionprops(csd_qd_labelled_regions)
@@ -104,20 +105,25 @@ class AnnotateData():
         csd_object = {}
         csd_object["filename"] = file_path
         csd_object["size"] = N * M
+        csd_object["height"] = N 
+        csd_object["width"] = M
         csd_object["regions"] = regions_list
 
         csd_object_list.append(csd_object)
 
-        
         for object in csd_object_list:
              
             filename = object["filename"]
             size = object["size"]
             regions = object["regions"]
+            height = csd_object["height"]
+            width =  csd_object["width"]  
 
             self.json_file[file_path] = {}
             self.json_file[file_path]["filename"] = filename
             self.json_file[file_path]["size"] = size
+            self.json_file[file_path]["height"] = height
+            self.json_file[file_path]["width"] = width
             self.json_file[file_path]["regions"] = {}
 
             index = 0 

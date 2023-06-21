@@ -44,8 +44,6 @@ download_qflow_lite_data: clean
 	wget -P $(csd_data_dir) -nc https://data.nist.gov/od/ds/66492819760D3FF6E05324570681BA721894/data_qflow_lite.zip
 	unzip -n $(csd_data_dir)/data_qflow_lite.zip -d $(csd_data_dir) > /dev/null
 	mv -v $(csd_data_dir)/data_qflow_lite/* $(csd_data_dir)/raw > /dev/null
-	rm -rf $(csd_data_dir)/data_qflow_lite
-	rm -rf $(csd_data_dir)/__MACOSX
 
 download_qflow_v2_data: clean
 	mkdir -p $(csd_data_dir)
@@ -55,8 +53,8 @@ download_qflow_v2_data: clean
 	# mv -v $(csd_data_dir)/data_qflow_v2/simulated/sim_normal/* $(csd_data_dir)/raw > /dev/null
 	# mv -v $(csd_data_dir)/data_qflow_v2/simulated/sim_uniform/* $(csd_data_dir)/raw > /dev/null
 	mv -v $(csd_data_dir)/data_qflow_v2/simulated/noiseless_data.hdf5 $(csd_data_dir)/raw > /dev/null
-	rm -rf $(csd_data_dir)/data_qflow_v2
-	rm -rf $(csd_data_dir)/__MACOSX
+	mv -v $(csd_data_dir)/data_qflow_v2/experimental/exp_large/* $(csd_data_dir)/raw > /dev/null
+	mv -v $(csd_data_dir)/data_qflow_v2/experimental/exp_small/dataset_*/* $(csd_data_dir)/raw > /dev/null
 
 convert_hdf5_to_npy: download_qflow_lite_data download_qflow_v2_data check_config_file 
 	python ./autotuning/coarse_tuning/src/converter.py $(csd_data_dir) 
@@ -64,13 +62,14 @@ convert_hdf5_to_npy: download_qflow_lite_data download_qflow_v2_data check_confi
 
 process_training_data: convert_hdf5_to_npy
 	python ./autotuning/coarse_tuning/src/process.py $(csd_data_dir) 
+	rm -rf $(csd_data_dir)/data_qflow_v2
+	rm -rf $(csd_data_dir)/data_qflow_lite
+	rm -rf $(csd_data_dir)/__MACOSX
 
 annotate_training_data: process_training_data
-	python ./autotuning/coarse_tuning/src/annotate_data.py $(csd_data_dir)
+	python ./autotuning/coarse_tuning/src/annotate_data.py $(csd_data_dir) > /dev/null
 
 training_data: process_training_data annotate_training_data
 
-val_data: clean
-
-coarse_tuning: training_data val_data
+coarse_tuning: training_data 
 	python ./autotuning/coarse_tuning/src/train_model.py $(csd_data_dir)

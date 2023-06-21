@@ -27,6 +27,7 @@ DATA_DIR = sys.argv[1]
 PROCESSED_DATA_DIR = os.path.join(DATA_DIR, "processed")
 MODEL_TRAIN_DATA_DIR = os.path.join(PROCESSED_DATA_DIR,"train")
 MODEL_VAL_DATA_DIR = os.path.join(PROCESSED_DATA_DIR,"val")
+MODEL_TEST_DATA_DIR = os.path.join(PROCESSED_DATA_DIR,"test")
 CLASSES = custom_cfg.classes
 
 from detectron2.structures import BoxMode

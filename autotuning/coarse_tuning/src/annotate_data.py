@@ -28,12 +28,14 @@ class AnnotateData():
             if folder == '.DS_Store':
                 continue
             elif folder == 'train':
-                    self.processed_folder = os.path.join(self.data_folder, "processed/train")
+                self.processed_folder = os.path.join(self.data_folder, "processed/train")
             elif folder == 'val':
-                    self.processed_folder = os.path.join(self.data_folder, "processed/val")
+                self.processed_folder = os.path.join(self.data_folder, "processed/val")
+            elif folder == 'test':
+                self.processed_folder = os.path.join(self.data_folder, "processed/test")
 
             for file in os.listdir(self.processed_folder):
-                if file.endswith('.jpg'):
+                if file.endswith('.jpg') and folder != "test":
                     filename, ext = os.path.splitext(file)
                     self.process_npy_file(filename)
 
@@ -45,8 +47,10 @@ class AnnotateData():
         # Loads, *.npy file, extracts CSD
         qflow_data = np.load(os.path.join(self.raw_folder,npy_file+".npy"), allow_pickle=True).item()
 
-        N = len(qflow_data["V_P1_vec"])
-        M = len(qflow_data["V_P2_vec"])
+        voltage_P1_key = "x" if "d_" in npy_file else "V_P1_vec"
+        voltage_P2_key = "y" if "d_" in npy_file else "V_P2_vec"
+        N = len(qflow_data[voltage_P1_key])
+        M = len(qflow_data[voltage_P2_key])
 
         try:
             csd_qd_states = np.array([
@@ -54,7 +58,7 @@ class AnnotateData():
             ]).reshape((N,M))
 
         except TypeError:
-             csd_qd_states = qflow_data['output']['state']
+            csd_qd_states = np.array(qflow_data['output']['state']).reshape((N,M))
 
         csd_qd_labelled_regions = sk.measure.label(csd_qd_states, background=-1, connectivity=1)
         csd_qd_regions = sk.measure.regionprops(csd_qd_labelled_regions)

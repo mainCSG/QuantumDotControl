@@ -1,5 +1,5 @@
 # Ignore generated or external results
-data*
+./data/*
 *csd*
 
 # MacOS Files

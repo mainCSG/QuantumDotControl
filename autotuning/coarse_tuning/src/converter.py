@@ -12,7 +12,6 @@ class DataConverter():
 
     def convert_files(self):
         # Process files in the raw folder
-
         for file in self.raw_files:
             if file.endswith(".hdf5"):
                 raw_file_path = os.path.join(self.raw_folder, file)

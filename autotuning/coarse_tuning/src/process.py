@@ -48,7 +48,7 @@ class DataProcessor():
                 self.save_processed_file(csd_data, filename)
                 counter += 1
                 if counter % 100 == 0:
-                    print(counter)
+                    print("Processed: ", counter)
 
     def process_npy_file(self, npy_file):
         # Loads, *.npy file, extracts CSD

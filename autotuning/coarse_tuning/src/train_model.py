@@ -60,12 +60,12 @@ def get_csd_dicts(img_dir):
             
             poly = [(x, y) for x, y in zip(px, py)]
             poly = [p for x in poly for p in x]
-
+            category_dict = {"ND": 0, "LD": 1, "CD": 2, "RD": 3, "DD": 4}
             obj = {
                 "bbox": [np.min(px), np.min(py), np.max(px), np.max(py)],
                 "bbox_mode": BoxMode.XYXY_ABS,
                 "segmentation": [poly],
-                "category_id": int(regions["label"]),
+                "category_id": category_dict[regions["label"]],
             }
             objs.append(obj)
         record["annotations"] = objs

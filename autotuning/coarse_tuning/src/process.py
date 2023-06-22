@@ -77,9 +77,8 @@ class DataProcessor():
 
         return charge_sensor_data_norm
     
-
     def save_processed_file(self, csd_data, filename):
-   
+        # save CSD as image
         csd_image = Image.fromarray((255 * csd_data).astype(np.uint8))
         csd_image.save(os.path.join(self.processed_folder, '{}.jpg'.format(filename)))
 

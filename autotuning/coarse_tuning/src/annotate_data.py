@@ -42,9 +42,9 @@ class AnnotateData():
             self.dump_json()
 
     def process_npy_file(self, npy_file):
-        # print(npy_file)
+
         file_path =os.path.abspath(os.path.join(self.processed_folder, npy_file + ".jpg"))
-        # Loads, *.npy file, extracts CSD
+        # Loads, *.npy file, extracts states
         qflow_data = np.load(os.path.join(self.raw_folder,npy_file+".npy"), allow_pickle=True).item()
 
         voltage_P1_key = "x" if "d_" in npy_file else "V_P1_vec"

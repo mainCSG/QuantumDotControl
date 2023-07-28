@@ -25,7 +25,7 @@ class DataProcessor():
                 
                 filename, ext = os.path.splitext(file)
 
-                if "exp" in filename or "d_" in filename:
+                if "exp" in filename:
                         self.processed_folder = os.path.join(self.data_folder, "processed/test")
                         # Create the processed folder if it doesn't exist
                         os.makedirs(self.processed_folder, exist_ok = True)

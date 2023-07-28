@@ -46,8 +46,8 @@ def get_csd_dicts(img_dir):
         
         record["file_name"] = filename
         record["image_id"] = idx
-        record["height"] = height
-        record["width"] = width
+        record["height"] = int(height)
+        record["width"] = int(width)
       
         annos = v["regions"]
         objs = []

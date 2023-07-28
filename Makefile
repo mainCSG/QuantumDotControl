@@ -52,11 +52,11 @@ download_qflow_v2_data: clean
 	unzip -n $(csd_data_dir)/data_qflow_v2.zip -d $(csd_data_dir) > /dev/null
 	# mv -v $(csd_data_dir)/data_qflow_v2/simulated/sim_normal/* $(csd_data_dir)/raw > /dev/null
 	# mv -v $(csd_data_dir)/data_qflow_v2/simulated/sim_uniform/* $(csd_data_dir)/raw > /dev/null
-	mv -v $(csd_data_dir)/data_qflow_v2/simulated/noiseless_data.hdf5 $(csd_data_dir)/raw > /dev/null
+	# mv -v $(csd_data_dir)/data_qflow_v2/simulated/noiseless_data.hdf5 $(csd_data_dir)/raw > /dev/null
 	mv -v $(csd_data_dir)/data_qflow_v2/experimental/exp_large/* $(csd_data_dir)/raw > /dev/null
-	mv -v $(csd_data_dir)/data_qflow_v2/experimental/exp_small/dataset_*/*.npy $(csd_data_dir)/raw > /dev/null
+	# mv -v $(csd_data_dir)/data_qflow_v2/experimental/exp_small/dataset_*/*.npy $(csd_data_dir)/raw > /dev/null
 
-convert_hdf5_to_npy: download_qflow_lite_data download_qflow_v2_data check_config_file 
+convert_hdf5_to_npy: download_qflow_v2_data check_config_file 
 	python ./autotuning/coarse_tuning/src/converter.py $(csd_data_dir) 
 	rm $(csd_data_dir)/raw/noiseless_data.hdf5
 

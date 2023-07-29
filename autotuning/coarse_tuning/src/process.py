@@ -24,8 +24,9 @@ class DataProcessor():
                 raw_file_path = os.path.join(self.raw_folder, file)
                 
                 filename, ext = os.path.splitext(file)
+                numbers_to_include = ["01", "02", "03", "04", "05", "06"]
 
-                if "exp" in filename:
+                if "exp" in filename and filename[-2:] not in numbers_to_include:
                         self.processed_folder = os.path.join(self.data_folder, "processed/test")
                         # Create the processed folder if it doesn't exist
                         os.makedirs(self.processed_folder, exist_ok = True)

@@ -58,7 +58,7 @@ download_qflow_v2_data: clean
 
 convert_hdf5_to_npy: download_qflow_v2_data check_config_file 
 	python ./autotuning/coarse_tuning/src/converter.py $(csd_data_dir) 
-	rm $(csd_data_dir)/raw/noiseless_data.hdf5
+	# rm $(csd_data_dir)/raw/noiseless_data.hdf5
 
 process_training_data: convert_hdf5_to_npy
 	python ./autotuning/coarse_tuning/src/process.py $(csd_data_dir) 

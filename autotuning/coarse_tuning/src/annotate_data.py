@@ -21,6 +21,7 @@ class AnnotateData():
     def __init__(self, data_folder):
         self.data_folder = data_folder
         self.raw_folder = os.path.join(data_folder, "raw")
+        self.custom_folder = os.path.join(data_folder, "custom")
         
     def process_files(self):
         # Process files in the raw folder
@@ -31,6 +32,12 @@ class AnnotateData():
             if folder == '.DS_Store':
                 continue
             elif folder == 'train':
+                custom_json_training_file = os.path.join(self.custom_folder, "train.json")
+                print(custom_json_training_file)
+                with open(custom_json_training_file,'r') as f:
+                    self.json_file = json.load(f)
+                    self.custom_filenames = [key[:-4] for key in self.json_file.keys()]
+ 
                 self.processed_folder = os.path.join(self.data_folder, "processed/train")
             elif folder == 'val':
                 self.processed_folder = os.path.join(self.data_folder, "processed/val")
@@ -46,180 +53,212 @@ class AnnotateData():
 
     def process_npy_file(self, npy_file):
 
-        file_path =os.path.abspath(os.path.join(self.processed_folder, npy_file + ".jpg"))
-        # Loads, *.npy file, extracts states
-        qflow_data = np.load(os.path.join(self.raw_folder,npy_file+".npy"), allow_pickle=True).item()
+        file_name_jpg = npy_file + ".jpg"
 
-        voltage_P1_key = "x" if "d_" in npy_file else "V_P1_vec"
-        voltage_P2_key = "y" if "d_" in npy_file else "V_P2_vec"
-        N = len(qflow_data[voltage_P1_key])
-        M = len(qflow_data[voltage_P2_key])
+        if file_name_jpg not in self.custom_filenames: # no need to do polygon stuff with custom jsons
 
-        if "d_" in npy_file:
+            # Loads, *.npy file, extracts states
+            qflow_data = np.load(os.path.join(self.raw_folder,npy_file+".npy"), allow_pickle=True).item()
 
-            # exp small dataset that is labelled
-            csd_qd_states = self.convert_label_to_region_mask(qflow_data['sensor'], qflow_data['label'])
+            voltage_P1_key = "x" if "d_" in npy_file else "V_P1_vec"
+            voltage_P2_key = "y" if "d_" in npy_file else "V_P2_vec"
+            N = len(qflow_data[voltage_P1_key])
+            M = len(qflow_data[voltage_P2_key])
 
-            background = -1
-            correction = 1
-        else:
-            try:
-                csd_qd_states = np.array([
-                    data['state'] for data in qflow_data['output']
-                ]).reshape((N,M) if N > M else (M,N))
+            if "d_" in npy_file:
+
+                # exp small dataset that is labelled
+                csd_qd_states = self.convert_label_to_region_mask(qflow_data['sensor'], qflow_data['label'])
+
                 background = -1
                 correction = 1
+            else:
+                try:
+                    csd_qd_states = np.array([
+                        data['state'] for data in qflow_data['output']
+                    ]).reshape((N,M) if N > M else (M,N))
+                    background = -1
+                    correction = 1
 
-            except TypeError:
-        
-                csd_qd_states = np.array(qflow_data['output']['state']).reshape((N,M) if N > M else (M,N))
-                background = -1
-                correction = 2
-        
-        csd_qd_labelled_regions = sk.measure.label((correction * csd_qd_states).astype(np.uint8), background=background, connectivity=1)
-
-        csd_qd_regions = sk.measure.regionprops(csd_qd_labelled_regions)
-
-        num_of_predicted_regions = len(csd_qd_regions)
-
-        if num_of_predicted_regions > 7:
-            try:
-                csd_qd_states = np.array([
-                    data['state'] for data in qflow_data['output']
-                ])
-                background = -1
-                correction = 1
-
-            except TypeError:
-                csd_qd_states = np.array(qflow_data['output']['state'])
-                background = -1
-                correction = 2
-                
-            csd_qd_states = csd_qd_states.reshape(M,N)
-
+                except TypeError:
+            
+                    csd_qd_states = np.array(qflow_data['output']['state']).reshape((N,M) if N > M else (M,N))
+                    background = -1
+                    correction = 2
+            
             csd_qd_labelled_regions = sk.measure.label((correction * csd_qd_states).astype(np.uint8), background=background, connectivity=1)
 
             csd_qd_regions = sk.measure.regionprops(csd_qd_labelled_regions)
 
-        csd_object_list = []
-        regions_list = []
-        image_polygon_info_dict = {}
-        image_polygon_info_dict["filename"] = file_path 
-        image_polygon_info_dict["regions"] = []
-        for index in range(len(csd_qd_regions)):
-            region_info = {}
+            num_of_predicted_regions = len(csd_qd_regions)
 
-            region_coords = csd_qd_regions[index].coords
+            if num_of_predicted_regions > 7:
+                try:
+                    csd_qd_states = np.array([
+                        data['state'] for data in qflow_data['output']
+                    ])
+                    background = -1
+                    correction = 1
 
-            # Get boundaries of coordinates
-            temp = {}
-            for row in region_coords:
-                key = row[0]
-                value = row[1]
-                if key not in temp:
-                    temp[key] = [value, value]  # Initialize with the current value
-                else:
-                    temp[key][0] = min(temp[key][0], value)  # Update minimum value
-                    temp[key][1] = max(temp[key][1], value)  # Update maximum value
-            region_coords = np.array([[key, minmax[0]] for key, minmax in temp.items()] + [[key, minmax[1]] for key, minmax in temp.items()])
+                except TypeError:
+                    csd_qd_states = np.array(qflow_data['output']['state'])
+                    background = -1
+                    correction = 2
+                    
+                csd_qd_states = csd_qd_states.reshape(M,N)
 
-            y,x = region_coords.T
+                csd_qd_labelled_regions = sk.measure.label((correction * csd_qd_states).astype(np.uint8), background=background, connectivity=1)
 
-            px = x.tolist()
-            py = y.tolist()
-    
-            poly = [(x, y) for x, y in zip(px, py)]
-            poly = np.array([p for x in poly for p in x]).reshape(-1,2)
-            if len(px) <= 70 or len(py) <= 70:
-                # print("Ignoring polygon from ", npy_file, "because a polygon was too small for detectron2.")
-                continue
+                csd_qd_regions = sk.measure.regionprops(csd_qd_labelled_regions)
 
-            poly_clockwise = self.organize_array_clockwise(poly)
-
-            x0, y0 = self.find_polygon_centroid(poly_clockwise)
-            x0_, y0_ = self.flip_coordinates_horizontal_axis([x0], [y0], axis=csd_qd_states.shape[0]/2)
-            x0_, y0_ = self.flip_coordinates_horizontal_axis(y0_, x0_, axis=csd_qd_states.shape[1]/2)
-            x0_val, y0_val = x0_[0], y0_[0]
-
-            class_dict = {0.0: "ND", -1.0: "ND", 0.5: "LD", 1.0: "CD", 1.5: "RD", 2.0: "DD"}
-            num_of_dots = float(csd_qd_states[csd_qd_states.shape[0] - int(x0_val), csd_qd_states.shape[1] - int(y0_val)])
-            qd_num = class_dict[num_of_dots]
-            
-            region_info['shape_name'] = 'polygon'
-            region_info["all_points_x"] = [coord[0] for coord in poly_clockwise]
-            region_info["all_points_y"] = [coord[1] for coord in poly_clockwise]
-            region_info["class"] = qd_num
-
-            image_polygon_info_dict["regions"].append((poly_clockwise, qd_num))
-
-            regions_list.append(region_info)
-
-
-        csd_object = {}
-        csd_object["filename"] = file_path
-        csd_object["size"] = N * M
-        csd_object["height"] = N 
-        csd_object["width"] = M
-        csd_object["regions"] = regions_list
-
-        csd_object_list.append(csd_object)
-
-        for object in csd_object_list:
-             
-            filename = object["filename"]
-            size = object["size"]
-            regions = object["regions"]
-            height = csd_object["height"]
-            width =  csd_object["width"]  
-
-            self.json_file[file_path] = {}
-            self.json_file[file_path]["filename"] = filename
-            self.json_file[file_path]["size"] = size
-            self.json_file[file_path]["height"] = height
-            self.json_file[file_path]["width"] = width
-            self.json_file[file_path]["regions"] = {}
-
-            index = 0 
-
-            for region in regions:
+            csd_object_list = []
+            regions_list = []
+            image_polygon_info_dict = {}
+            image_polygon_info_dict["filename"] = file_name_jpg 
+            image_polygon_info_dict["regions"] = []
+            for index in range(len(csd_qd_regions)):
                 region_info = {}
-                shape_info = {}
 
-                shape_info["name"] = region["shape_name"]
-                shape_info["all_points_x"] = region["all_points_x"]
-                shape_info["all_points_y"] = region["all_points_y"]
+                region_coords = csd_qd_regions[index].coords
 
-                region_info["shape_attributes"] = shape_info
-                region_info["region_attributes"] = {"label": region["class"]}
+                # Get boundaries of coordinates
+                temp = {}
+                for row in region_coords:
+                    key = row[0]
+                    value = row[1]
+                    if key not in temp:
+                        temp[key] = [value, value]  # Initialize with the current value
+                    else:
+                        temp[key][0] = min(temp[key][0], value)  # Update minimum value
+                        temp[key][1] = max(temp[key][1], value)  # Update maximum value
+                region_coords = np.array([[key, minmax[0]] for key, minmax in temp.items()] + [[key, minmax[1]] for key, minmax in temp.items()])
 
-                self.json_file[file_path]["regions"][str(index)] = region_info
+                y,x = region_coords.T
 
-                index += 1
-            
-        self.json_file[file_path]["file_attributes"] = {}
+                px = x.tolist()
+                py = y.tolist()
+        
+                poly = [(x, y) for x, y in zip(px, py)]
+                poly = np.array([p for x in poly for p in x]).reshape(-1,2)
+                if len(px) <= 70 or len(py) <= 70:
+                    # print("Ignoring polygon from ", npy_file, "because a polygon was too small for detectron2.")
+                    continue
 
-        if "d_" not in file_path:    
+                poly_clockwise = self.organize_array_clockwise(poly)
+
+                x0, y0 = self.find_polygon_centroid(poly_clockwise)
+                x0_, y0_ = self.flip_coordinates_horizontal_axis([x0], [y0], axis=csd_qd_states.shape[0]/2)
+                x0_, y0_ = self.flip_coordinates_horizontal_axis(y0_, x0_, axis=csd_qd_states.shape[1]/2)
+                x0_val, y0_val = x0_[0], y0_[0]
+
+                class_dict = {0.0: "ND", -1.0: "ND", 0.5: "LD", 1.0: "CD", 1.5: "RD", 2.0: "DD"}
+                num_of_dots = float(csd_qd_states[csd_qd_states.shape[0] - int(x0_val), csd_qd_states.shape[1] - int(y0_val)])
+                qd_num = class_dict[num_of_dots]
+                
+                region_info['shape_name'] = 'polygon'
+                region_info["all_points_x"] = [coord[0] for coord in poly_clockwise]
+                region_info["all_points_y"] = [coord[1] for coord in poly_clockwise]
+                region_info["class"] = qd_num
+
+                image_polygon_info_dict["regions"].append((poly_clockwise, qd_num))
+
+                regions_list.append(region_info)
+
+
+            csd_object = {}
+            csd_object["filename"] = file_name_jpg
+            csd_object["size"] = N * M
+            csd_object["height"] = N 
+            csd_object["width"] = M
+            csd_object["regions"] = regions_list
+
+            csd_object_list.append(csd_object)
+
+            for object in csd_object_list:
+                
+                filename = object["filename"]
+                size = object["size"]
+                regions = object["regions"]
+                height = csd_object["height"]
+                width =  csd_object["width"]  
+
+                self.json_file[file_name_jpg] = {}
+                self.json_file[file_name_jpg]["filename"] = filename
+                self.json_file[file_name_jpg]["size"] = size
+                self.json_file[file_name_jpg]["height"] = height
+                self.json_file[file_name_jpg]["width"] = width
+                self.json_file[file_name_jpg]["regions"] = {}
+
+                index = 0 
+
+                for region in regions:
+                    region_info = {}
+                    shape_info = {}
+
+                    shape_info["name"] = region["shape_name"]
+                    shape_info["all_points_x"] = region["all_points_x"]
+                    shape_info["all_points_y"] = region["all_points_y"]
+
+                    region_info["shape_attributes"] = shape_info
+                    region_info["region_attributes"] = {"label": region["class"]}
+
+                    self.json_file[file_name_jpg]["regions"][str(index)] = region_info
+
+                    index += 1
+                
+            self.json_file[file_name_jpg]["file_attributes"] = {}
+
+        else: 
+            image_polygon_info_dict = {}
+            # one of the custom ones, need to create custom image dict
+            image_polygon_info_dict["filename"] = file_name_jpg
+            image_polygon_info_dict["regions"] = []
+            for idx, v in enumerate(self.json_file.values()):
+                if v["filename"] == file_name_jpg:
+                    regions = v["regions"]
+                    for region in regions:
+                        px = region["shape_attributes"]["all_points_x"]
+                        py = region["shape_attributes"]["all_points_y"]
+                        poly = [(x, y) for x, y in zip(px, py)]
+                        poly = np.array([p for x in poly for p in x]).reshape(-1,2)
+                        qd_num = region["region_attributes"]["label"]
+                        image_polygon_info_dict["regions"].append((poly, qd_num))
+
+        if "d_" not in file_name_jpg:    
             self.augment_image(image_polygon_info_dict)
 
-    def augment_image(self, image_polygon_info_dict, num_of_augmented = 5):
+    def augment_image(self, image_polygon_info_dict, num_of_augmented = 6):
         original_image_path = image_polygon_info_dict["filename"]
-        image = cv2.imread(original_image_path)
+        
+
+        image = cv2.imread(os.path.join(self.processed_folder,original_image_path))
         csd_object_list = []
 
         N, M = image.shape[0], image.shape[1]
         augmented_image_polygon_info_dict = {}
         
-        def get_augmentation():
+        def get_exp_data_augmentation():
             return A.Compose([
                 A.VerticalFlip(p=0.7),
-                A.Rotate(limit=5, p=0.8),
-                A.RandomBrightnessContrast(brightness_limit=(0.05,0.25), contrast_limit=(0, 0.1), p=0.8),
-                A.GaussNoise(var_limit=(30.0,110.0), p=0.8),
+                A.RandomBrightnessContrast(brightness_limit=(0.05,0.075), contrast_limit=(0.05, 0.1), p=0.8),
+                A.GaussNoise(var_limit=(0.0,70.0), p=0.8),
+                A.Affine(scale=(1,1.4), p=0.8),
+                A.RandomToneCurve(p=0.8),
+                A.AdvancedBlur(blur_limit=(9,11),p=0.8),
+                A.RingingOvershoot(p=0.5),
+            ], is_check_shapes=False)
+
+        def get_sim_data_augmentation():
+            return A.Compose([
+                A.VerticalFlip(p=0.7),
+                A.RandomBrightnessContrast(brightness_limit=(0.05,0.1), contrast_limit=(0.05, 0.1), p=1),
+                A.GaussNoise(var_limit=(50.0,120.0), p=0.8),
                 A.GridDistortion(distort_limit=0.2, p=0.8),
-                A.Affine(scale=(1,1.3), p=0.9),
-                A.RandomToneCurve(p=0.5),
-                A.AdvancedBlur(p=0.8),
-                A.RingingOvershoot(p=0.5)
+                A.Affine(scale=(1,1.3), p=0.8),
+                A.RandomToneCurve(p=1),
+                A.AdvancedBlur(blur_limit=(9,11),p=1),
+                A.RingingOvershoot(p=0.5),
+                # A.RandomFog(fog_coef_upper=0.4,alpha_coef=0.25,p=0.8)
             ], is_check_shapes=False)
 
         def polygon_to_mask(polygon_coords, image_shape):
@@ -242,19 +281,25 @@ class AnnotateData():
                 return polygons.points[idx]
             else: 
                 return []
-
+            
+        if "exp_large" in original_image_path:
+            num_of_augmented = 50
+            augmentation = get_exp_data_augmentation()
+        else:
+            num_of_augmented = 3
+            augmentation = get_sim_data_augmentation()
 
         for i in range(num_of_augmented):
 
             # Extract the directory and filename parts from the original file path
-            directory, filename_extension = original_image_path.rsplit('/', 1)
-            filename, extension = filename_extension.split('.')
+            # directory, filename_extension = original_image_path.rsplit('/', 1)
+            filename, extension = original_image_path.split('.')
 
             # Append the desired suffix to the filename
             new_filename = filename + f'_augment{i}'
 
             # Create the new file path by concatenating the directory, new filename, and extension
-            new_file_path = f"{directory}/{new_filename}.{extension}"
+            new_file_path = f"{new_filename}.{extension}"
 
             augmented_image_polygon_info_dict["filename"] = new_file_path
 
@@ -264,12 +309,11 @@ class AnnotateData():
             for region in regions:
                 masks_list.append(polygon_to_mask(region[0], image.shape))
 
-            augmentation = get_augmentation()
             augmented = augmentation(image=image, masks=masks_list)
             augmented_image = augmented['image']
             augmented_masks = augmented['masks']
 
-            cv2.imwrite(new_file_path, augmented_image)
+            cv2.imwrite(os.path.join(self.processed_folder, new_file_path), augmented_image)
 
             regions_list = []
             counter = 0

@@ -44,7 +44,7 @@ def get_csd_dicts(img_dir):
         filename = os.path.join(img_dir, v["filename"])
         height, width = v["height"], v["width"]
         
-        record["file_name"] = filename
+        record["file_name"] = os.path.join(img_dir, filename)
         record["image_id"] = idx
         record["height"] = int(height)
         record["width"] = int(width)

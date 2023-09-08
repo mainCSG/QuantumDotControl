@@ -1,7 +1,6 @@
 import sys, os
 import numpy as np
 from PIL import Image
-import config as custom_cfg
 import h5py
 
 class DataConverter():

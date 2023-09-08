@@ -1,6 +1,6 @@
 # Ignore generated or external results
-./data/*
-*csd*
+autotuning/data/csd/*
+!autotuning/data/csd/custom
 
 # MacOS Files
 .DS_Store

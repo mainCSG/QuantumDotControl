@@ -5,6 +5,8 @@ import json
 import cv2
 from imantics import Mask
 import albumentations as A
+import yaml
+import re
 
 class NumpyEncoder(json.JSONEncoder):
     """ Special json encoder for numpy types """
@@ -18,7 +20,15 @@ class NumpyEncoder(json.JSONEncoder):
         return json.JSONEncoder.default(self, obj)
 
 class AnnotateData():
-    def __init__(self, data_folder):
+    def __init__(self, data_folder, model_name, config_path):
+
+        with open(config_path, 'r') as config_yaml:
+            model_config = yaml.load(config_yaml, Loader=yaml.FullLoader)
+            model_config = model_config[model_name]
+            self.model_info = model_config['info']
+            self.model_hyperparams = model_config['hyperparameters']
+
+        self.model_name = model_name
         self.data_folder = data_folder
         self.raw_folder = os.path.join(data_folder, "raw")
         self.custom_folder = os.path.join(data_folder, "custom")
@@ -29,27 +39,34 @@ class AnnotateData():
 
         for folder in sub_folders:
             self.json_file = {}
-            if folder == '.DS_Store':
-                continue
-            elif folder == 'train':
-                custom_json_training_file = os.path.join(self.custom_folder, "train.json")
-                print(custom_json_training_file)
+
+            if folder == 'train':
+                custom_json_training_file = os.path.join(self.custom_folder, self.model_info['custom_annotations_file'])
+
                 with open(custom_json_training_file,'r') as f:
                     self.json_file = json.load(f)
-                    self.custom_filenames = [key[:-4] for key in self.json_file.keys()]
+                    file_name_regexp = r".*\.jpg" 
+                    self.custom_filenames = [re.search(file_name_regexp, key).group() for key in self.json_file.keys()]
  
                 self.processed_folder = os.path.join(self.data_folder, "processed/train")
+
             elif folder == 'val':
                 self.processed_folder = os.path.join(self.data_folder, "processed/val")
             elif folder == 'test':
                 self.processed_folder = os.path.join(self.data_folder, "processed/test")
-
+            else:
+                continue
             for file in os.listdir(self.processed_folder):
                 if file.endswith('.jpg') and folder != "test" and "augment" not in file:
                     filename, ext = os.path.splitext(file)
                     self.process_npy_file(filename)
 
             self.dump_json()
+
+    def tuple_to_unique_number(self, charge_state):
+        prime_numbers = [3, 5]  # List of prime numbers, should be equal to number of charge states
+        unique_number = sum(element * prime_numbers[index] for index, element in enumerate(charge_state))
+        return int(unique_number)
 
     def process_npy_file(self, npy_file):
 
@@ -60,66 +77,57 @@ class AnnotateData():
             # Loads, *.npy file, extracts states
             qflow_data = np.load(os.path.join(self.raw_folder,npy_file+".npy"), allow_pickle=True).item()
 
-            voltage_P1_key = "x" if "d_" in npy_file else "V_P1_vec"
-            voltage_P2_key = "y" if "d_" in npy_file else "V_P2_vec"
-            N = len(qflow_data[voltage_P1_key])
-            M = len(qflow_data[voltage_P2_key])
+            N = len(qflow_data["V_P1_vec"])
+            M = len(qflow_data["V_P2_vec"])
 
-            if "d_" in npy_file:
+            if model_name == "dot_num":
 
-                # exp small dataset that is labelled
-                csd_qd_states = self.convert_label_to_region_mask(qflow_data['sensor'], qflow_data['label'])
-
+                # Data is the QD regions
+                csd_data = np.array(qflow_data['output'][self.model_info['data_key']])
                 background = -1
-                correction = 1
-            else:
-                try:
-                    csd_qd_states = np.array([
-                        data['state'] for data in qflow_data['output']
-                    ]).reshape((N,M) if N > M else (M,N))
-                    background = -1
-                    correction = 1
+                correction = 2 # because the numbers as decimals
+                
+                csd_data_labelled_regions = sk.measure.label((correction * csd_data).astype(np.uint8), background=background, connectivity=1)
 
-                except TypeError:
-            
-                    csd_qd_states = np.array(qflow_data['output']['state']).reshape((N,M) if N > M else (M,N))
-                    background = -1
-                    correction = 2
-            
-            csd_qd_labelled_regions = sk.measure.label((correction * csd_qd_states).astype(np.uint8), background=background, connectivity=1)
+                csd_data_regions = sk.measure.regionprops(csd_data_labelled_regions)
 
-            csd_qd_regions = sk.measure.regionprops(csd_qd_labelled_regions)
+                class_dict = {0.0: "ND", -1.0: "ND", 0.5: "LD", 1.0: "CD", 1.5: "RD", 2.0: "DD"}
 
-            num_of_predicted_regions = len(csd_qd_regions)
 
-            if num_of_predicted_regions > 7:
-                try:
-                    csd_qd_states = np.array([
-                        data['state'] for data in qflow_data['output']
-                    ])
-                    background = -1
-                    correction = 1
+            elif model_name == "charge_state":
 
-                except TypeError:
-                    csd_qd_states = np.array(qflow_data['output']['state'])
-                    background = -1
-                    correction = 2
-                    
-                csd_qd_states = csd_qd_states.reshape(M,N)
+                # Data is the charge state regions
+                csd_data = np.array([self.tuple_to_unique_number(data['charge']) for data in qflow_data['output']]).reshape((N,M) if N > M else (M,N))
+                qd_regimes = np.array([data['state']  for data in qflow_data['output']]).reshape((N,M) if N > M else (M,N))
+                
+                important_charge_states_mask = np.zeros(qd_regimes.shape, dtype=bool)
+                # charge states that matter
+                min_charge = 0
+                max_charge = 2
+                spin_qubit_charge_states = [(i,j) for i in range(min_charge,max_charge + 1) for j in range(min_charge,max_charge + 1)]
+                important_charge_states = [self.tuple_to_unique_number(x) for x in spin_qubit_charge_states]
+                for x in important_charge_states:
+                    important_charge_states_mask |= (csd_data == x)
+                DD_mask = (qd_regimes == 2)
+                
+                csd_data *= DD_mask
+                csd_data *= important_charge_states_mask
+                # this will mask out all of the unneccesary charge states
+                
+                csd_data_labelled_regions = sk.measure.label(csd_data, connectivity=1)
 
-                csd_qd_labelled_regions = sk.measure.label((correction * csd_qd_states).astype(np.uint8), background=background, connectivity=1)
-
-                csd_qd_regions = sk.measure.regionprops(csd_qd_labelled_regions)
+                csd_data_regions = sk.measure.regionprops(csd_data_labelled_regions)
 
             csd_object_list = []
             regions_list = []
             image_polygon_info_dict = {}
             image_polygon_info_dict["filename"] = file_name_jpg 
             image_polygon_info_dict["regions"] = []
-            for index in range(len(csd_qd_regions)):
+            
+            for index in range(len(csd_data_regions)):
                 region_info = {}
 
-                region_coords = csd_qd_regions[index].coords
+                region_coords = csd_data_regions[index].coords
 
                 # Get boundaries of coordinates
                 temp = {}
@@ -137,30 +145,33 @@ class AnnotateData():
 
                 px = x.tolist()
                 py = y.tolist()
-        
-                poly = [(x, y) for x, y in zip(px, py)]
-                poly = np.array([p for x in poly for p in x]).reshape(-1,2)
-                if len(px) <= 70 or len(py) <= 70:
+                
+                if len(px) <= 10 or len(py) <= 10:
                     # print("Ignoring polygon from ", npy_file, "because a polygon was too small for detectron2.")
                     continue
+
+                import matplotlib.pyplot as plt
+
+                poly = [(x, y) for x, y in zip(px, py)]
+                poly = np.array([p for x in poly for p in x]).reshape(-1,2)
+                
 
                 poly_clockwise = self.organize_array_clockwise(poly)
 
                 x0, y0 = self.find_polygon_centroid(poly_clockwise)
-                x0_, y0_ = self.flip_coordinates_horizontal_axis([x0], [y0], axis=csd_qd_states.shape[0]/2)
-                x0_, y0_ = self.flip_coordinates_horizontal_axis(y0_, x0_, axis=csd_qd_states.shape[1]/2)
+                x0_, y0_ = self.flip_coordinates_horizontal_axis([x0], [y0], axis=csd_data.shape[0]/2)
+                x0_, y0_ = self.flip_coordinates_horizontal_axis(y0_, x0_, axis=csd_data.shape[1]/2)
                 x0_val, y0_val = x0_[0], y0_[0]
 
-                class_dict = {0.0: "ND", -1.0: "ND", 0.5: "LD", 1.0: "CD", 1.5: "RD", 2.0: "DD"}
-                num_of_dots = float(csd_qd_states[csd_qd_states.shape[0] - int(x0_val), csd_qd_states.shape[1] - int(y0_val)])
-                qd_num = class_dict[num_of_dots]
+                data_value = float(csd_data[csd_data.shape[0] - int(x0_val), csd_data.shape[1] - int(y0_val)])
+                class_value = class_dict[data_value] if self.model_name == "dot_num" else int(data_value)
                 
                 region_info['shape_name'] = 'polygon'
                 region_info["all_points_x"] = [coord[0] for coord in poly_clockwise]
                 region_info["all_points_y"] = [coord[1] for coord in poly_clockwise]
-                region_info["class"] = qd_num
+                region_info["class"] = class_value
 
-                image_polygon_info_dict["regions"].append((poly_clockwise, qd_num))
+                image_polygon_info_dict["regions"].append((poly_clockwise, class_value))
 
                 regions_list.append(region_info)
 
@@ -221,15 +232,19 @@ class AnnotateData():
                         py = region["shape_attributes"]["all_points_y"]
                         poly = [(x, y) for x, y in zip(px, py)]
                         poly = np.array([p for x in poly for p in x]).reshape(-1,2)
-                        qd_num = region["region_attributes"]["label"]
-                        image_polygon_info_dict["regions"].append((poly, qd_num))
+                        # FIX
+                        if self.model_name == "charge_state":
+                            charge_state_string = region["region_attributes"]["label"]
+                            charge_state_tuple = (int(charge_state_string[1]), int(charge_state_string[3]))
+                            class_value = self.tuple_to_unique_number(charge_state_tuple)
+                        else:
+                            class_value = region["region_attributes"]["label"]
+                        image_polygon_info_dict["regions"].append((poly, class_value))
 
-        if "d_" not in file_name_jpg:    
-            self.augment_image(image_polygon_info_dict)
+        self.augment_image(image_polygon_info_dict)
 
-    def augment_image(self, image_polygon_info_dict, num_of_augmented = 6):
+    def augment_image(self, image_polygon_info_dict):
         original_image_path = image_polygon_info_dict["filename"]
-        
 
         image = cv2.imread(os.path.join(self.processed_folder,original_image_path))
         csd_object_list = []
@@ -257,8 +272,7 @@ class AnnotateData():
                 A.Affine(scale=(1,1.3), p=0.8),
                 A.RandomToneCurve(p=1),
                 A.AdvancedBlur(blur_limit=(9,11),p=1),
-                A.RingingOvershoot(p=0.5),
-                # A.RandomFog(fog_coef_upper=0.4,alpha_coef=0.25,p=0.8)
+                A.RingingOvershoot(p=0.5)
             ], is_check_shapes=False)
 
         def polygon_to_mask(polygon_coords, image_shape):
@@ -283,10 +297,10 @@ class AnnotateData():
                 return []
             
         if "exp_large" in original_image_path:
-            num_of_augmented = 50
+            num_of_augmented = self.model_hyperparams['augments_per_exp_img']
             augmentation = get_exp_data_augmentation()
         else:
-            num_of_augmented = 3
+            num_of_augmented = self.model_hyperparams['augments_per_sim_img']
             augmentation = get_sim_data_augmentation()
 
         for i in range(num_of_augmented):
@@ -304,6 +318,7 @@ class AnnotateData():
             augmented_image_polygon_info_dict["filename"] = new_file_path
 
             regions = image_polygon_info_dict["regions"]
+            # print(regions)
 
             masks_list = []
             for region in regions:
@@ -449,5 +464,7 @@ class AnnotateData():
              json.dump(self.json_file, f, cls=NumpyEncoder)
 
 data_dir = sys.argv[1]
-annotate = AnnotateData(data_dir)
+model_name = sys.argv[2]
+config_path = sys.argv[3]
+annotate = AnnotateData(data_dir, model_name, config_path)
 annotate.process_files()    

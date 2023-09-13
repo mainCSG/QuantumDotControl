@@ -36,26 +36,30 @@ class AnnotateData():
     def process_files(self):
         # Process files in the raw folder
         sub_folders = os.listdir(os.path.join(self.data_folder, "processed"))
+        
+        custom_json_training_file = os.path.join(self.custom_folder, self.model_info['custom_annotations_file'])
+
+        with open(custom_json_training_file,'r') as f:
+            custom_train_json = json.load(f)
+            file_name_regexp = r".*\.jpg" 
+            self.custom_filenames = [re.search(file_name_regexp, key).group() for key in custom_train_json.keys()]
 
         for folder in sub_folders:
             self.json_file = {}
 
             if folder == 'train':
-                custom_json_training_file = os.path.join(self.custom_folder, self.model_info['custom_annotations_file'])
-
-                with open(custom_json_training_file,'r') as f:
-                    self.json_file = json.load(f)
-                    file_name_regexp = r".*\.jpg" 
-                    self.custom_filenames = [re.search(file_name_regexp, key).group() for key in self.json_file.keys()]
- 
+                self.json_file = custom_train_json
                 self.processed_folder = os.path.join(self.data_folder, "processed/train")
 
             elif folder == 'val':
                 self.processed_folder = os.path.join(self.data_folder, "processed/val")
+
             elif folder == 'test':
                 self.processed_folder = os.path.join(self.data_folder, "processed/test")
+
             else:
                 continue
+            
             for file in os.listdir(self.processed_folder):
                 if file.endswith('.jpg') and folder != "test" and "augment" not in file:
                     filename, ext = os.path.splitext(file)

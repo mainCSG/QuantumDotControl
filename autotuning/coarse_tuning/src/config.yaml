@@ -48,11 +48,11 @@ charge_state:
 
   hyperparameters:
 
-    learning_rate: 2.5e-4
-    augments_per_sim_img: 2
+    learning_rate: 2.0e-4
+    augments_per_sim_img: 5
     augments_per_exp_img: 50
-    num_epochs: 1
-    batch_num: 1
+    num_epochs: 7000
+    batch_num: 10
     dataset_size: 1001
     train_val_split: 0.8
     batch_size_per_img: 128

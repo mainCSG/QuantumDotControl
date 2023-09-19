@@ -50,7 +50,7 @@ charge_state:
 
     learning_rate: 2.0e-4
     augments_per_sim_img: 5
-    augments_per_exp_img: 50
+    augments_per_exp_img: 100
     num_epochs: 7000
     batch_num: 10
     dataset_size: 1001

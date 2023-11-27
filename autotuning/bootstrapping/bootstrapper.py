@@ -33,6 +33,7 @@ class Bootstrapper:
             self.isNMOS = True
         elif 'pmos' in DUT_csv.lower():
             self.isPMOS = True
+        self.polarity = 1 if self.isNMOS else -1
 
         # Read CSV into proper mapping
         self.DUT_DAC_mapping = self._get_dac_mapping(DUT_csv)
@@ -92,9 +93,8 @@ class Bootstrapper:
         max_current = self.global_turn_on_params['max_current_threshold']
         bias_voltage = self.global_turn_on_params['bias_voltage']
 
-        polarity = 1 if self.isNMOS else -1
         VBias = Quantity(bias_voltage.unit, bias_voltage.unit)
-        dV = Quantity(polarity * step_size.value, step_size.unit)
+        dV = Quantity(self.polarity * step_size.value, step_size.unit)
         min_current = Quantity(min_current.value, min_current.unit)
         max_current = Quantity(max_current.value, max_current.unit)
 
@@ -137,6 +137,9 @@ class Bootstrapper:
                 np.average(self._read_voltage(gate=['ST', 'RB', 'LB'])),
                 unit='mV'
             )
+            if ST_LB_RB_voltage.value > max_voltage.value:
+                raise ValueError(f"ST_LB_RB saturated voltage at {max_voltage.value} V ... terminating.")
+            
             Idc = self._measure_current(['D'])[0]
             currents.append(Idc.value)
 
@@ -145,7 +148,7 @@ class Bootstrapper:
             unit='mV'
         )
 
-        voltages = np.linspace(0, V_saturation.value, np.abs((V_saturation.value)//dV.value))
+        voltages = np.arange(0, V_saturation.value, step_size.value)
         global_turn_on_df = pd.DataFrame({'ST_RB_LB (V)': voltages, 'Idc (A)': currents})
         global_turn_on_df.to_csv('global_turn_on.csv', index=False)
 
@@ -153,12 +156,17 @@ class Bootstrapper:
         fit_mask = (voltages > V_turn_on)
         X,Y = voltages[fit_mask], currents[fit_mask]
         guess = (-max(Y), -1, min(X), max(Y))
-
         fit_params, fit_cov = curve_fit(self.funcfit.exp_fit, X, Y, guess)
         a, b, x0, y0 = fit_params
-
         self.global_turn_on_fit_params = [a, b, x0, y0]
+
         self.global_turn_on_dist = V_saturation.value - V_turn_on.value
+        
+        print("GLOBAL TURN ON INFO: ")
+        print(f"{min_current.value} ({min_current.unit}) @ {V_turn_on}")
+        print(f"{max_current.value} ({max_current.unit}) @ {V_saturation}")
+        print(f"Turn on distance: {self.global_turn_on_dist}")
+        print(f"Fit Parameter(s): a = {a}, b = {b}, (x0, y0) = ({x0}, {y0})")
 
     def _isolate_channel(self):
         pass
@@ -196,7 +204,7 @@ class Bootstrapper:
         DAC_list = [self.DUT_DAC_mapping[g] for g in gate]
         for dac in DAC_list:
             cur_voltage = self.station.ivvi._get_dac(dac)
-            if cur_voltage < 0.4:
+            if cur_voltage < 400: #mV
                 return [Quantity(0, unit='A')]
             else:
                 return [Quantity(cur_voltage / 1e9, unit='A')]

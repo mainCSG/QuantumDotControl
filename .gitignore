@@ -1,4 +1,5 @@
 # Ignore generated or external results
+autotuning/bootstrapping/notebooks/data/*
 autotuning/data/csd/*
 !autotuning/data/csd/custom
 

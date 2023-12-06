@@ -1,6 +1,7 @@
 # Ignore generated or external results
 autotuning/bootstrapping/notebooks/data/*
 autotuning/data/csd/*
+charge_noise/data
 !autotuning/data/csd/custom
 
 # MacOS Files

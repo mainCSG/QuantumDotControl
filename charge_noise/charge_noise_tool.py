@@ -3,7 +3,7 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseButton
-from matplotlib.widgets import Button
+from matplotlib.widgets import Button, Slider, TextBox
 
 import os
 
@@ -16,7 +16,7 @@ import scipy
 class ChargeNoiseExtractor:
     def __init__(self) -> None:
         e, h = 1.602176634e-19, 6.62607015e-34 
-        self.G0 = 1e-7 * 2 * e**2 / h # Siemans (S)
+        self.G0 = 2 * e**2 / h # Siemans (S)
 
     def get_VST_for_Gmax(self, VST: np.array, ISD: np.array, VSD: float, plot=False):
         ISD_filtered = scipy.ndimage.gaussian_filter1d(ISD, sigma=1)
@@ -25,7 +25,7 @@ class ChargeNoiseExtractor:
 
         maxima = scipy.signal.argrelextrema(G_filtered, np.greater)[0]
 
-        maxima = maxima[G_filtered[maxima] >= self.G0]
+        maxima = maxima[G_filtered[maxima] >= 1e-7 * self.G0]
         max_VST_index = maxima[np.argmax(G_filtered[maxima])]
         
         max_VST = VST[max_VST_index]
@@ -98,7 +98,7 @@ class ChargeNoiseExtractor:
         self._make_interactive(VST_crop, VSD_crop, G_crop, title=r"$G(V_{SD}, V_{ST})$", xlabel=r'$V_{ST}\ (mV)$', ylabel=r'$V_{SD}\ (uV)$')
 
         # Filter for Hough transform
-        G_adjusted = self._adjust_data(G_crop)
+        G_adjusted = self._adjust_data(G_crop,self.G0)
         if automated:
             # Get edges
             G_edges = skimage.feature.canny(G_adjusted, sigma=3)
@@ -183,8 +183,8 @@ class ChargeNoiseExtractor:
         sigX, sigY = 5,5
         return (1/(2 * np.pi * sigX * sigY)) * np.exp(- 0.5* ((x/sigX)**2 + (y/sigY)**2))
 
-    def _adjust_data(self, data):
-        return np.sign(data) * np.log((np.abs(data)/self.G0) + 1)
+    def _adjust_data(self, data, A=None):
+        return np.sign(data) * np.log((np.abs(data)/A) + 1)
     
     def _filter_data(self, data):
         U = self._U(xx,yy)
@@ -229,9 +229,14 @@ class ChargeNoiseExtractor:
         return closest_pairs, inverse_reciprocal_sums
 
     def _make_interactive(self,x,y,data, title='', xlabel='', ylabel=''):
-        # Filter for Hough transform
-        data = self._adjust_data(data)
-        plt.imshow(data,
+        # Create initial figure and axis
+        fig, ax = plt.subplots()
+        plt.subplots_adjust(bottom=0.25)  # Adjust the bottom to make room for the slider
+        # Add a slider to control the value parameter
+        ax_slider = plt.axes([0.25, 0.1, 0.65, 0.03])
+        slider = Slider(ax_slider, r'$G_{filter} = 10^{x}G_0$  ', -2, 7, valstep=0.1, valinit=np.log10(1/self.G0), color='black', initcolor='white')
+
+        im = ax.imshow(data,
                    origin='lower',
                    aspect='auto',
                    cmap='gray',
@@ -246,46 +251,54 @@ class ChargeNoiseExtractor:
         slopes = []
         lever_arms = []
 
+
+        # Define a function to update the data based on the slider value
+        def update(val):
+            value = (10**(slider.val)) * self.G0
+            updated_data = self._adjust_data(data, value)
+            im.set_array(updated_data)
+            fig.canvas.draw_idle()
+
         def on_pick(event):
             global points, click_counter, slopes, lever_arms
-            if event.button is MouseButton.LEFT:
-                click_counter += 1
-            if click_counter > 2:
-                click_counter = 1
-                points = [event.xdata, event.ydata]
+            if (event.inaxes != ax_slider):
+                if event.button is MouseButton.LEFT:
+                    click_counter += 1
+                if click_counter > 2:
+                    click_counter = 1
+                    points = [event.xdata, event.ydata]
+                else:
+                    points.extend([event.xdata, event.ydata])
+                    if click_counter == 2:
+                        slope = calculate_slope()
+                        slopes.append(slope)
+                        text,line_data = plot_line(points, slope)
+                        points = []
+                        click_counter = 0
 
-            else:
-                points.extend([event.xdata, event.ydata])
-                if click_counter == 2:
-                    slope = calculate_slope()
-                    slopes.append(slope)
-                    text,line_data = plot_line(points, slope)
-                    points = []
-                    click_counter = 0
+                    if len(slopes) == 2:
+                        lever_arm = 1/(np.abs(1/slopes[0]) + np.abs(1/slopes[1]))
+                        lever_arms.append(lever_arm)
 
-                if len(slopes) == 2:
-                    lever_arm = 1/(np.abs(1/slopes[0]) + np.abs(1/slopes[1]))
-                    lever_arms.append(lever_arm)
+                        text.append(f'\u03B1{len(lever_arms)} -> {round(lever_arm,3)} (eV/V)')
+                        self._pprint(text)
+                        
+                        click_counter = 0
+                        slopes = []
+                        points = []
 
-                    text.append(f'\u03B1{len(lever_arms)} -> {round(lever_arm,3)} (eV/V)')
-                    self._pprint(text)
-                    
-                    click_counter = 0
-                    slopes = []
-                    points = []
+                        os.system('cls' if os.name == 'nt' else 'clear')
 
-                    os.system('cls' if os.name == 'nt' else 'clear')
-
-                    statistics = [
-                        f'\u03B1avg -> {round(np.mean(lever_arms),3)} (eV/V)',
-                        f'\u03C3(\u03B1) -> {round(np.std(lever_arms),3)} (eV/V)',
-                    ]
-                    self._pprint(statistics)
+                        statistics = [
+                            f'\u03B1avg -> {round(np.mean(lever_arms),3)} (eV/V)',
+                            f'\u03C3(\u03B1) -> {round(np.std(lever_arms),3)} (eV/V)',
+                        ]
+                        self._pprint(statistics)
 
         def plot_line(points, slope):
             x1, y1, x2, y2 = points
-            plt.plot([x1, x2], [y1, y2], 'ro-' if slope > 0 else 'bo-')
-            plt.draw()
+            ax.plot([x1, x2], [y1, y2], 'ro-' if slope > 0 else 'bo-')
+            fig.canvas.draw_idle()
             slope_label = 'ms' if slope > 0 else 'md'
 
             data = [x1,y1,x2,y2,slope]
@@ -301,6 +314,8 @@ class ChargeNoiseExtractor:
             slope = (1e-6*(y2 - y1)) / (1e-3*(x2 - x1))
             return slope
 
+        # Connect the slider's event to the update function
+        slider.on_changed(update)
         plt.connect('button_press_event', on_pick)
         plt.show()
             

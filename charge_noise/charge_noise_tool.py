@@ -3,7 +3,7 @@ import numpy as np
 
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseButton
-from matplotlib.widgets import Button, Slider, TextBox
+from matplotlib.widgets import Button, Slider, TextBox, RangeSlider
 
 import os
 
@@ -79,23 +79,13 @@ class ChargeNoiseExtractor:
         VST_min, VST_max = VST_window[0], VST_window[1] 
         VSD_min, VSD_max = VSD_window[0], VSD_window[1] 
 
-        # Create boolean masks for the window
-        VST_mask = (VST_sweep >= VST_min) & (VST_sweep <= VST_max)
-        VSD_mask = (VSD_sweep >= VSD_min) & (VSD_sweep <= VSD_max)
+        ISD_crop, indices = self.crop_data_by_values(ISD_2D, VST_sweep, VSD_sweep, VST_min, VST_max, VSD_min, VSD_max)
+        VST_min_index, VST_max_index, VSD_min_index, VSD_max_index = indices
 
-        VST_crop = VST_sweep[VST_mask]
-        VSD_crop = VSD_sweep[VSD_mask]
-
-        VST_min_index = np.where(VST_sweep == VST_crop[0])[0][0]
-        VST_max_index = np.where(VST_sweep == VST_crop[-1])[0][0]
-        VSD_min_index = np.where(VSD_sweep == VSD_crop[0])[0][0]
-        VSD_max_index = np.where(VSD_sweep == VSD_crop[-1])[0][0]
-
-        ISD_crop = ISD_2D[VSD_min_index:VSD_max_index, VST_min_index:VST_max_index]
-        
         G_crop = np.gradient(ISD_crop)[1]
+        G = np.gradient(ISD_2D)[1]
 
-        self._make_interactive(VST_crop, VSD_crop, G_crop, title=r"$G(V_{SD}, V_{ST})$", xlabel=r'$V_{ST}\ (mV)$', ylabel=r'$V_{SD}\ (uV)$')
+        self._make_interactive(VST_sweep, VSD_sweep, G, title=r"$G(V_{SD}, V_{ST})$", xlabel=r'$V_{ST}\ (mV)$', ylabel=r'$V_{SD}\ (uV)$')
 
         # Filter for Hough transform
         G_adjusted = self._adjust_data(G_crop,self.G0)
@@ -231,38 +221,62 @@ class ChargeNoiseExtractor:
     def _make_interactive(self,x,y,data, title='', xlabel='', ylabel=''):
         # Create initial figure and axis
         fig, ax = plt.subplots()
-        plt.subplots_adjust(bottom=0.25)  # Adjust the bottom to make room for the slider
+        fig.dpi = 250
+        fig.set_size_inches(7,5)
+        plt.subplots_adjust(bottom=0.5)  # Adjust the bottom to make room for the slider
         # Add a slider to control the value parameter
-        ax_slider = plt.axes([0.25, 0.1, 0.65, 0.03])
+        ax_slider = plt.axes([0.205, 0.1, 0.60, 0.03])
+        slider_x_ax = fig.add_axes([0.205, 0.2, 0.60, 0.03])
+        slider_y_ax = fig.add_axes([0.205, 0.3, 0.60, 0.03])
+
+        global x_start, x_end, y_start, y_end
+        x_start, x_end, y_start, y_end = x[0], x[-1], y[0], y[-1]
+        
+        slider_x = RangeSlider(slider_x_ax, "VST (mV)", x[0], x[-1], valstep=1, valinit=(x[0],x[-1]), color='black')
+        slider_y = RangeSlider(slider_y_ax, "VSD (uV)", y[0], y[-1],valstep=10, valinit=(y[0],y[-1]), color='black')
         slider = Slider(ax_slider, r'$G_{filter} = 10^{x}G_0$  ', -2, 7, valstep=0.1, valinit=np.log10(1/self.G0), color='black', initcolor='white')
 
+        data,_ = self.crop_data_by_values(data,x,y,x_start,x_end,y_start,y_end)
         im = ax.imshow(data,
                    origin='lower',
                    aspect='auto',
-                   cmap='gray',
-                   extent=[x[0], x[-1], y[0], y[-1]])
-        plt.title(title)
-        plt.xlabel(xlabel)
-        plt.ylabel(ylabel)
+                   cmap='binary',
+                   extent=[x_start, x_end, y_start, y_end])
+        ax.set_title(title)
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
 
         global points, click_counter, slopes, lever_arms
         click_counter = 0
         points = []
         slopes = []
         lever_arms = []
-
-
+        
         # Define a function to update the data based on the slider value
         def update(val):
+            global y_start, y_end
+            y_start, y_end = slider_y.val
+            global x_start, x_end
+            x_start, x_end = slider_x.val
+
+            new_data,_ = self.crop_data_by_values(data,x,y,x_start,x_end,y_start,y_end)
+
             value = (10**(slider.val)) * self.G0
-            updated_data = self._adjust_data(data, value)
-            im.set_array(updated_data)
+            updated_data = self._adjust_data(new_data, value)
+            im.set_data(updated_data)
+            im.set_extent([x_start, x_end, y_start, y_end])
+
+            ax.set_xlim(x_start,x_end)
+            ax.set_ylim(y_start,y_end)
+
             fig.canvas.draw_idle()
 
         def on_pick(event):
             global points, click_counter, slopes, lever_arms
-            if (event.inaxes != ax_slider):
+            # if (event.inaxes != ax_slider) and (event.inaxes != slider_x_ax) and (event.inaxes != slider_y_ax):
+            if event.inaxes == ax:
                 if event.button is MouseButton.LEFT:
+                    print("click registered", click_counter)
                     click_counter += 1
                 if click_counter > 2:
                     click_counter = 1
@@ -294,9 +308,13 @@ class ChargeNoiseExtractor:
                             f'\u03C3(\u03B1) -> {round(np.std(lever_arms),3)} (eV/V)',
                         ]
                         self._pprint(statistics)
+            else:
+                pass
 
         def plot_line(points, slope):
+            global x_start, x_end, y_start, y_end
             x1, y1, x2, y2 = points
+    
             ax.plot([x1, x2], [y1, y2], 'ro-' if slope > 0 else 'bo-')
             fig.canvas.draw_idle()
             slope_label = 'ms' if slope > 0 else 'md'
@@ -316,10 +334,14 @@ class ChargeNoiseExtractor:
 
         # Connect the slider's event to the update function
         slider.on_changed(update)
+        slider_x.on_changed(update)
+        slider_y.on_changed(update)
         plt.connect('button_press_event', on_pick)
+
         plt.show()
             
     def _pprint(self,lines, alignment_char=None):
+    
         max_line_length = max(len(line) for line in lines)
         box_width = max_line_length + 4  # Adjust the width based on the longest line and padding
         horizontal_line = '┌' + '─' * (box_width - 2) + '┐'
@@ -330,3 +352,20 @@ class ChargeNoiseExtractor:
             padding = ' ' * (max_line_length - len(line))
             print(f'│ {line}{padding} │')
         print(bottom_line)
+
+    def crop_data_by_values(self, data, x, y, x_start, x_end, y_start, y_end):
+
+        # Create boolean masks for the window
+        x_mask = (x >= x_start) & (x <= x_end)
+        y_mask = (y >= y_start) & (y <= y_end)
+
+        x_crop_mask = x[x_mask]
+        y_crop_mask = y[y_mask]
+
+        x_min_index = np.where(x == x_crop_mask[0])[0][0]
+        x_max_index = np.where(x == x_crop_mask[-1])[0][0]
+        y_min_index = np.where(y == y_crop_mask[0])[0][0]
+        y_max_index = np.where(y == y_crop_mask[-1])[0][0]
+
+        data_crop = data[y_min_index:y_max_index, x_min_index:x_max_index]
+        return data_crop, [x_min_index, x_max_index, y_min_index, y_max_index]

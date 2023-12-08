@@ -1,29 +1,17 @@
-from charge_noise_tool import *
+from chargenoiseextractor import *
 
-# import qcodes as qc
-
-# database_path = './data/db_20231121b.db'
-# qc.initialise_or_create_database_at(database_path)
-# Load DataSet by ID
-# dataset_id = 1  # Replace with the actual DataSet ID
-# dataset = qc.load_by_run_spec(captured_run_id=dataset_id)
-
-# # Extract data as a pandas DataFrame
-# data_frame = dataset.get_data_as_pandas_dataframe()
-
-# # Load DataSet by ID
-# dataset_id = 1  # Replace with the actual DataSet ID
-# dataset = qc.load_by_run_spec(captured_run_id=dataset_id)
 import pandas as pd
 import tkinter as tk
 from tkinter import ttk, filedialog
 
 def browse_file():
+    
     file_path = filedialog.askopenfilename(filetypes=[("Data Files", "*.dat")])
     file_path_entry.delete(0, tk.END)
     file_path_entry.insert(0, file_path)
 
     try:
+        
         data_csv = pd.read_csv(file_path, skiprows=[0,2], sep='\t')
         data_df = pd.DataFrame(data_csv)
 

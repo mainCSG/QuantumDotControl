@@ -79,8 +79,11 @@ class ChargeNoiseExtractor:
         VST_min, VST_max = VST_window[0], VST_window[1] 
         VSD_min, VSD_max = VSD_window[0], VSD_window[1] 
 
-        ISD_crop, indices = self.crop_data_by_values(ISD_2D, VST_sweep, VSD_sweep, VST_min, VST_max, VSD_min, VSD_max)
+        ISD_crop, indices = self._crop_data_by_values(ISD_2D, VST_sweep, VSD_sweep, VST_min, VST_max, VSD_min, VSD_max)
         VST_min_index, VST_max_index, VSD_min_index, VSD_max_index = indices
+
+        VSD_crop = VSD_sweep[VSD_min_index:VSD_max_index]
+        VST_crop = VST_sweep[VSD_min_index:VSD_max_index]
 
         G_crop = np.gradient(ISD_crop)[1]
         G = np.gradient(ISD_2D)[1]
@@ -236,7 +239,7 @@ class ChargeNoiseExtractor:
         slider_y = RangeSlider(slider_y_ax, "VSD (uV)", y[0], y[-1],valstep=10, valinit=(y[0],y[-1]), color='black')
         slider = Slider(ax_slider, r'$G_{filter} = 10^{x}G_0$  ', -2, 7, valstep=0.1, valinit=np.log10(1/self.G0), color='black', initcolor='white')
 
-        data,_ = self.crop_data_by_values(data,x,y,x_start,x_end,y_start,y_end)
+        data,_ = self._crop_data_by_values(data,x,y,x_start,x_end,y_start,y_end)
         im = ax.imshow(data,
                    origin='lower',
                    aspect='auto',
@@ -259,7 +262,7 @@ class ChargeNoiseExtractor:
             global x_start, x_end
             x_start, x_end = slider_x.val
 
-            new_data,_ = self.crop_data_by_values(data,x,y,x_start,x_end,y_start,y_end)
+            new_data,_ = self._crop_data_by_values(data,x,y,x_start,x_end,y_start,y_end)
 
             value = (10**(slider.val)) * self.G0
             updated_data = self._adjust_data(new_data, value)
@@ -276,7 +279,6 @@ class ChargeNoiseExtractor:
             # if (event.inaxes != ax_slider) and (event.inaxes != slider_x_ax) and (event.inaxes != slider_y_ax):
             if event.inaxes == ax:
                 if event.button is MouseButton.LEFT:
-                    print("click registered", click_counter)
                     click_counter += 1
                 if click_counter > 2:
                     click_counter = 1
@@ -315,7 +317,7 @@ class ChargeNoiseExtractor:
             global x_start, x_end, y_start, y_end
             x1, y1, x2, y2 = points
     
-            ax.plot([x1, x2], [y1, y2], 'ro-' if slope > 0 else 'bo-')
+            ax.plot([x1, x2], [y1, y2], 'r-' if slope > 0 else 'b-', alpha=0.5, marker='o',markersize=2)
             fig.canvas.draw_idle()
             slope_label = 'ms' if slope > 0 else 'md'
 
@@ -353,7 +355,7 @@ class ChargeNoiseExtractor:
             print(f'│ {line}{padding} │')
         print(bottom_line)
 
-    def crop_data_by_values(self, data, x, y, x_start, x_end, y_start, y_end):
+    def _crop_data_by_values(self, data, x, y, x_start, x_end, y_start, y_end):
 
         # Create boolean masks for the window
         x_mask = (x >= x_start) & (x <= x_end)

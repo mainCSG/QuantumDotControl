@@ -5,13 +5,21 @@ import numpy as np
 import matplotlib.pyplot as plt
 import scipy 
 
+from src.dataprocessor import DataProcessor
+from src.plotter import Plotter
+from src.chargenoiseextractor import ChargeNoiseExtractor
+
 class App:
     def __init__(self, root):
+
+        self.data_processor = DataProcessor()
+        self.plotter = Plotter()
+
         self.root = root
-        self.root.title("Function Selector")
+        self.root.title("Charge Noise")
 
         # Welcome message label
-        welcome_label = ttk.Label(root, text="Welcome to the Function Selector App!")
+        welcome_label = ttk.Label(root, text="Welcome to the Charge Noise App!")
         welcome_label.grid(row=0, column=0, columnspan=3, pady=10)
 
         # Create menu
@@ -106,11 +114,11 @@ class App:
         data = {}
         # print(f"Current Noise function called with file: {file_path}, Run Id: {run_id}, LB: {lb_value}, RB: {rb_value}, VST: {vst_value}, VSD: {vsd_value}, C: {c_value}")
         for run_id in run_ids:
-            t, Iavg = self.parse_db_file(file_path, run_id, is1Dsweep=True)
+            t, Iavg = self.data_processor.parse_db_file(file_path, run_id, is1Dsweep=True)
             data[str(tuple(run_id))] = (t, Iavg, plot_labels[str(tuple(run_id))])
 
         if eval(cb_runids) != []:
-            t, Iavg = self.parse_db_file(file_path, eval(cb_runids), is1Dsweep=True)
+            t, Iavg = self.data_processor.parse_db_file(file_path, eval(cb_runids), is1Dsweep=True)
             offset = np.mean(Iavg, keepdims=True).repeat(len(t[0]))
 
             for key, d in data.items():
@@ -134,24 +142,38 @@ class App:
         run_id = self.get_entry_value("Run-ID")
         
         labels = {str(tuple(eval(run_id))),"Current"}
-        lb, rb, I = self.parse_db_file(file_path, eval(run_id), is2Dsweep=True)
+        lb, rb, I = self.data_processor.parse_db_file(file_path, eval(run_id), is2Dsweep=True)
         
         self.plot_lb_rb_scan(lb, rb, I)
         # print(f"LB-RB Scan function called with file: {file_path} and Run Id: {run_id}")
 
     def coulomb_oscillations_window(self):
-        additional_entries = ["LB (mV)", "RB (mV)", "VSD (mV)", "C (mV)"]
+        additional_entries = ['Run-ID', "LB (mV)", "RB (mV)", "VSD (mV)", "C (mV)"]
         self.create_file_selection_window("Coulomb Oscillations", self.coulomb_oscillations_function, additional_entries)
 
-    def coulomb_oscillations_function(self, file_path, run_id):
-        print(f"Coulomb Oscillations function called with file: {file_path} and Run Id: {run_id}")
+    def coulomb_oscillations_function(self, file_path):
+        vsd_value = self.get_entry_value("VSD (mV)")
+        vst_value = self.get_entry_value("VST (mV)")
+        c_value = self.get_entry_value("C (mV)")
+        run_id = self.get_entry_value("Run-ID")
+        
+        vst, I = self.data_processor.parse_db_file(file_path, eval(run_id), is1Dsweep=True)
+        self.plot_coulomb_oscillations(vst, I, VSD=vsd_value)
 
     def lever_arm_window(self):
-        additional_entries = ["LB (mV)", "RB (mV)", "C (mV)"]
+        additional_entries = ["Run-ID","LB (mV)", "RB (mV)", "C (mV)"]
         self.create_file_selection_window("Lever Arm", self.lever_arm_function, additional_entries)
 
-    def lever_arm_function(self, file_path, run_id):
-        print(f"Lever Arm function called with file: {file_path} and Run Id: {run_id}")
+    def lever_arm_function(self, file_path):
+        vsd_value = self.get_entry_value("VSD (mV)")
+        vst_value = self.get_entry_value("VST (mV)")
+        c_value = self.get_entry_value("C (mV)")
+        run_id = self.get_entry_value("Run-ID")
+        vst, vsd, I = self.data_processor.parse_db_file(file_path, eval(run_id), is2Dsweep=True)
+
+        G = np.gradient(I,np.abs(1e-3*(vst[1] - vst[0])), axis=0)
+
+        self.plotter.interactive2D(vst, vsd, G, title=r"$G(V_{SD}, V_{ST})$", xlabel=r'$V_{ST}\ (mV)$', ylabel=r'$V_{SD}\ (mV)$')
 
     def get_entry_value(self, entry_label):
         # Helper method to retrieve the value from an entry box by label
@@ -161,48 +183,6 @@ class App:
                     if isinstance(child_widget, ttk.Entry) and child_widget.master.winfo_children()[index-1].cget("text") == entry_label:
                         return child_widget.get()
         return None
-
-    def parse_db_file(self, db_file_path, run_id, is1Dsweep=False, is2Dsweep=False):
-
-        qc.initialise_or_create_database_at(db_file_path)
-
-        assert isinstance(run_id, list), "Run ID is not given as a list, double check!"
-
-        if len(run_id) == 1:
-
-            dataset = qc.load_by_run_spec(captured_run_id=run_id[0])
-            params = dataset.parameters.split(',')
-            
-            if is1Dsweep:
-                xname, zname = params
-                x = np.array(dataset.get_parameter_data(xname)[xname][xname])[0]
-                z = np.array(dataset.get_parameter_data(zname)[zname][zname])
-                return x, z
-
-            elif is2Dsweep:
-                xname, yname, zname = params
-                x = np.array(dataset.get_parameter_data(xname)[xname][xname])
-                y = np.array(dataset.get_parameter_data(yname)[yname][yname])
-                z = np.array(dataset.get_parameter_data(zname)[zname][zname])
-                return x,y,z
-            
-        elif len(run_id) == 2:
-            # averaging needs to be done
-
-            if is1Dsweep:
-                run_id_sweep = [i for i in range(run_id[0], run_id[1]+1)]
-
-                datasets = [qc.load_by_run_spec(captured_run_id=run) for run in run_id_sweep]
-                
-                params = datasets[0].parameters.split(',')
-
-                xname, zname = params
-                x = np.array([datasets[index].get_parameter_data(xname)[xname][xname] for index in range(len(datasets))])[0]
-                z = np.array([datasets[index].get_parameter_data(zname)[zname][zname] for index in range(len(datasets))])
-                
-                z = np.mean(z, axis=0)
-
-                return x, z
 
     def plot_current_and_spectrum(self, t, data, sampling_rate):
         fig, (ax1, ax2) = plt.subplots(2, 1, sharex=False)
@@ -235,8 +215,53 @@ class App:
         ax.set_ylabel(r'LB (mV)')
         ax.set_title(r'BB Scan')
         ax.set_xlabel(r'RB (mV)')
-
+        
         plt.tight_layout()  # Adjust layout to prevent overlap
+        plt.show()
+
+    def plot_coulomb_oscillations(self, VST, ISD, VSD=''):
+        
+        ISD_filtered = scipy.ndimage.gaussian_filter1d(ISD, sigma=2)
+        G_raw = np.gradient(ISD, 1e-3 *(VST[1] - VST[0]))
+        G = np.gradient(ISD_filtered, 1e-3 *(VST[1] - VST[0]))
+        G_filtered = scipy.ndimage.gaussian_filter1d(G, sigma=2)
+
+        maxima = scipy.signal.argrelextrema(G_filtered, np.greater)[0]
+
+        e, h = 1.602176634e-19, 6.62607015e-34 
+        G0 = 2 * e**2 / h # Siemans (S)
+
+        threshold = 2.5e-9
+        #1.4e-8
+        maxima = maxima[G_filtered[maxima] >= threshold]
+        max_VST_index = maxima[np.argmax(G_filtered[maxima])]
+        
+        max_VST = VST[max_VST_index]
+        max_G = G[max_VST_index]
+                
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+
+        # Plot for I_SD vs V_ST
+        ax1.set_title(r"$I_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
+        ax1.set_ylabel(r"$I_{SD}\ (A)$")
+        ax1.set_xlabel(r"$V_{P}\ (mV)$")
+        ax1.plot(VST, ISD, 'k-', alpha=0.5)
+        ax1.plot(VST, ISD_filtered, 'r--')
+        ax1.scatter(VST[maxima], ISD[maxima], c='g', label='Local Maxima')
+        ax1.scatter(max_VST, ISD[max_VST_index], c='b', label='Global Maxima')
+        ax1.legend(loc='best')
+
+        # Plot for G vs V_ST
+        ax2.set_title(r"$G_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
+        ax2.set_ylabel(r"$G_{SD}\ (kS)$")
+        ax2.set_xlabel(r"$V_{P}\ (mV)$")
+        ax2.plot(VST, G_raw, 'k-', alpha=0.5)
+        ax2.plot(VST, G_filtered, 'r--')
+        ax2.scatter(VST[maxima], G[maxima], c='g', label='Local Maxima')
+        ax2.scatter(max_VST, G[max_VST_index], c='b', label='Global Maxima')
+        ax2.legend(loc='best')
+
+        plt.tight_layout()
         plt.show()
 
 if __name__ == "__main__":

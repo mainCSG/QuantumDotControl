@@ -5,13 +5,152 @@ from matplotlib.backend_bases import MouseButton
 from matplotlib.widgets import Button, Slider, TextBox, RangeSlider
 
 import numpy as np
-
+import scipy 
 import os
 
 class Plotter:
     def __init__(self) -> None:
         e, h = 1.602176634e-19, 6.62607015e-34 
         self.G0 = 2 * e**2 / h # Siemans (S)
+
+    def plot_coulomb_oscillations(self, VST, ISD, VSD=''):
+            ISD_filtered = scipy.ndimage.gaussian_filter1d(ISD, sigma=2)
+            G_raw = np.gradient(ISD, 1e-3 * (VST[1] - VST[0]))
+            G = np.gradient(ISD_filtered, 1e-3 * (VST[1] - VST[0]))
+            G_filtered = scipy.ndimage.gaussian_filter1d(G, sigma=2)
+
+            # Initial threshold value
+            global threshold
+            threshold = max(G_filtered)
+
+            maxima = scipy.signal.argrelextrema(G_filtered, np.greater)[0]
+            maxima = maxima[G_filtered[maxima] >= threshold]
+            if len(maxima) != 0:
+                max_VST_index = maxima[np.argmax(G_filtered[maxima])]
+                max_VST = VST[max_VST_index]
+                max_G = G[max_VST_index]
+
+            # Create figure and axes
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+
+            # Create sliders
+            threshold_slider_ax = plt.axes([0.205, 0.1, 0.60, 0.03])
+            current_sigma_slider_ax = plt.axes([0.205, 0.15, 0.60, 0.03])
+            G_sigma_slider_ax = plt.axes([0.205, 0.2, 0.60, 0.03])
+
+            plt.subplots_adjust(bottom=0.3)  # Adjust the bottom to make room for the sliders
+
+            threshold_slider = Slider(threshold_slider_ax, r'$G_{threshold} = 10^{x}G_0$  ', -5, 0, valinit=np.log10(max(G_filtered)/self.G0), valstep=0.01, color='black', initcolor='white')
+            current_sigma_slider = Slider(current_sigma_slider_ax, r'$I_{SD}$ Filter', 0.1, 5.0, valinit=2.0, valstep=0.5, color='black', initcolor='white')
+            G_sigma_slider = Slider(G_sigma_slider_ax, r'$G_{SD}$ Filter', 0.1, 5.0, valinit=2.0, valstep=0.5, color='black', initcolor='white')
+
+            # Plot for I_SD vs V_ST
+            ax1.set_title(r"$I_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
+            ax1.set_ylabel(r"$I_{SD}\ (A)$")
+            ax1.plot(VST, ISD, 'k-', alpha=0.3,linewidth=0.75)
+            ax1.plot(VST, ISD_filtered, 'r-', linewidth=1.25)
+
+            # Plot for G vs V_ST
+            ax2.set_title(r"$G_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
+            ax2.set_ylabel(r"$G_{SD}\ (kS)$")
+            ax2.set_xlabel(r"$V_{P}\ (mV)$")
+            ax2.plot(VST, G_raw, 'k-', alpha=0.3, linewidth=0.75)
+            ax2.plot(VST, G_filtered, 'r-', linewidth=1.25)
+            ax2.hlines(y=threshold, xmin=VST[0], xmax=VST[-1], color='black', linestyle='--', linewidth=1.5)
+
+            if len(maxima) > 0:
+                ax2.scatter(VST[maxima], G_filtered[maxima], c='g', label='Local Maxima')
+                ax2.scatter(max_VST, G_filtered[max_VST_index], c='b', label='Global Maxima')
+                ax1.scatter(VST[maxima], ISD_filtered[maxima], c='g', label='Local Maxima')
+                ax1.scatter(max_VST, ISD_filtered[max_VST_index], c='b', label='Global Maxima')
+                ax1.legend(loc='best')
+                for i in maxima:
+                    ax1.text(VST[i], ISD_filtered[i], f'{VST[i]:.2f}', color='black', fontsize=6, fontweight=500, ha='right', va='bottom', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5', alpha=0.25))
+
+
+            # Function to update the plot based on the slider values
+            def update(val):
+                global threshold
+                threshold = 10**(threshold_slider.val) * self.G0
+                current_sigma = current_sigma_slider.val
+                G_sigma = G_sigma_slider.val
+
+                ISD_filtered = scipy.ndimage.gaussian_filter1d(ISD, sigma=current_sigma)
+                G_filtered = scipy.ndimage.gaussian_filter1d(np.gradient(ISD_filtered, 1e-3 * (VST[1] - VST[0])), sigma=G_sigma)
+
+                maxima = scipy.signal.argrelextrema(G_filtered, np.greater)[0]
+                maxima = maxima[G_filtered[maxima] >= threshold]
+
+                if len(maxima) != 0:
+                    max_VST_index = maxima[np.argmax(G_filtered[maxima])]
+                    max_VST = VST[max_VST_index]
+                    max_G = G[max_VST_index]
+
+                ax1.clear()
+                ax1.set_title(r"$I_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
+                ax1.set_ylabel(r"$I_{SD}\ (A)$")
+                ax1.plot(VST, ISD, 'k--', alpha=0.3,linewidth=0.75)
+                ax1.plot(VST, ISD_filtered, 'r-', linewidth=1.25)
+
+                ax2.clear()
+                ax2.set_title(r"$G_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
+                ax2.set_ylabel(r"$G_{SD}\ (kS)$")
+                ax2.set_xlabel(r"$V_{P}\ (mV)$")
+                ax2.plot(VST, G_raw, 'k-', alpha=0.3, linewidth=0.75)
+                ax2.plot(VST, G_filtered, 'r-', linewidth=1.25)
+                ax2.hlines(y=threshold, xmin=VST[0], xmax=VST[-1], color='black', linestyle='--', linewidth=1.5)
+
+                if len(maxima) > 0:
+                    ax2.scatter(VST[maxima], G_filtered[maxima], c='g', label='Local Maxima')
+                    ax2.scatter(max_VST, G_filtered[max_VST_index], c='b', label='Global Maxima')
+                    ax1.scatter(VST[maxima], ISD_filtered[maxima], c='g', label='Local Maxima')
+                    ax1.scatter(max_VST, ISD_filtered[max_VST_index], c='b', label='Global Maxima')
+                    ax1.legend(loc='best')
+                    for i in maxima:
+                        ax1.text(VST[i], ISD_filtered[i], f'{VST[i]:.2f}', color='black', fontsize=6, fontweight=500, ha='right', va='bottom', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5', alpha=0.25))
+
+
+            # Attach the update function to the sliders
+            threshold_slider.on_changed(update)
+            current_sigma_slider.on_changed(update)
+            G_sigma_slider.on_changed(update)
+
+            plt.show()
+
+    def plot_lb_rb_scan(self, lb, rb, current):
+        fig, ax = plt.subplots(1, sharex=False)
+
+        # Plot raw data
+        ax.imshow(current, extent=[rb[0],rb[-1], lb[0], lb[-1]])
+        # ax1.set_extent()
+        ax.set_ylabel(r'LB (mV)')
+        ax.set_title(r'BB Scan')
+        ax.set_xlabel(r'RB (mV)')
+        
+        plt.tight_layout()  # Adjust layout to prevent overlap
+        plt.show()
+
+    def plot_current_and_spectrum(self, t, data, sampling_rate):
+        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=False)
+
+        # Plot raw data
+        for key, d in data.items():
+            ax1.plot(t,d[1],label=d[2])
+        ax1.set_ylabel(r'$I_{SD}\ (A)$')
+        ax1.set_title(r'$I_{SD}\ (t)$')
+        ax1.set_xlabel(r'$t$ (s)')
+        
+        # Plot noise spectrum
+        for key, d in data.items():
+            f, Pxx = scipy.signal.periodogram(d[1], fs=sampling_rate, scaling='density')
+            ax2.loglog(f, Pxx, label=d[2])
+        ax2.set_xlabel(r'$\omega$ (Hz)')
+        ax2.set_ylabel(r'$S_I$ (A$^2$/Hz)')
+        ax2.set_title(r'$S_I$')
+
+        plt.tight_layout()  # Adjust layout to prevent overlap
+        plt.legend(loc='best')
+        plt.show()
 
     def interactive2D(self,x,y,data, title='', xlabel='', ylabel=''):
         # Create initial figure and axis
@@ -89,7 +228,7 @@ class Plotter:
                         lever_arms.append(lever_arm)
 
                         text.append(f'\u03B1{len(lever_arms)} -> {round(lever_arm,3)} (eV/V)')
-                        self._pprint(text)
+                        self.pprint(text)
                         
                         click_counter = 0
                         slopes = []
@@ -101,7 +240,7 @@ class Plotter:
                             f'\u03B1avg -> {round(np.mean(lever_arms),3)} (eV/V)',
                             f'\u03C3(\u03B1) -> {round(np.std(lever_arms),3)} (eV/V)',
                         ]
-                        self._pprint(statistics)
+                        self.pprint(statistics)
             else:
                 pass
 
@@ -133,9 +272,8 @@ class Plotter:
         plt.connect('button_press_event', on_pick)
 
         plt.show()
-
-          
-    def _pprint(self,lines, alignment_char=None):
+    
+    def pprint(self,lines, alignment_char=None):
     
         max_line_length = max(len(line) for line in lines)
         box_width = max_line_length + 4  # Adjust the width based on the longest line and padding

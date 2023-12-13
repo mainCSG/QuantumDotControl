@@ -129,7 +129,7 @@ class App:
         sampling_rate = int(1/(t[1]-t[0]))
 
         # Plotting
-        self.plot_current_and_spectrum(t, data, sampling_rate)
+        self.plotter.plot_current_and_spectrum(t, data, sampling_rate)
 
     def lb_rb_scan_window(self):
         additional_entries = ['Run-ID',"VST (mV)", "VSD (mV)", "C (mV)"]
@@ -144,7 +144,7 @@ class App:
         labels = {str(tuple(eval(run_id))),"Current"}
         lb, rb, I = self.data_processor.parse_db_file(file_path, eval(run_id), is2Dsweep=True)
         
-        self.plot_lb_rb_scan(lb, rb, I)
+        self.plotter.plot_lb_rb_scan(lb, rb, I)
         # print(f"LB-RB Scan function called with file: {file_path} and Run Id: {run_id}")
 
     def coulomb_oscillations_window(self):
@@ -158,7 +158,7 @@ class App:
         run_id = self.get_entry_value("Run-ID")
         
         vst, I = self.data_processor.parse_db_file(file_path, eval(run_id), is1Dsweep=True)
-        self.plot_coulomb_oscillations(vst, I, VSD=vsd_value)
+        self.plotter.plot_coulomb_oscillations(vst, I, VSD=vsd_value)
 
     def lever_arm_window(self):
         additional_entries = ["Run-ID","LB (mV)", "RB (mV)", "C (mV)"]
@@ -183,86 +183,6 @@ class App:
                     if isinstance(child_widget, ttk.Entry) and child_widget.master.winfo_children()[index-1].cget("text") == entry_label:
                         return child_widget.get()
         return None
-
-    def plot_current_and_spectrum(self, t, data, sampling_rate):
-        fig, (ax1, ax2) = plt.subplots(2, 1, sharex=False)
-
-        # Plot raw data
-        for key, d in data.items():
-            ax1.plot(t,d[1],label=d[2])
-        ax1.set_ylabel(r'$I_{SD}\ (A)$')
-        ax1.set_title(r'$I_{SD}\ (t)$')
-        ax1.set_xlabel(r'$t$ (s)')
-        
-        # Plot noise spectrum
-        for key, d in data.items():
-            f, Pxx = scipy.signal.periodogram(d[1], fs=sampling_rate, scaling='density')
-            ax2.loglog(f, Pxx, label=d[2])
-        ax2.set_xlabel(r'$\omega$ (Hz)')
-        ax2.set_ylabel(r'$S_I$ (A$^2$/Hz)')
-        ax2.set_title(r'$S_I$')
-
-        plt.tight_layout()  # Adjust layout to prevent overlap
-        plt.legend(loc='best')
-        plt.show()
-        
-    def plot_lb_rb_scan(self, lb, rb, current):
-        fig, ax = plt.subplots(1, sharex=False)
-
-        # Plot raw data
-        ax.imshow(current, extent=[rb[0],rb[-1], lb[0], lb[-1]])
-        # ax1.set_extent()
-        ax.set_ylabel(r'LB (mV)')
-        ax.set_title(r'BB Scan')
-        ax.set_xlabel(r'RB (mV)')
-        
-        plt.tight_layout()  # Adjust layout to prevent overlap
-        plt.show()
-
-    def plot_coulomb_oscillations(self, VST, ISD, VSD=''):
-        
-        ISD_filtered = scipy.ndimage.gaussian_filter1d(ISD, sigma=2)
-        G_raw = np.gradient(ISD, 1e-3 *(VST[1] - VST[0]))
-        G = np.gradient(ISD_filtered, 1e-3 *(VST[1] - VST[0]))
-        G_filtered = scipy.ndimage.gaussian_filter1d(G, sigma=2)
-
-        maxima = scipy.signal.argrelextrema(G_filtered, np.greater)[0]
-
-        e, h = 1.602176634e-19, 6.62607015e-34 
-        G0 = 2 * e**2 / h # Siemans (S)
-
-        threshold = 2.5e-9
-        #1.4e-8
-        maxima = maxima[G_filtered[maxima] >= threshold]
-        max_VST_index = maxima[np.argmax(G_filtered[maxima])]
-        
-        max_VST = VST[max_VST_index]
-        max_G = G[max_VST_index]
-                
-        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
-
-        # Plot for I_SD vs V_ST
-        ax1.set_title(r"$I_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
-        ax1.set_ylabel(r"$I_{SD}\ (A)$")
-        ax1.set_xlabel(r"$V_{P}\ (mV)$")
-        ax1.plot(VST, ISD, 'k-', alpha=0.5)
-        ax1.plot(VST, ISD_filtered, 'r--')
-        ax1.scatter(VST[maxima], ISD[maxima], c='g', label='Local Maxima')
-        ax1.scatter(max_VST, ISD[max_VST_index], c='b', label='Global Maxima')
-        ax1.legend(loc='best')
-
-        # Plot for G vs V_ST
-        ax2.set_title(r"$G_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
-        ax2.set_ylabel(r"$G_{SD}\ (kS)$")
-        ax2.set_xlabel(r"$V_{P}\ (mV)$")
-        ax2.plot(VST, G_raw, 'k-', alpha=0.5)
-        ax2.plot(VST, G_filtered, 'r--')
-        ax2.scatter(VST[maxima], G[maxima], c='g', label='Local Maxima')
-        ax2.scatter(max_VST, G[max_VST_index], c='b', label='Global Maxima')
-        ax2.legend(loc='best')
-
-        plt.tight_layout()
-        plt.show()
 
 if __name__ == "__main__":
     root = tk.Tk()

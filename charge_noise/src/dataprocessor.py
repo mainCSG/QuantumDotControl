@@ -22,9 +22,11 @@ class DataProcessor:
 
             elif is2Dsweep:
                 xname, yname, zname = params
-                x = np.unique(np.array(dataset.get_parameter_data(xname)[xname][xname]))
-                y = np.unique(np.array(dataset.get_parameter_data(yname)[yname][yname]))
+                x = np.array(dataset.get_parameter_data(xname)[xname][xname])
+                y = np.array(dataset.get_parameter_data(yname)[yname][yname])
                 z = np.array(dataset.get_parameter_data(zname)[zname][zname])
+
+                x, y = np.unique(x), y
                 return x,y,z
             
         elif len(run_id) == 2:

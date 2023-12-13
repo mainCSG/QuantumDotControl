@@ -7,7 +7,7 @@ import scipy
 
 from src.dataprocessor import DataProcessor
 from src.plotter import Plotter
-from src.chargenoiseextractor import ChargeNoiseExtractor
+# from src.chargenoiseextractor import ChargeNoiseExtractor
 
 class App:
     def __init__(self, root):
@@ -173,7 +173,7 @@ class App:
 
         G = np.gradient(I,np.abs(1e-3*(vst[1] - vst[0])), axis=0)
 
-        self.plotter.interactive2D(vst, vsd, G, title=r"$G(V_{SD}, V_{ST})$", xlabel=r'$V_{ST}\ (mV)$', ylabel=r'$V_{SD}\ (mV)$')
+        self.plotter.interactive2D(vst, vsd, G.T, title=r"$G(V_{SD}, V_{ST})$", xlabel=r'$V_{ST}\ (mV)$', ylabel=r'$V_{SD}\ (mV)$')
 
     def get_entry_value(self, entry_label):
         # Helper method to retrieve the value from an entry box by label

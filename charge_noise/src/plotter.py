@@ -175,7 +175,8 @@ class Plotter:
                    origin='lower',
                    aspect='auto',
                    cmap='binary',
-                   extent=[x_start, x_end, y_start, y_end])
+                   extent=[x_start, x_end, y_start, y_end]
+                )
         ax.set_title(title)
         ax.set_xlabel(xlabel)
         ax.set_ylabel(ylabel)
@@ -240,15 +241,24 @@ class Plotter:
                             f'\u03B1avg -> {round(np.mean(lever_arms),3)} (eV/V)',
                             f'\u03C3(\u03B1) -> {round(np.std(lever_arms),3)} (eV/V)',
                         ]
+
+                        text_x = 1  # Adjust as needed
+                        text_y = 1  # Adjust as needed
+
+                        ax.text(text_x, text_y, f'\u03B1 -> {round(np.mean(lever_arms), 3)} \u00B1 {round(np.std(lever_arms), 3)} (eV/V)',
+                                color='black', fontsize=10, fontweight=500, ha='right', va='top',
+                                bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5'),
+                                transform=ax.transAxes)
+
                         self.pprint(statistics)
             else:
                 pass
 
         def plot_line(points, slope):
-            global x_start, x_end, y_start, y_end
+            # global x_start, x_end, y_start, y_end
             x1, y1, x2, y2 = points
     
-            ax.plot([x1, x2], [y1, y2], 'r-' if slope > 0 else 'b-', alpha=0.5, marker='o',markersize=2)
+            ax.plot([x1, x2], [y1, y2], 'r-' if slope > 0 else 'b-', alpha=0.5, marker='o',markersize=5, linewidth=3)
             fig.canvas.draw_idle()
             slope_label = 'ms' if slope > 0 else 'md'
 
@@ -300,7 +310,7 @@ class Plotter:
         y_min_index = np.where(y == y_crop_mask[0])[0][0]
         y_max_index = np.where(y == y_crop_mask[-1])[0][0]
 
-        data_crop = data[x_min_index:x_max_index, y_min_index:y_max_index]
+        data_crop = data[y_min_index:y_max_index, x_min_index:x_max_index]
         return data_crop, [x_min_index, x_max_index, y_min_index, y_max_index]
     
     def filter_conductance(self, data, A=None):

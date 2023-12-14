@@ -6,7 +6,7 @@ from matplotlib.widgets import Button, Slider, TextBox, RangeSlider
 
 import numpy as np
 import scipy 
-import os
+import os, csv
 
 class Plotter:
     def __init__(self) -> None:
@@ -15,12 +15,15 @@ class Plotter:
 
     def plot_coulomb_oscillations(self, VST, ISD, VSD=''):
             ISD_filtered = scipy.ndimage.gaussian_filter1d(ISD, sigma=2)
+            offset = min(ISD_filtered)
+            ISD += np.abs(offset)
+            ISD_filtered += np.abs(offset)
             G_raw = np.gradient(ISD, 1e-3 * (VST[1] - VST[0]))
             G = np.gradient(ISD_filtered, 1e-3 * (VST[1] - VST[0]))
             G_filtered = scipy.ndimage.gaussian_filter1d(G, sigma=2)
 
             # Initial threshold value
-            global threshold
+            global threshold, results_sorted
             threshold = max(G_filtered)
 
             maxima = scipy.signal.argrelextrema(G_filtered, np.greater)[0]
@@ -29,6 +32,10 @@ class Plotter:
                 max_VST_index = maxima[np.argmax(G_filtered[maxima])]
                 max_VST = VST[max_VST_index]
                 max_G = G[max_VST_index]
+                results = dict(zip(VST[maxima], G_filtered[maxima]))
+                # sorted from lowest to highest conductance
+                results_sorted = dict(sorted(results.items(), key=lambda item: item[1]))
+
 
             # Create figure and axes
             fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
@@ -37,45 +44,57 @@ class Plotter:
             threshold_slider_ax = plt.axes([0.205, 0.1, 0.60, 0.03])
             current_sigma_slider_ax = plt.axes([0.205, 0.15, 0.60, 0.03])
             G_sigma_slider_ax = plt.axes([0.205, 0.2, 0.60, 0.03])
+            save_button_ax = plt.axes([0.47, 0.01, 0.1, 0.05])
+            
 
             plt.subplots_adjust(bottom=0.3)  # Adjust the bottom to make room for the sliders
 
+            save_button = Button(save_button_ax, 'Save Data')
             threshold_slider = Slider(threshold_slider_ax, r'$G_{threshold} = 10^{x}G_0$  ', -5, 0, valinit=np.log10(max(G_filtered)/self.G0), valstep=0.01, color='black', initcolor='white')
             current_sigma_slider = Slider(current_sigma_slider_ax, r'$I_{SD}$ Filter', 0.1, 5.0, valinit=2.0, valstep=0.5, color='black', initcolor='white')
             G_sigma_slider = Slider(G_sigma_slider_ax, r'$G_{SD}$ Filter', 0.1, 5.0, valinit=2.0, valstep=0.5, color='black', initcolor='white')
 
             # Plot for I_SD vs V_ST
-            ax1.set_title(r"$I_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
+            ax1.set_title(r"$I_{SD}$")
             ax1.set_ylabel(r"$I_{SD}\ (A)$")
             ax1.plot(VST, ISD, 'k-', alpha=0.3,linewidth=0.75)
-            ax1.plot(VST, ISD_filtered, 'r-', linewidth=1.25)
+            ax1.plot(VST, ISD_filtered, 'k-', linewidth=1.5)
 
             # Plot for G vs V_ST
-            ax2.set_title(r"$G_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
-            ax2.set_ylabel(r"$G_{SD}\ (kS)$")
+            ax2.set_title(r"$G_{SD}$")
+            ax2.set_ylabel(r"$G_{SD}\ (S)$")
             ax2.set_xlabel(r"$V_{P}\ (mV)$")
             ax2.plot(VST, G_raw, 'k-', alpha=0.3, linewidth=0.75)
-            ax2.plot(VST, G_filtered, 'r-', linewidth=1.25)
+            ax2.plot(VST, G_filtered, 'k-', linewidth=1.5)
             ax2.hlines(y=threshold, xmin=VST[0], xmax=VST[-1], color='black', linestyle='--', linewidth=1.5)
 
             if len(maxima) > 0:
-                ax2.scatter(VST[maxima], G_filtered[maxima], c='g', label='Local Maxima')
-                ax2.scatter(max_VST, G_filtered[max_VST_index], c='b', label='Global Maxima')
-                ax1.scatter(VST[maxima], ISD_filtered[maxima], c='g', label='Local Maxima')
-                ax1.scatter(max_VST, ISD_filtered[max_VST_index], c='b', label='Global Maxima')
-                ax1.legend(loc='best')
                 for i in maxima:
-                    ax1.text(VST[i], ISD_filtered[i], f'{VST[i]:.2f}', color='black', fontsize=6, fontweight=500, ha='right', va='bottom', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5', alpha=0.25))
-
-
+                    index = list(results_sorted.keys()).index(VST[i])
+                    if index == len(results_sorted)-1:
+                        label = "High Sensitivity"
+                        color = 'b'
+                    elif index == 0: 
+                        label = "Low Sensitivity"
+                        color = 'r'
+                    else:
+                        label = "Medium Sensitivity"
+                        color = 'g'
+                    ax1.text(VST[i], ISD_filtered[i], f'{VST[i]:.2f} mV', color='black', fontsize=6, fontweight=750, ha='right', va='bottom', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5', alpha=0.25))
+                    ax2.scatter(VST[i], G_filtered[i], c=color, label=label)
+                    ax1.scatter(VST[i], ISD_filtered[i], c=color, label=label)
+                    ax1.legend(loc='best')
+                    self.legend_without_duplicate_labels(ax1)
             # Function to update the plot based on the slider values
             def update(val):
-                global threshold
+                global threshold, results_sorted
                 threshold = 10**(threshold_slider.val) * self.G0
                 current_sigma = current_sigma_slider.val
                 G_sigma = G_sigma_slider.val
 
                 ISD_filtered = scipy.ndimage.gaussian_filter1d(ISD, sigma=current_sigma)
+                offset = min(ISD_filtered)
+                ISD_filtered += np.abs(offset)
                 G_filtered = scipy.ndimage.gaussian_filter1d(np.gradient(ISD_filtered, 1e-3 * (VST[1] - VST[0])), sigma=G_sigma)
 
                 maxima = scipy.signal.argrelextrema(G_filtered, np.greater)[0]
@@ -85,35 +104,64 @@ class Plotter:
                     max_VST_index = maxima[np.argmax(G_filtered[maxima])]
                     max_VST = VST[max_VST_index]
                     max_G = G[max_VST_index]
+                    
+                    results = dict(zip(VST[maxima], G_filtered[maxima]))
+                    # sorted from lowest to highest conductance
+                    results_sorted = dict(sorted(results.items(), key=lambda item: item[1]))
 
                 ax1.clear()
-                ax1.set_title(r"$I_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
+                ax1.set_title(r"$I_{SD}$")
                 ax1.set_ylabel(r"$I_{SD}\ (A)$")
                 ax1.plot(VST, ISD, 'k--', alpha=0.3,linewidth=0.75)
-                ax1.plot(VST, ISD_filtered, 'r-', linewidth=1.25)
+                ax1.plot(VST, ISD_filtered, 'k-', linewidth=1.5)
 
                 ax2.clear()
-                ax2.set_title(r"$G_{SD}$ @ $V_{SD} = " + f"{VSD}" + r"\ mV$")
-                ax2.set_ylabel(r"$G_{SD}\ (kS)$")
+                ax2.set_title(r"$G_{SD}$")
+                ax2.set_ylabel(r"$G_{SD}\ (S)$")
                 ax2.set_xlabel(r"$V_{P}\ (mV)$")
                 ax2.plot(VST, G_raw, 'k-', alpha=0.3, linewidth=0.75)
-                ax2.plot(VST, G_filtered, 'r-', linewidth=1.25)
+                ax2.plot(VST, G_filtered, 'k-', linewidth=1.5)
                 ax2.hlines(y=threshold, xmin=VST[0], xmax=VST[-1], color='black', linestyle='--', linewidth=1.5)
 
                 if len(maxima) > 0:
-                    ax2.scatter(VST[maxima], G_filtered[maxima], c='g', label='Local Maxima')
-                    ax2.scatter(max_VST, G_filtered[max_VST_index], c='b', label='Global Maxima')
-                    ax1.scatter(VST[maxima], ISD_filtered[maxima], c='g', label='Local Maxima')
-                    ax1.scatter(max_VST, ISD_filtered[max_VST_index], c='b', label='Global Maxima')
-                    ax1.legend(loc='best')
                     for i in maxima:
-                        ax1.text(VST[i], ISD_filtered[i], f'{VST[i]:.2f}', color='black', fontsize=6, fontweight=500, ha='right', va='bottom', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5', alpha=0.25))
+                        index = list(results_sorted.keys()).index(VST[i])
+                        if index == len(results_sorted)-1:
+                            label = "High Sensitivity"
+                            color = 'b'
+                        elif index == 0: 
+                            label = "Low Sensitivity"
+                            color = 'r'
+                        else:
+                            label = "Medium Sensitivity"
+                            color = 'g'
+                        ax1.text(VST[i], ISD_filtered[i], f'{VST[i]:.2f} mV', color='black', fontsize=6, fontweight=750, ha='right', va='bottom', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5', alpha=0.25))
+                        ax2.scatter(VST[i], G_filtered[i], c=color, label=label)
+                        ax1.scatter(VST[i], ISD_filtered[i], c=color, label=label)
+                        ax1.legend(loc='best')
+                        self.legend_without_duplicate_labels(ax1)
+            
+            def save_data(event):
+                global results_sorted
+                # Get the filename using a file dialog
+                file_path = "./coulomb_oscillations.csv"
 
+                # Write the data to the CSV file
+                with open(file_path, 'w', newline='') as csvfile:
+                    csv_writer = csv.writer(csvfile)
+                    csv_writer.writerow(["VST (mV)", "G (S)"])  # Add headers if needed
 
+                    # Write the data from results_sorted
+                    for voltage, conductance in results_sorted.items():
+                        csv_writer.writerow([round(voltage,3), "{:0.3e}".format(float(conductance))])
+
+                print(f"Data saved to {file_path}")
             # Attach the update function to the sliders
             threshold_slider.on_changed(update)
             current_sigma_slider.on_changed(update)
             G_sigma_slider.on_changed(update)
+            save_button.on_clicked(save_data)
+
 
             plt.show()
 
@@ -147,6 +195,22 @@ class Plotter:
         ax2.set_xlabel(r'$\omega$ (Hz)')
         ax2.set_ylabel(r'$S_I$ (A$^2$/Hz)')
         ax2.set_title(r'$S_I$')
+
+        plt.tight_layout()  # Adjust layout to prevent overlap
+        plt.legend(loc='best')
+        plt.show()
+
+    
+    def plot_charge_noise_spectrum(self, t, data, lever_arm_G_dict, sampling_rate):
+  
+        # Plot noise spectrum
+        for key, d in data.items():
+            f, Pxx = scipy.signal.periodogram(d[1], fs=sampling_rate, scaling='density')
+            lever_arm, G_max = lever_arm_G_dict[d[2]]
+            plt.loglog(f, (lever_arm / G_max)**2 * Pxx, label=d[2])
+        plt.xlabel(r'$f$ (Hz)')
+        plt.ylabel(r'$S_E$ (eV$^2$/Hz)')
+        plt.title(r'$S_E$')
 
         plt.tight_layout()  # Adjust layout to prevent overlap
         plt.legend(loc='best')
@@ -316,3 +380,7 @@ class Plotter:
     def filter_conductance(self, data, A=None):
         return np.sign(data) * np.log((np.abs(data)/A) + 1)
     
+    def legend_without_duplicate_labels(self, ax):
+        handles, labels = ax.get_legend_handles_labels()
+        unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
+        ax.legend(*zip(*unique))

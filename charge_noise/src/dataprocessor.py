@@ -6,10 +6,15 @@ class DataProcessor:
         pass
 
     def parse_db_file(self, db_file_path: str, run_id: list, is1Dsweep=False, is2Dsweep=False):
-        
+        '''
+        Function that parses a db file to extract various data arrays.
+
+        Not supported: averaging for 2D data!
+        '''
         qc.initialise_or_create_database_at(db_file_path)
 
         if len(run_id) == 1:
+            # User only wants to plot one run-id.
 
             dataset = qc.load_by_run_spec(captured_run_id=run_id[0])
             params = dataset.parameters.split(',')
@@ -25,13 +30,11 @@ class DataProcessor:
                 x = np.array(dataset.get_parameter_data(xname)[xname][xname])
                 y = np.array(dataset.get_parameter_data(yname)[yname][yname])
                 z = np.array(dataset.get_parameter_data(zname)[zname][zname])
-
                 x, y = np.unique(x), y
                 return x,y,z
             
         elif len(run_id) == 2:
             # averaging needs to be done
-
             if is1Dsweep:
                 run_id_sweep = [i for i in range(run_id[0], run_id[1]+1)]
 

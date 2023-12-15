@@ -3,11 +3,8 @@ from tkinter import ttk, filedialog
 import qcodes as qc
 import numpy as np
 import matplotlib.pyplot as plt
-import scipy 
-
 from src.dataprocessor import DataProcessor
 from src.plotter import Plotter
-# from src.chargenoiseextractor import ChargeNoiseExtractor
 
 class App:
     def __init__(self, root):
@@ -159,7 +156,7 @@ class App:
         run_id = self.get_entry_value("Run-ID")
         
         vst, I = self.data_processor.parse_db_file(file_path, eval(run_id), is1Dsweep=True)
-        self.plotter.plot_coulomb_oscillations(vst, I, VSD=vsd_value)
+        self.plotter.plot_coulomb_oscillations(vst, I)
 
     def lever_arm_window(self):
         additional_entries = ["Run-ID","LB (mV)", "RB (mV)", "C (mV)"]
@@ -236,7 +233,7 @@ class App:
             lever_arm_cb = float(self.get_entry_value("\u03B1 CB (eV/V)"))
             G_max_cb = float(self.get_entry_value("G CB (S)"))
             lever_arm_G_dict["Coulomb Blockade"] = (lever_arm_cb, G_max_cb)
-            
+
         hs_runids = '[]' if hs_runids == '' else hs_runids
         ms_runids = '[]' if ms_runids == '' else ms_runids
         ls_runids = '[]' if ls_runids == '' else ls_runids

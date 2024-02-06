@@ -1,14 +1,8 @@
 instruments: 
-    ivvi:
-        type: qcodes_contrib_drivers.drivers.QuTech.IVVI.IVVI
-        address: COM3
-        init:
-            numdacs: 16
-            polarity: ['BIP', 'BIP', 'BIP', 'POS']
-            use_locks: false
-            dac_step: 1
-            dac_delay: 0.1
+    sim900:
+        type: qcodes_contrib_drivers.drivers.StanfordResearchSystems.SIM928
+        address: GPIB0::3::INSTR
         
-    keithley:
-        type: qcodes.instrument_drivers.Keithley.Keithley_2000.Keithley2000
-        address: GPIB0::17::INSTR
+    agilent:
+        type: qcodes.instrument_drivers.agilent.Agilent34401A
+        address: GPIB0::21::INSTR

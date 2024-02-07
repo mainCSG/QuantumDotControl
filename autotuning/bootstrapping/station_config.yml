@@ -1,8 +1,14 @@
 instruments: 
     sim900:
-        type: qcodes_contrib_drivers.drivers.StanfordResearchSystems.SIM928
+        type: qcodes_contrib_drivers.drivers.StanfordResearchSystems.SIM928.SIM928
         address: GPIB0::3::INSTR
         
+        parameters:
+            smooth_timestep: {initial_value: 1}
+            volt_1_step: {initial_value: 0.001}
+        # init:
+        #     slot_names: None
+        
     agilent:
-        type: qcodes.instrument_drivers.agilent.Agilent34401A
+        type: qcodes.instrument_drivers.agilent.Agilent_34401A.Agilent34401A
         address: GPIB0::21::INSTR

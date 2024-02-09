@@ -6,7 +6,13 @@ instruments:
         parameters:
             smooth_timestep: {initial_value: 1}
             volt_1_step: {initial_value: 0.001}
-        
+
+            smooth_timestep: {initial_value: 1}
+            volt_2_step: {initial_value: 0.001}
+
+            smooth_timestep: {initial_value: 1}
+            volt_3_step: {initial_value: 0.001}
+    
     agilent:
         type: qcodes.instrument_drivers.agilent.Agilent_34401A.Agilent34401A
         address: GPIB0::21::INSTR

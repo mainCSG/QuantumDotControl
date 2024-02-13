@@ -4,18 +4,23 @@ instruments:
         address: GPIB0::3::INSTR
         
         init: 
-            slot_names: {1: 'S',2: 'STL',3: 'LB', 4: 'P', 5: 'RB', 6: 'STR', 7: '', 8: ''}
+            slot_names: {1: 'S',2: 'STL',3: 'LB', 4: 'P', 5: 'RB', 6: 'STR'}
 
         parameters:
             smooth_timestep: {initial_value: 1}
-            volt_1_step: {initial_value: 0.001}
 
-            smooth_timestep: {initial_value: 1}
-            volt_2_step: {initial_value: 0.001}
+            volt_S_step: {initial_value: 0.001}
 
-            smooth_timestep: {initial_value: 1}
-            volt_3_step: {initial_value: 0.001}
-    
+            volt_STL_step: {initial_value: 0.001}
+
+            volt_LB_step: {initial_value: 0.001}
+
+            volt_P_step: {initial_value: 0.001}
+
+            volt_RB_step: {initial_value: 0.001}
+
+            volt_STR_step: {initial_value: 0.001}
+
     agilent:
         type: qcodes.instrument_drivers.agilent.Agilent_34401A.Agilent34401A
         address: GPIB0::21::INSTR

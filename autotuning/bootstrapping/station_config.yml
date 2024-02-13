@@ -3,6 +3,9 @@ instruments:
         type: qcodes_contrib_drivers.drivers.StanfordResearchSystems.SIM928.SIM928
         address: GPIB0::3::INSTR
         
+        init: 
+            slot_names: {1: 'S',2: 'STL',3: 'LB', 4: 'P', 5: 'RB', 6: 'STR', 7: '', 8: ''}
+
         parameters:
             smooth_timestep: {initial_value: 1}
             volt_1_step: {initial_value: 0.001}

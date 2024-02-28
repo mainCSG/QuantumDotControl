@@ -7,6 +7,9 @@ instruments:
             slot_names: {1: 'S',2: 'STL',3: 'LB', 4: 'P', 5: 'RB', 6: 'STR'}
 
         parameters:
+            # Following params control ramp rate for set_smooth method.
+            # E.g. volt_S will ramp at a rate of 0.001 V per 1 second.
+
             smooth_timestep: {initial_value: 1}
 
             volt_S_step: {initial_value: 0.001}

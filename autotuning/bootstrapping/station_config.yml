@@ -4,7 +4,7 @@ instruments:
         address: GPIB0::3::INSTR
         
         init: 
-            slot_names: {1: 'S',2: 'STL',3: 'LB', 4: 'P', 5: 'RB', 6: 'STR'}
+            slot_names: {1: 'S',2: 'STR',3: 'LB', 4: 'RB', 5: 'STL', 6: 'P'}
 
         parameters:
             # Following params control ramp rate for set_smooth method.
@@ -12,17 +12,17 @@ instruments:
 
             smooth_timestep: {initial_value: 1}
 
-            volt_S_step: {initial_value: 0.001}
+            volt_S_step: {initial_value: 0.1}
 
-            volt_STL_step: {initial_value: 0.001}
+            volt_STL_step: {initial_value: 0.01}
 
-            volt_LB_step: {initial_value: 0.001}
+            volt_LB_step: {initial_value: 0.01}
 
-            volt_P_step: {initial_value: 0.001}
+            volt_P_step: {initial_value: 0.01}
 
-            volt_RB_step: {initial_value: 0.001}
+            volt_RB_step: {initial_value: 0.01}
 
-            volt_STR_step: {initial_value: 0.001}
+            volt_STR_step: {initial_value: 0.01}
 
     agilent:
         type: qcodes.instrument_drivers.agilent.Agilent_34401A.Agilent34401A

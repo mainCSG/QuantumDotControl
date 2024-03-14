@@ -2,6 +2,7 @@
 autotuning/bootstrapping/notebooks/data/*
 autotuning/data/csd/*
 charge_noise/data
+autotuning/bootstrapping/data
 !autotuning/data/csd/custom
 
 # MacOS Files

@@ -56,3 +56,5 @@ charge_state:
     dataset_size: 1001
     train_val_split: 0.8
     batch_size_per_img: 128
+
+

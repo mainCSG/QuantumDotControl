@@ -31,7 +31,6 @@ with open(config_path, 'r') as config_yaml:
             model_config = model_yaml[model_name]
             model_info = model_config['info']
             model_hyperparams = model_config['hyperparameters']
-
             model_device = model_yaml['device']
 
 PROCESSED_DATA_DIR = os.path.join(DATA_DIR, "processed")
@@ -39,8 +38,8 @@ MODEL_TRAIN_DATA_DIR = os.path.join(PROCESSED_DATA_DIR,"train")
 MODEL_VAL_DATA_DIR = os.path.join(PROCESSED_DATA_DIR,"val")
 MODEL_TEST_DATA_DIR = os.path.join(PROCESSED_DATA_DIR,"test")
 
-def get_csd_dicts(img_dir):
-    json_file = os.path.join(img_dir, "via_region_data.json")
+def get_bias_triangle_dicts(img_dir):
+    json_file = os.path.join(img_dir, "via_bias_triangle_11Apr2024_12h19m_json.json")
     with open(json_file) as f:
         imgs_anns = json.load(f)
 
@@ -72,18 +71,9 @@ def get_csd_dicts(img_dir):
             poly = [(x, y) for x, y in zip(px, py)]
             poly = [p for x in poly for p in x]
 
-            try: 
-                category_dict = {"ND": 0, "LD": 1, "CD": 2, "RD": 3, "DD": 4}
-                category_id = category_dict[regions["label"]]
 
-            except KeyError:
-                # diff model
-                category_dict = {0: 0, 5: 1, 10: 2, 3: 3, 8: 4, 13: 5, 6:6, 11:7, 16:8} # converts the unique charge state number to an ID.
-                class_dict = {"(0,0)": 0, "(0,1)": 5, "(0,2)": 10, "(1,0)": 3, "(1,1)": 8, "(1,2)": 13, "(2,0)": 6, "(2,1)": 11, "(2,2)": 16}
-                try: 
-                    category_id = category_dict[regions["label"]]
-                except KeyError:
-                    category_id = category_dict[class_dict[regions['label']]]
+            category_dict = {"unblocked": 0, "blocked": 1}
+            category_id = category_dict[regions["label"]]
 
             obj = {
                 "bbox": [np.min(px), np.min(py), np.max(px), np.max(py)],
@@ -102,14 +92,14 @@ DatasetCatalog.clear()
 MetadataCatalog.clear()
 
 for d in ["train", "val"]:
-    DatasetCatalog.register("csd_" + d, lambda d=d: get_csd_dicts(os.path.join(PROCESSED_DATA_DIR,d)))
-    MetadataCatalog.get("csd_" + d).set(thing_classes=list(model_info['class_dict'].keys()))
+    DatasetCatalog.register("bias_triangle_" + d, lambda d=d: get_bias_triangle_dicts(os.path.join(PROCESSED_DATA_DIR,d)))
+    MetadataCatalog.get("bias_triangle_" + d).set(thing_classes=list(model_info['class_dict'].keys()))
 
-csd_metadata = MetadataCatalog.get("csd_train")
+bias_triangle_metadata = MetadataCatalog.get("bias_triangle_train")
 
 cfg = get_cfg()
 cfg.merge_from_file(model_zoo.get_config_file("COCO-InstanceSegmentation/mask_rcnn_R_50_FPN_3x.yaml"))
-cfg.DATASETS.TRAIN = ("csd_train",)
+cfg.DATASETS.TRAIN = ("bias_triangle_train",)
 cfg.DATASETS.TEST = ()
 
 cfg.MODEL.DEVICE = processor 

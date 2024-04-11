@@ -1,0 +1,29 @@
+# MODEL TRAINING DEVICE
+
+device:
+
+  cuda:
+
+    num_workers: 4
+
+  cpu:
+
+    num_workers: 0
+
+# MODEL 1
+
+psb:
+
+  info:
+  
+    class_dict: {"unblocked": 0, "blocked": 1}
+    num_of_classes: 2
+
+  hyperparameters:
+
+    learning_rate: 2.0e-4
+    augments_per_sim_img: 2
+    augments_per_exp_img: 50
+    num_epochs: 5
+    batch_num: 1
+    batch_size_per_img: 128

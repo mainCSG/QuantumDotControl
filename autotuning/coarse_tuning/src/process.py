@@ -51,7 +51,13 @@ class DataProcessor():
                     if "exp" in filename:
                         self.processed_folder = os.path.join(self.data_folder, "processed/train")
                         os.makedirs(self.processed_folder, exist_ok = True)
-                    elif counter < self.num_of_train:
+                        csd_data = self.process_npy_file(raw_file_path)
+
+                        # Save the processed results to the processed folder
+                        self.save_processed_file(csd_data, filename)
+                        
+                        continue
+                    if counter < self.num_of_train:
                         self.processed_folder = os.path.join(self.data_folder, "processed/train")
                         os.makedirs(self.processed_folder, exist_ok = True)
                     else:

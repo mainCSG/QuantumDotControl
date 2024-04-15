@@ -1,7 +1,8 @@
 # Ignore generated or external results
 autotuning/bootstrapping/notebooks/data/*
-autotuning/data/csd/*
+autotuning/data/*
 charge_noise/data
+autotuning/fine_tuning/data/*
 autotuning/bootstrapping/data
 !autotuning/data/csd/custom
 

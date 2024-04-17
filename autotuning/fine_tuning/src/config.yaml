@@ -24,6 +24,6 @@ psb:
     learning_rate: 2.0e-4
     augments_per_sim_img: 2
     augments_per_exp_img: 50
-    num_epochs: 5
+    num_epochs: 5000
     batch_num: 1
     batch_size_per_img: 128

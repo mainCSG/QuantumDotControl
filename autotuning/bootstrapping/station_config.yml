@@ -4,7 +4,7 @@ instruments:
         address: GPIB0::3::INSTR
         
         init: 
-            slot_names: {1: 'S',2: 'STR',3: 'LB', 4: 'RB', 5: 'STL', 6: 'P'}
+            slot_names: {1: 'S', 2: 'STL', 3: 'LB', 4: 'P', 5: 'RB', 6: 'STR'}
 
         parameters:
             # Following params control ramp rate for set_smooth method.
@@ -27,3 +27,10 @@ instruments:
     agilent:
         type: qcodes.instrument_drivers.agilent.Agilent_34401A.Agilent34401A
         address: GPIB0::21::INSTR
+
+general_info:
+
+    sensitivity: 1.0e-7 # A/V
+    preamp_bias: 0.0 # A
+    voltage_divider: 0.01 # Vout / Vin 
+    voltage_resolution: 1.0e-3

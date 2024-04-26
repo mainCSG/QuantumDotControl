@@ -1,0 +1,33 @@
+# Characteristics describe the structure, shape and material of a product and can be influenced by the designer in a direct manner, whereas properties describe the product‟s behaviour.
+
+characteristics:
+
+  sample_name: 'N44' 
+
+  charge_carrier: 'e' # Electrons (e) or Holes (h)
+  operation_mode: 'acc' # Gates either accumulate or deplete
+
+  ohmics: ['S']
+  barriers: ['LB', 'RB']
+  leads: ['STR']
+  plungers: ['P']
+
+properties:
+
+  abs_max_current: 20.0e-9 # A
+  abs_max_ohmic_bias: 50.0e-3 # V
+  abs_max_gate_voltage: 2 # Volts
+  abs_max_gate_differential: 1 # Volts
+
+  turn_on: 'N/A' # Volts
+  saturation: 'N/A' # Volts
+
+  pinch_off: # Use same names as station_config.yml
+
+    LB: 'N/A' # Volts
+
+    RB: 'N/A' # Volts
+
+    STR: 'N/A' # Volts
+
+  

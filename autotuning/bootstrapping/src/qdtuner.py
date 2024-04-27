@@ -48,7 +48,7 @@ class SingleQuantumDotTuner:
         )
         print("Done!")
 
-    def bias_devices(self, Vbias=0):
+    def bias_device(self, Vbias=0):
         gates = self.ohmics
         for gate_name in gates:
             self.station.sim900.set_smooth({gate_name: Vbias})

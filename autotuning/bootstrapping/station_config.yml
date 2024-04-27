@@ -10,9 +10,9 @@ instruments:
             # Following params control ramp rate for set_smooth method.
             # E.g. volt_S will ramp at a rate of 0.001 V per 1 second.
 
-            smooth_timestep: {initial_value: 1}
+            smooth_timestep: {initial_value: 0.01}
 
-            volt_S_step: {initial_value: 0.1}
+            volt_S_step: {initial_value: 0.01}
 
             volt_STL_step: {initial_value: 0.01}
 

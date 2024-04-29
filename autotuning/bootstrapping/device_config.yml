@@ -2,7 +2,7 @@
 
 characteristics:
 
-  sample_name: 'N44' 
+  sample_name: 'N43' 
 
   charge_carrier: 'e' # Electrons (e) or Holes (h)
   operation_mode: 'acc' # Gates either accumulate or deplete

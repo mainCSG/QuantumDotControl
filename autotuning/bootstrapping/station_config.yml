@@ -10,7 +10,7 @@ instruments:
             # Following params control ramp rate for set_smooth method.
             # E.g. volt_S will ramp at a rate of 0.001 V per 1 second.
 
-            smooth_timestep: {initial_value: 0.01}
+            smooth_timestep: {initial_value: 0.05}
 
             volt_S_step: {initial_value: 0.01}
 
@@ -31,6 +31,6 @@ instruments:
 general_info:
 
     sensitivity: 1.0e-7 # A/V
-    preamp_bias: 0.0 # A
+    preamp_bias: 0.0 # V
     voltage_divider: 0.01 # Vout / Vin 
     voltage_resolution: 1.0e-3

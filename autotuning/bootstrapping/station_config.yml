@@ -30,6 +30,9 @@ instruments:
 
 general_info:
 
+    # SAME NAMES AS INSTRUMENTS!
+    voltage_device: sim900
+    multimeter_device: agilent
     sensitivity: 1.0e-7 # A/V
     preamp_bias: 0.0 # V
     voltage_divider: 0.01 # Vout / Vin 

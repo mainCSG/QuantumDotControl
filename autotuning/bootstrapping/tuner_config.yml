@@ -1,0 +1,7 @@
+global_turn_on:
+  abs_min_current: 0.05e-9 # A
+  fit_function: exponential
+
+pinch_off:
+  abs_min_current: 0.05e-9 # A
+  fit_function: sigmoid # come from the function fit class in qdtuner.py

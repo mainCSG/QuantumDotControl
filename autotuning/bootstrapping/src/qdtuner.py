@@ -100,6 +100,9 @@ class SingleQuantumDotTuner:
 
     def check_turn_on(self, minV=0, maxV=None, dV=0.001):
 
+        if maxV == None:
+            maxV = self.abs_max_gate_voltage
+
         # Checks if the gate voltages provided are what they should be
         # given the device charge carrier and operation mode.
         assert np.sign(maxV) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for your given device."
@@ -177,12 +180,20 @@ class SingleQuantumDotTuner:
                 self.device_info['Properties']['Saturation'] = np.round(V_sat, 3)
                 self.device_info['Properties']['Turn On Distance'] = round(V_sat - V_turn_on, 3)
 
+                self.deviceTurnsOn = True
+                return
+
             except RuntimeError:
                 print(f"Error - fitting to \"{self.global_turn_on_info['fit_function']}\" failed. Manually adjust device info.")
+                self.deviceTurnsOn = False
+                return
+
 
     def check_pinch_offs(self, minV=None, maxV=None):
         # Checks if the gate voltages provided are what they should be
         # given the device charge carrier and operation mode.
+        assert self.deviceTurnsOn, "Device does not turn on. Why are you pinching anything off?"
+
         if maxV == None:
             maxV = self.device_info['Properties']['Saturation']
         else:
@@ -238,8 +249,10 @@ class SingleQuantumDotTuner:
         # Go through device break conditions to see if anything is flagged,
         # should return a Boolean.
         
+        # MAX CURRENT
         isExceedingMaxCurrent = np.abs(self._get_drain_current()) > self.abs_max_current
 
+        # MAX BIAS
         flag = []
         for gate_name in self.ohmics:
             gate_voltage = getattr(self.voltage_source, f'volt_{gate_name}')() 
@@ -249,6 +262,7 @@ class SingleQuantumDotTuner:
                 flag.append(False)
         isExceedingMaxOhmicBias = np.array(flag).any()
 
+        # MAX GATE VOLTAGE
         flag = []
         for gate_name in self.all_gates:
             gate_voltage = getattr(self.voltage_source, f'volt_{gate_name}')()
@@ -258,6 +272,7 @@ class SingleQuantumDotTuner:
                 flag.append(False)
         isExceedingMaxGateVoltage = np.array(flag).any()
 
+        # MAX GATE DIFFERENTIAL
         flag = []
         for i in range(len(self.all_gates)):
             for j in range(i+1, len(self.all_gates)):

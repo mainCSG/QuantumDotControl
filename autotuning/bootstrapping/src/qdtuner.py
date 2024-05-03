@@ -10,6 +10,9 @@ class DataFitter:
     def __init__(self) -> None:
         pass
 
+    def logarithmic(self, x, a, b, x0, y0):
+        return a * np.log(b*(x-x0)) + y0
+
     def exponential(self, x, a, b, x0, y0):
         return a * np.exp(b * (x-x0)) + y0
 
@@ -23,7 +26,8 @@ class SingleQuantumDotTuner:
     def __init__(self, 
                  device_config: str, 
                  station_config: str,
-                 tuner_config: str) -> None:
+                 tuner_config: str,
+                 qcodes_config: str) -> None:
 
         self.DataFitter = DataFitter()
 
@@ -68,7 +72,7 @@ class SingleQuantumDotTuner:
         self.abs_max_gate_differential = self.device_info['properties']['abs_max_gate_differential']
 
         print("Connecting to station ... ")
-        self.station = qc.Station(config_file=station_config)
+        self.station = qc.Station(config_file=qcodes_config)
         self.station.load_all_instruments()
         self.voltage_source = getattr(self.station, self.voltage_device)
         self.drain_mm_device = getattr(self.station, self.multimeter_device)
@@ -89,7 +93,7 @@ class SingleQuantumDotTuner:
         print(f"Creating/initializing the experiment in the database ... ")
         self.initialization_exp = qc.dataset.load_or_create_experiment(
             'Initialization',
-            sample_name=self.device['sample_name']
+            sample_name=self.device_info['characteristics']['sample_name']
         )
         print("Done!")
 
@@ -98,7 +102,7 @@ class SingleQuantumDotTuner:
         for gate_name in gates:
             self.voltage_source.set_smooth({gate_name: Vbias})
 
-    def check_turn_on(self, minV=0, maxV=None, dV=0.001):
+    def check_turn_on(self, minV=0, maxV=None, dV=0.001, delay=0.01):
 
         if maxV == None:
             maxV = self.abs_max_gate_voltage
@@ -106,7 +110,7 @@ class SingleQuantumDotTuner:
         # Checks if the gate voltages provided are what they should be
         # given the device charge carrier and operation mode.
         assert np.sign(maxV) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for your given device."
-        assert np.sign(minV) == self.voltage_sign, "Double check the sign of the gate voltage (minV) for your given device."
+        assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, "Double check the sign of the gate voltage (minV) for your given device."
 
         # Set up gate sweeps
         num_steps = int(np.abs(maxV-minV) / dV) + 1
@@ -115,10 +119,16 @@ class SingleQuantumDotTuner:
         print("Zeroing all gates ... ")
         self._zero_gates(gates_involved)
         print("Done!")
+
+        print(f"Bringing gates to {minV} V ... ")
+        self._set_gates_to_value(gates_involved, minV)
+        print("Done!")
+
+        print(f"Ramping up gates in {gates_involved} from {minV} V to {maxV} V ...")
         sweep_list = []
         for gate_name in gates_involved:
             sweep_list.append(
-                qc.dataset.LinSweep(getattr(self.voltage_source, f'volt_{gate_name}'), 0, maxV, num_steps, 0.01, get_after_set=False)
+                qc.dataset.LinSweep(getattr(self.voltage_source, f'volt_{gate_name}'), minV, maxV, num_steps, delay, get_after_set=False)
             )
 
         # Execute the measurement
@@ -127,9 +137,11 @@ class SingleQuantumDotTuner:
                 *sweep_list
             ),
             self.drain_volt,
+            write_period=0.1,
             break_condition=self._check_break_conditions,
-            measurement_name='Turn On',
-            exp=self.initialization_exp
+            measurement_name='Device Turn On',
+            exp=self.initialization_exp,
+            show_progress=True
         )
 
         # Get last dataset recorded, convert to current units
@@ -146,6 +158,8 @@ class SingleQuantumDotTuner:
         axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[-1])*self.abs_max_current, alpha=0.5, c='g', linestyle='--', label=r'$I_{\max}$')
         axes.set_ylabel(r'$I$ (A)')
         axes.set_xlabel(r'$V_{GATES}$ (V)')
+        axes.legend(loc='best')
+
         axes.set_title('Global Device Turn-On')
 
         # Mask out any data that is above the minimum turn-on current
@@ -156,15 +170,18 @@ class SingleQuantumDotTuner:
         Y_masked = Y[mask]
 
         # Do the fit if possible
-        if len(mask) <= 4:
+        if len(mask) <= 4 or len(X_masked) <= 4:
             print("Insufficient points above turn-on to do any fitting. Decrease dV or increase Vmax.")
         else:
             try:
-                guess = (-max(Y_masked), 0.5, min(X_masked), max(Y_masked))
+                guess = self.global_turn_on_info['guess']
                 fit_params, fit_cov = sp.optimize.curve_fit(getattr(self.DataFitter, self.global_turn_on_info['fit_function']), X_masked, Y_masked, guess)
                 # Extract relevant data from fit params
                 a, b, x0, y0 = fit_params
-                V_turn_on =  np.log(-y0/a)/b + x0
+                if self.global_turn_on_info['fit_function'] == 'exponential':
+                    V_turn_on =  np.log(-y0/a)/b + x0
+                elif self.global_turn_on_info['fit_function'] == 'logarithmic':
+                    V_turn_on = np.exp(-y0/a)/b + x0
                 V_sat = df_current[f'{self.voltage_device}_volt_{gates_involved[0]}'].iloc[-2] # saturation is the last voltage on the gates
 
                 # Plot / print results to user

@@ -1,33 +1,3 @@
-instruments: 
-    sim900:
-        type: qcodes_contrib_drivers.drivers.StanfordResearchSystems.SIM928.SIM928
-        address: GPIB0::3::INSTR
-        
-        init: 
-            slot_names: {1: 'S', 2: 'STL', 3: 'LB', 4: 'P', 5: 'RB', 6: 'STR'}
-
-        parameters:
-            # Following params control ramp rate for set_smooth method.
-            # E.g. volt_S will ramp at a rate of 0.001 V per 1 second.
-
-            smooth_timestep: {initial_value: 0.05}
-
-            volt_S_step: {initial_value: 0.01}
-
-            volt_STL_step: {initial_value: 0.01}
-
-            volt_LB_step: {initial_value: 0.01}
-
-            volt_P_step: {initial_value: 0.01}
-
-            volt_RB_step: {initial_value: 0.01}
-
-            volt_STR_step: {initial_value: 0.01}
-
-    agilent:
-        type: qcodes.instrument_drivers.agilent.Agilent_34401A.Agilent34401A
-        address: GPIB0::21::INSTR
-
 general_info:
 
     # SAME NAMES AS INSTRUMENTS!
@@ -36,4 +6,4 @@ general_info:
     sensitivity: 1.0e-7 # A/V
     preamp_bias: 0.0 # V
     voltage_divider: 0.01 # Vout / Vin 
-    voltage_resolution: 1.0e-3
+    voltage_resolution: 1.0e-3 # V

@@ -22,12 +22,17 @@ properties:
   turn_on: 'N/A' # Volts
   saturation: 'N/A' # Volts
 
-  pinch_off: # Use same names as station_config.yml
+  LB: 
+    pinch_off: 
+      value: 'N/A' # Volts
+      width: 'N/A' # Volts
 
-    LB: 'N/A' # Volts
+  RB: 
+    pinch_off:
+      value: 'N/A' # Volts
+      width: 'N/A' # Volts
 
-    RB: 'N/A' # Volts
-
-    STR: 'N/A' # Volts
-
-  
+  STR: 
+    pinch_off:
+      value: 'N/A' # Volts
+      width: 'N/A' # Volts

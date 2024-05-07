@@ -6,6 +6,76 @@ import matplotlib.pyplot as plt
 import yaml, datetime, sys
 from pathlib import Path
 
+from qcodes.dataset import AbstractSweep
+from qcodes.dataset.dond.do_nd_utils import ActionsT
+from qcodes.parameters import ParameterBase
+import numpy.typing as npt
+
+class LinSweep_SIM928(AbstractSweep[np.float64]):
+    """
+    Linear sweep.
+
+    Args:
+        param: Qcodes parameter to sweep.
+        start: Sweep start value.
+        stop: Sweep end value.
+        num_points: Number of sweep points.
+        delay: Time in seconds between two consecutive sweep points.
+        post_actions: Actions to do after each sweep point.
+        get_after_set: Should we perform a get on the parameter after setting it
+            and store the value returned by get rather than the set value in the dataset.
+    """
+
+    def __init__(
+        self,
+        param: ParameterBase,
+        start: float,
+        stop: float,
+        num_points: int,
+        delay: float = 0,
+        post_actions: ActionsT = (),
+        get_after_set: bool = False,
+    ):
+        self._param = param
+        self._start = start
+        self._stop = stop
+        self._num_points = num_points
+        self._delay = delay
+        self._post_actions = post_actions
+        self._get_after_set = get_after_set
+
+    def get_setpoints(self) -> npt.NDArray[np.float64]:
+        """
+        Linear (evenly spaced) numpy array for supplied start, stop and
+        num_points.
+        """
+        array = np.linspace(self._start, self._stop, self._num_points).round(3)
+        # below_two = array[np.where(array < 2)].round(3)
+        # above_two = array[np.where(array >= 2)].round(2)
+        # array = np.concatenate((below_two, above_two))
+
+        return array
+
+    @property
+    def param(self) -> ParameterBase:
+        return self._param
+
+    @property
+    def delay(self) -> float:
+        return self._delay
+
+    @property
+    def num_points(self) -> int:
+        return self._num_points
+
+    @property
+    def post_actions(self) -> ActionsT:
+        return self._post_actions
+
+    @property
+    def get_after_set(self) -> bool:
+        return self._get_after_set
+
 class DataFitter:
     def __init__(self) -> None:
         pass
@@ -102,7 +172,10 @@ class SingleQuantumDotTuner:
         for gate_name in gates:
             self.voltage_source.set_smooth({gate_name: Vbias})
 
-    def check_turn_on(self, minV=0, maxV=None, dV=0.001, delay=0.01):
+    def check_turn_on(self, minV=0, maxV=None, dV=None, delay=0.01):
+
+        if dV == None:
+            dV = self.voltage_resolution
 
         if maxV == None:
             maxV = self.abs_max_gate_voltage
@@ -113,7 +186,7 @@ class SingleQuantumDotTuner:
         assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, "Double check the sign of the gate voltage (minV) for your given device."
 
         # Set up gate sweeps
-        num_steps = int(np.abs(maxV-minV) / dV) + 1
+        num_steps = self._calculate_num_of_steps(minV, maxV, dV)
         gates_involved = self.barriers + self.leads
 
         print("Zeroing all gates ... ")
@@ -128,7 +201,7 @@ class SingleQuantumDotTuner:
         sweep_list = []
         for gate_name in gates_involved:
             sweep_list.append(
-                qc.dataset.LinSweep(getattr(self.voltage_source, f'volt_{gate_name}'), minV, maxV, num_steps, delay, get_after_set=False)
+                LinSweep_SIM928(getattr(self.voltage_source, f'volt_{gate_name}'), minV, maxV, num_steps, delay, get_after_set=False)
             )
 
         # Execute the measurement
@@ -182,7 +255,7 @@ class SingleQuantumDotTuner:
                     V_turn_on =  np.log(-y0/a)/b + x0
                 elif self.global_turn_on_info['fit_function'] == 'logarithmic':
                     V_turn_on = np.exp(-y0/a)/b + x0
-                V_sat = df_current[f'{self.voltage_device}_volt_{gates_involved[0]}'].iloc[-2] # saturation is the last voltage on the gates
+                V_sat = df_current[f'{self.voltage_device}_volt_{gates_involved[0]}'].iloc[-3] # saturation is the last voltage on the gates
 
                 # Plot / print results to user
                 axes.plot(X_masked, getattr(self.DataFitter, self.global_turn_on_info['fit_function'])(X_masked, a, b, x0, y0), 'r-')
@@ -190,8 +263,8 @@ class SingleQuantumDotTuner:
                 axes.axvline(x=V_sat,alpha=0.5, linestyle='--',c='b',label=r'$V_{\max}$')
                 axes.legend(loc='best')
 
-                print(f"Device turns on at {V_turn_on} V")
-                print(f"Device saturates at {V_sat} V")
+                print(f"Device turns on at {np.round(V_turn_on, 2)} V")
+                print(f"Device saturates at {np.round(V_sat, 2)} V")
 
                 # Store in device dictionary for later
                 self.device_info['properties']['turn_on'] = np.round(V_turn_on, 3)
@@ -211,10 +284,13 @@ class SingleQuantumDotTuner:
                     self.device_info['properties']['turn_on'] = V_turn_on
                     self.device_info['properties']['saturation'] = V_sat
                     
-    def check_pinch_offs(self, minV=None, maxV=None):
+    def check_pinch_offs(self, minV=None, maxV=None, dV=None, delay=0.01):
         
         # Can't pinch off if not turned on.
         assert self.deviceTurnsOn, "Device does not turn on. Why are you pinching anything off?"
+
+        if dV == None:
+            dV = self.voltage_resolution
 
         # Checks if the gate voltages provided are what they should be
         # given the device charge carrier and operation mode.
@@ -224,35 +300,45 @@ class SingleQuantumDotTuner:
             assert np.sign(maxV) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for your given device."
         
         if minV == None:
-            minV = self.device_info['properties']['saturation'] - self.device_info['properties']['abs_max_gate_differential']
+            if self.voltage_sign == 1:
+                minV = max(0, round(self.device_info['properties']['saturation'] - self.device_info['properties']['abs_max_gate_differential'], 3))
+            elif self.voltage_sign == -1:
+                minV = min(0, round(self.device_info['properties']['saturation'] - self.device_info['properties']['abs_max_gate_differential'], 3))
         else:
-            assert np.sign(minV) == self.voltage_sign, "Double check the sign of the gate voltage (minV) for your given device."
+            assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, "Double check the sign of the gate voltage (minV) for your given device."
 
         # When checking pinch-off have the gates initially where the device saturated
-        num_steps = int(np.abs(maxV-minV) / self.voltage_resolution) + 1
+        num_steps = self._calculate_num_of_steps(minV, maxV, dV)
         gates_involved = self.barriers + self.leads
 
         print(f"Settings gates in {gates_involved} to {maxV} V ... ")
         self._set_gates_to_value(gates_involved, maxV)
         print("Done!")
 
-        print(f"Ramping up gates in {gates_involved}...")
         sweep_list = []
         for gate_name in gates_involved:
             sweep_list.append(
-                qc.dataset.LinSweep(getattr(self.voltage_source, f'volt_{gate_name}'), maxV, minV, num_steps, 0.01, get_after_set=False)
+                LinSweep_SIM928(getattr(self.voltage_source, f'volt_{gate_name}'), maxV, minV, num_steps, delay, get_after_set=False)
             )
-        print("Done!")
+
+        def adjusted_break_condition():
+            return self._check_break_conditions() or np.abs(self._get_drain_current()) < self.pinch_off_info['abs_min_current']
 
         for sweep in sweep_list:
-            print(f"Pinching off {str(sweep._param).split('_')[-1]} from {minV} V to {maxV} V ... ")
+            print(f"Pinching off {str(sweep._param).split('_')[-1]} from {maxV} V to {minV} V ... ")
             result = qc.dataset.dond(
                 sweep,
                 self.drain_volt,
-                break_condition=self._check_break_conditions,
+                break_condition=adjusted_break_condition,
                 measurement_name='{} Pinch Off'.format(str(sweep._param).split('_')[-1]),
-                exp=self.initialization_exp
-            )
+                exp=self.initialization_exp,
+                show_progress=True
+            )   
+            print(f"Done!")
+
+            print(f"Returning {str(sweep._param).split('_')[-1]} back to {maxV} V ... ")
+            self._set_gates_to_value([str(sweep._param).split('_')[-1]], maxV)
+            print(f"Done!")
 
             # Get last dataset recorded, convert to current units
             dataset = qc.load_last_experiment().last_data_set()
@@ -270,42 +356,71 @@ class SingleQuantumDotTuner:
             axes.set_xlabel(r'$V_{{{gate}}}$ (V)'.format(gate=str(sweep._param).split('_')[-1]))
             axes.set_title('{} Pinch Off'.format(str(sweep._param).split('_')[-1]))
             axes.set_xlim(0, self.device_info['properties']['saturation'])
-            axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[-1])*self.pinch_off_info['abs_min_current'], alpha=0.5,c='g', linestyle=':', label=r'$I_{\min}$')
-            axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[-1])*self.abs_max_current, alpha=0.5,c='g', linestyle='--', label=r'$I_{\max}$')
+            axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[0])*self.pinch_off_info['abs_min_current'], alpha=0.5,c='g', linestyle=':', label=r'$I_{\min}$')
+            axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[0])*self.abs_max_current, alpha=0.5,c='g', linestyle='--', label=r'$I_{\max}$')
                 
             # Mask out any data that is above the minimum turn-on current
-            mask = df_current[f'{self.multimeter_device}_current'].abs() > self.pinch_off_info['abs_min_current'] 
-            X = df_current[f'{str(sweep._param)}']
-            Y = df_current[f'{self.multimeter_device}_current']
-            X_masked = X[mask]
-            Y_masked = Y[mask]
+            if str(sweep._param).split('_')[-1] in self.leads:
+                mask = df_current[f'{self.multimeter_device}_current'].abs() > self.pinch_off_info['abs_min_current'] 
+                X = df_current[f'{str(sweep._param)}']
+                Y = df_current[f'{self.multimeter_device}_current']
+                X_masked = X[mask]
+                Y_masked = Y[mask]
+            else:
+                X = df_current[f'{str(sweep._param)}']
+                Y = df_current[f'{self.multimeter_device}_current']
+                X_masked = X
+                Y_masked = Y
 
             # Do the fit if possible
-            if len(mask) <= 4:
+            if len(X_masked) <= 4:
                 print("Insufficient points above turn-on to do any fitting. Decrease dV or increase Vmax.")
+                print("Trying to fit to linear fit to see if barrier is broken.")
+
+                try:
+                    # Guess a line fit with zero slope.
+                    guess = (0,np.sign(df_current[f'{self.multimeter_device}_current'].iloc[-1])*self.abs_max_current)
+                    fit_params, fit_cov = sp.optimize.curve_fit(getattr(self.DataFitter, 'linear'), X, Y, guess)
+                    m, b = fit_params
+                    plt.plot(X, self.DataFitter.linear(X,m,b), 'r-')
+                    print("Fits well to line, most likely barrier is shorted somewhere.")
+
+                except RuntimeError:
+                    print("Error - fitting to \"linear\" failed.")
+
             else:
                 # Try and fit to sigmoid and get fit params
                 try: 
-                    guess = (-5e-9,-100,self.device_info['properties']['turn_on'],5e-9)
-                    fit_params, fit_cov = sp.optimize.curve_fit(getattr(self.DataFitter, self.pinch_off_info['fit_function']), X_masked, Y_masked, guess)
-                    a, b, x0, y0 = fit_params
+                    if str(sweep._param).split('_')[-1] in self.leads:
 
-                    plt.plot(X, getattr(self.DataFitter, self.pinch_off_info['fit_function'])(X, a, b, x0, y0), 'r-')
+                        fit_function = getattr(self.DataFitter, 'logarithmic')
+                        guess = self.global_turn_on_info['guess']
 
-                    V_pinchoff = round(min(
-                        np.abs(x0 - np.sqrt(8) / b),
-                        np.abs(x0 + np.sqrt(8) / b)
-                    ),3)
-                    V_pinchoff_width = abs(round(2 * np.sqrt(8) / b,3))
+                        fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
+                        a, b, x0, y0 = fit_params
+                        
+                        V_pinchoff = round(np.exp(-y0/a)/b + x0,3)
+                        self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['value'] = V_pinchoff
+                   
+                    else:
 
+                        fit_function = getattr(self.DataFitter, self.pinch_off_info['fit_function'])
+                        guess = (-5e-9,-100,self.device_info['properties']['turn_on'],5e-9)
+
+                        fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
+                        a, b, x0, y0 = fit_params
+
+                        V_pinchoff = round(min(
+                            np.abs(x0 - np.sqrt(8) / b),
+                            np.abs(x0 + np.sqrt(8) / b)
+                        ),2)
+                        V_pinchoff_width = abs(round(2 * np.sqrt(8) / b,2))
+                        self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['value'] = V_pinchoff
+                        self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['width'] = V_pinchoff_width #V
+
+                    plt.plot(X, fit_function(X, a, b, x0, y0), 'r-')
                     axes.axvline(x=V_pinchoff, alpha=0.5, linestyle=':', c='b', label=r'$V_{\min}$')
                     axes.legend(loc='best')
-
-                    self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['value'] = V_pinchoff
-                    self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['width'] = V_pinchoff_width #V
-
-                    print(f"Width of sigmoid: {V_pinchoff_width} V")
-                    print(f"{str(sweep._param).split('_')[-1]} Pinch off: {V_pinchoff} V")
                 
                 except RuntimeError:
 
@@ -323,8 +438,17 @@ class SingleQuantumDotTuner:
                     except RuntimeError:
                         print("Error - fitting to \"linear\" failed.")
 
-    def barrier_barrier_sweep(self, B1: str = None, B2: str = None, B1_bounds: tuple = (None, None), B2_bounds: tuple = (None, None)):
+    def barrier_barrier_sweep(self, B1: str = None, B2: str = None, B1_bounds: tuple = (None, None), B2_bounds: tuple = (None, None), dV=None, delay=0.01, voltage_configuration: dict = {}):
 
+        if voltage_configuration != {}:
+            for gate_name, voltage in voltage_configuration.items():
+                print(f"Setting {gate_name} to {voltage} V ... ")
+                self._set_gates_to_value([gate_name], voltage)
+                print("Done!")
+
+        if dV == None:
+            dV = self.voltage_resolution
+        
         # If there are only two barriers in the device config
         # then they are the only things that can be swept
         if B1 == None or B2 == None and len(self.barriers) == 2:
@@ -344,42 +468,67 @@ class SingleQuantumDotTuner:
             assert np.sign(minV_B2) == self.voltage_sign, "Double check the sign of the gate voltage (minV) for B2."
 
         if maxV_B1 == None:
-            maxV_B1 = self.device_info['properties']['saturation']
+            if self.voltage_sign == 1:
+                maxV_B1 = min(self.device_info['properties'][B1]['pinch_off']['value']+self.voltage_sign*self.device_info['properties'][B1]['pinch_off']['width'], self.device_info['properties']['saturation'])
+            elif self.voltage_sign == -1:
+                maxV_B1 = max(self.device_info['properties'][B1]['pinch_off']['value']+self.voltage_sign*self.device_info['properties'][B1]['pinch_off']['width'], self.device_info['properties']['saturation'])
         else:
             assert np.sign(maxV_B1) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for B1."
 
         if maxV_B2 == None:
-            maxV_B2 = self.device_info['properties']['saturation']
+            if self.voltage_sign == 1:
+                maxV_B2 = min(self.device_info['properties'][B2]['pinch_off']['value']+self.voltage_sign*self.device_info['properties'][B2]['pinch_off']['width'], self.device_info['properties']['saturation'])
+            elif self.voltage_sign == -1:
+                maxV_B2 = max(self.device_info['properties'][B2]['pinch_off']['value']+self.voltage_sign*self.device_info['properties'][B2]['pinch_off']['width'], self.device_info['properties']['saturation'])
         else:
             assert np.sign(maxV_B2) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for B2."
 
-        num_steps_B1 = int(np.abs(maxV_B1 - minV_B1) / self.voltage_resolution) + 1
-        num_steps_B2 = int(np.abs(maxV_B2 - minV_B2) / self.voltage_resolution) + 1
+        num_steps_B1 = self._calculate_num_of_steps(minV_B1, maxV_B1, dV)
+        num_steps_B2 = self._calculate_num_of_steps(minV_B2, maxV_B2, dV)
 
         print(f"Setting lead gates to saturation gate voltage ... ")
         self._set_gates_to_value(self.leads, self.device_info['properties']['saturation'])
         print("Done!")
 
-        print(f"Setting B1 to {maxV_B1} V ...")
+        print(f"Setting {B1} to {maxV_B1} V ...")
         self._set_gates_to_value([B1], maxV_B1)
         print(f"Done!")
 
-        print(f"Setting B2 to {maxV_B2} V ...")
+        print(f"Setting {B2} to {maxV_B2} V ...")
         self._set_gates_to_value([B2], maxV_B2)
         print(f"Done!")
 
-        sweep_B1 = qc.dataset.LinSweep(getattr(self.voltage_source, f'volt_{B1}'), maxV_B1, minV_B1, num_steps_B1, 0.01, get_after_set=False)
-        sweep_B2 = qc.dataset.LinSweep(getattr(self.voltage_source, f'volt_{B2}'), maxV_B2, minV_B2, num_steps_B2, 0.01, get_after_set=False)
+        def smooth_reset():
+            self._set_gates_to_value([B2], maxV_B2)
 
-        result = qc.dataset.dond(
-            sweep_B1,
-            sweep_B2,
-            self.drain_volt, 
+        # Running masurement with do2d
+        print(f"Stepping {B1} from {maxV_B1} V to {minV_B1} V ...")
+        print(f"Sweeping {B2} from {maxV_B2} V to {minV_B2} V ...")
+        result = qc.dataset.do2d(
+            getattr(self.voltage_source, f'volt_{B1}'), # outer loop
+            maxV_B1,
+            minV_B1,
+            num_steps_B1,
+            delay,
+            getattr(self.voltage_source, f'volt_{B2}'), # inner loop
+            maxV_B2,
+            minV_B2,
+            num_steps_B2,
+            delay,
+            self.drain_volt,
+            after_inner_actions = [smooth_reset],
+            set_before_sweep=True, 
             show_progress=True, 
             break_condition=self._check_break_conditions,
             measurement_name='Barrier Barrier Sweep',
             exp=self.initialization_exp
         )
+        print("Done!")
+
+        print(f"Settings gates {B1}, {B2} to {maxV_B1} V, {maxV_B2} V respectively ... ")
+        self._set_gates_to_value([B1], maxV_B1)
+        self._set_gates_to_value([B2], maxV_B2)
+        print("Done!")
 
         # Get last dataset recorded, convert to current units
         dataset = qc.load_last_experiment().last_data_set()
@@ -389,9 +538,9 @@ class SingleQuantumDotTuner:
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.sensitivity) # sensitivity
 
         # Plot 2D colormap
-        df_pivoted = df.pivot_table(values=f'{self.multimeter_device}_current', index=[B1], columns=[B2])
+        df_pivoted = df_current.pivot_table(values=f'{self.multimeter_device}_current', index=[f'{self.voltage_device}_volt_{B1}'], columns=[f'{self.voltage_device}_volt_{B2}'])
         B1_data, B2_data = df_pivoted.columns, df_pivoted.index
-        raw_current_data = df_pivoted.to_numpy()[:,:-1] 
+        raw_current_data = df_pivoted.to_numpy()[:,:-1] / 1.0e-9 # convert to nA
         B1_grad = np.gradient(raw_current_data, axis=1)
         B2_grad = np.gradient(raw_current_data, axis=0)
 
@@ -431,10 +580,194 @@ class SingleQuantumDotTuner:
 
         fig.tight_layout()
 
-    def coulomb_blockade(self, P: str, S: str):
-        pass
+    def coulomb_blockade(self, P: str = None, P_bounds: tuple = (None, None), voltage_configuration: dict = {}, dV = None, delay=0.2):
+        
+        if voltage_configuration != {}:
+            for gate_name, voltage in voltage_configuration.items():
+                print(f"Setting {gate_name} to {voltage} V ... ")
+                self._set_gates_to_value([gate_name], voltage)
+                print("Done!")
 
-    def current_trace(self, f_sampling: int, t_capture: int, NPLC=None):
+        if P == None:
+            P = self.plungers[0]
+
+        if dV == None:
+            dV = self.voltage_resolution
+
+        minV_P, maxV_P = P_bounds
+
+        if minV_P == None:
+            minV_P = 0
+        else:
+            assert np.sign(minV_P) == self.voltage_sign or np.sign(minV_P) == 0, "Double check the sign of the gate voltage (minV) for B2."
+
+        if maxV_P == None:
+            maxV_P = self.voltage_sign
+        else:
+            assert np.sign(maxV_P) == self.voltage_sign or np.sign(maxV_P) == 0, "Double check the sign of the gate voltage (maxV) for B1."
+
+        num_steps_P = self._calculate_num_of_steps(minV_P, maxV_P, dV)
+
+        print(f"Sweeping plunger gate {P} from {minV_P} V to {maxV_P} V ...")
+        P_sweep = LinSweep_SIM928(getattr(self.voltage_source, f'volt_{P}'), minV_P, maxV_P, num_steps_P, delay, get_after_set=False)
+
+        print(f"Setting plunger gate {P} to {minV_P} V ...")
+        self._set_gates_to_value([P], minV_P)
+        # Execute the measurement
+        result = qc.dataset.dond(
+            P_sweep,
+            self.drain_volt,
+            write_period=0.1,
+            break_condition=self._check_break_conditions,
+            measurement_name='Coulomb Blockade',
+            exp=self.initialization_exp,
+            show_progress=True
+        )
+
+        # Get last dataset recorded, convert to current units
+        dataset = qc.load_last_experiment().last_data_set()
+        df = dataset.to_pandas_dataframe().reset_index()
+        df_current = df.copy()
+        df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
+        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.sensitivity) # sensitivity
+
+        # Plot current v.s. random gate (since they are swept together)
+        axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_volt_{P}', marker= 'o',s=10)
+        df_current.plot.line(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_volt_{P}', ax=axes, linewidth=1)
+        axes.set_ylabel(r'$I$ (A)')
+        axes.set_xlabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=P))
+        axes.legend(loc='best')
+
+        axes.set_title('Coulomb Blockade')
+
+    def coulomb_diamonds(self, 
+                         ohmic: str = None, 
+                         gate: str = None, 
+                         S_bounds: tuple = (None, None),
+                         gate_bounds: tuple = (None, None),
+                         dV_ohmic: float = None, 
+                         dV_gate: float = None,
+                         voltage_configuration: dict = {},
+                         delay: float =0.2
+                         ):
+
+        if voltage_configuration != {}:
+            for gate_name, voltage in voltage_configuration.items():
+                print(f"Setting {gate_name} to {voltage} V ... ")
+                self._set_gates_to_value([gate_name], voltage)
+                print("Done!")
+
+        if dV_ohmic == None:
+            dV_ohmic = self.voltage_resolution
+        
+        if dV_gate == None:
+            dV_gate = self.voltage_resolution
+        
+        minV_ohmic, maxV_ohmic = S_bounds
+        minV_gate, maxV_gate = gate_bounds
+
+        if minV_gate == None:
+            minV_gate = self.device_info['properties'][gate]['pinch_off']['value']
+        else:
+            assert np.sign(minV_gate) == self.voltage_sign or np.sign(minV_gate) == 0, f"Double check the sign of the gate voltage (minV) for {gate}."
+
+        if maxV_gate == None:
+            maxV_gate = self.device_info['properties']['saturation']
+        else:
+            assert np.sign(maxV_gate) == self.voltage_sign or np.sign(maxV_gate) == 0, f"Double check the sign of the gate voltage (maxV) for {gate}."
+
+        if minV_ohmic == None:
+            minV_ohmic = -1 * float(getattr(self.voltage_source, f"volt_{ohmic}")())
+
+        if maxV_ohmic == None:
+            maxV_ohmic = float(getattr(self.voltage_source, f"volt_{ohmic}")())
+   
+        num_steps_ohmic = self._calculate_num_of_steps(minV_ohmic, maxV_ohmic, dV_ohmic)
+        num_steps_gate = self._calculate_num_of_steps(minV_gate, maxV_gate, dV_gate)
+
+        def smooth_reset():
+            self._set_gates_to_value([ohmic], maxV_ohmic)
+
+        # Running masurement with do2d
+        print(f"Stepping {gate} from {maxV_gate} V to {minV_gate}...")
+        print(f"Sweeping {ohmic} from {maxV_ohmic} V to {minV_ohmic}...")
+        result = qc.dataset.do2d(
+            getattr(self.voltage_source, f'volt_{gate}'), # outer loop
+            maxV_gate,
+            minV_gate,
+            num_steps_gate,
+            delay,
+            getattr(self.voltage_source, f'volt_{ohmic}'), # inner loop
+            maxV_ohmic,
+            minV_ohmic,
+            num_steps_ohmic,
+            delay,
+            self.drain_volt,
+            after_inner_actions = [smooth_reset],
+            set_before_sweep=True, 
+            show_progress=True, 
+            break_condition=self._check_break_conditions,
+            measurement_name='Coulomb Blockade',
+            exp=self.initialization_exp
+        )
+        print("Done!")
+
+        print(f"Settings gates {gate}, {ohmic} to {maxV_gate} V, {maxV_ohmic} V respectively ... ")
+        self._set_gates_to_value([gate], maxV_gate)
+        self._set_gates_to_value([ohmic], maxV_ohmic)
+        print("Done!")
+
+        # Get last dataset recorded, convert to current units
+        dataset = qc.load_last_experiment().last_data_set()
+        df = dataset.to_pandas_dataframe().reset_index()
+        df_current = df.copy()
+        df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
+        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.sensitivity) # sensitivity
+
+        # Plot 2D colormap
+        df_pivoted = df_current.pivot_table(values=f'{self.multimeter_device}_current', index=[f'{self.voltage_device}_volt_{gate}'], columns=[f'{self.voltage_device}_volt_{ohmic}'])
+        gate_data, ohmic_data = df_pivoted.columns, df_pivoted.index
+        raw_current_data = df_pivoted.to_numpy()[:,:-1] / 1.0e-9 # convert to nA
+        gate_grad = np.gradient(raw_current_data, axis=1)
+        ohmic_grad = np.gradient(raw_current_data, axis=0)
+
+        fig, (ax1, ax2) = plt.subplots(1,2, figsize=(10,10))
+        fig.suptitle("Coulomb Blockade")
+
+        im_ratio = raw_current_data.shape[0]/raw_current_data.shape[1]
+
+        cbar_ax1 = plt.colorbar(ax1.imshow(
+            raw_current_data,
+            extent=[gate_data[0], gate_data[-1], ohmic_data[0], ohmic_data[-1]],
+            origin='lower',
+            cmap='coolwarm',
+            aspect=1/im_ratio
+        ), ax=ax1,fraction=0.046, pad=0.04)
+
+        cbar_ax1.set_label(r'$I_{SD}$ (nA)')
+        ax1.set_title(r'$I_{SD}$')
+        ax1.set_xlabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=ohmic))
+        ax1.set_ylabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=gate))
+
+        # V grad is actually horizontal
+        grad_vector = (1,1) # Takes the gradient along 45 degree axis
+
+        cbar_ax2 = plt.colorbar(ax2.imshow(
+            np.sqrt(grad_vector[0] * gate_grad**2 +   grad_vector[1]* ohmic_grad**2),
+            extent=[gate_data[0], gate_data[-1], ohmic_data[0], ohmic_data[-1]],
+            origin='lower',
+            cmap='coolwarm',
+            aspect=1/im_ratio
+        ), ax=ax2,fraction=0.046, pad=0.04)
+
+        cbar_ax2.set_label(r'$\nabla_{\theta=45\circ} I_{SD}$ (nA/V)')
+        ax2.set_title(r'$\nabla I_{SD}$')
+        ax2.set_xlabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=ohmic))
+        ax2.set_ylabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=gate))
+
+        fig.tight_layout()
+
+    def current_trace(self, f_sampling: int, t_capture: int, NPLC=1.0):
 
         num_of_samples = f_sampling * t_capture 
 
@@ -458,6 +791,13 @@ class SingleQuantumDotTuner:
         # Go through device break conditions to see if anything is flagged,
         # should return a Boolean.
         
+        breakConditionsDict = {
+            0: 'Maximum current is exceeded.',
+            1: 'Maximum ohmic bias is exceeded.',
+            2: 'Maximum gate voltage is exceeded.',
+            3: 'Maximum gate differential is exceeded.',
+        }
+
         # MAX CURRENT
         isExceedingMaxCurrent = np.abs(self._get_drain_current()) > self.abs_max_current
 
@@ -483,23 +823,30 @@ class SingleQuantumDotTuner:
 
         # MAX GATE DIFFERENTIAL
         flag = []
-        for i in range(len(self.all_gates)):
-            for j in range(i+1, len(self.all_gates)):
+        gates_to_check = self.barriers + self.leads
+        for i in range(len(gates_to_check)):
+            for j in range(i+1, len(gates_to_check)):
                 gate_voltage_i = getattr(self.voltage_source, f'volt_{self.all_gates[i]}')()
                 gate_voltage_j = getattr(self.voltage_source, f'volt_{self.all_gates[j]}')()
                 # Check if the absolute difference between gate voltages is greater than 0.5
-                if np.abs(gate_voltage_i - gate_voltage_j) > self.abs_max_gate_differential:
+                if np.abs(gate_voltage_i - gate_voltage_j) >= self.abs_max_gate_differential:
                     flag.append(True)
                 else:
                     flag.append(False)
         isExceedingMaxGateDifferential = np.array(flag).any()
 
-        isExceeded = np.array([
+        listOfBreakConditions = [
             isExceedingMaxCurrent,
             isExceedingMaxOhmicBias,
+            isExceedingMaxGateVoltage,
             isExceedingMaxGateDifferential,
-            isExceedingMaxGateVoltage
-        ]).any()
+        ]
+        isExceeded = np.array(listOfBreakConditions).any()
+        breakConditions = np.where(np.any(listOfBreakConditions == True))[0]
+        if len(breakConditions) != 0:
+            for index in breakConditions.tolist():
+                print(breakConditionsDict[index]+"\n")
+
         return isExceeded
 
     def _get_drain_current(self):
@@ -555,3 +902,6 @@ class SingleQuantumDotTuner:
                 return valid[choice]
             else:
                 sys.stdout.write("Please respond with 'yes' or 'no' " "(or 'y' or 'n').\n")
+
+    def _calculate_num_of_steps(self, minV, maxV, dV):
+        return round(np.abs(maxV-minV) / dV) + 1

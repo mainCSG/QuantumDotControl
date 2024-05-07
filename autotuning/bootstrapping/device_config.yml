@@ -14,23 +14,32 @@ characteristics:
 
 properties:
 
-  abs_max_current: 1.0e-9 # A
-  abs_max_ohmic_bias: 1.0e-3 # V
+  abs_max_current: 1.5e-9 # A
+  abs_max_ohmic_bias: 1.0e-3 # V (value after division)
   abs_max_gate_voltage: 3 # Volts
   abs_max_gate_differential: 2.5 # Volts
 
   turn_on: 'N/A' # Volts
   saturation: 'N/A' # Volts
 
-  LB: 
+  STL: 
     pinch_off: 
       value: 'N/A' # Volts
       width: 'N/A' # Volts
+
+  LB: 
+      pinch_off: 
+        value: 'N/A' # Volts
+        width: 'N/A' # Volts
+      bias_points:
+        value: 'N/A' # Volts
 
   RB: 
     pinch_off:
       value: 'N/A' # Volts
       width: 'N/A' # Volts
+    bias_points:
+      value: 'N/A' # Volts
 
   STR: 
     pinch_off:

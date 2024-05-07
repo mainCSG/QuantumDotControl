@@ -1,47 +1,7 @@
-# Characteristics describe the structure, shape and material of a product and can be influenced by the designer in a direct manner, whereas properties describe the product‟s behaviour.
-
-characteristics:
-
-  sample_name: 'N44_D54' 
-
-  charge_carrier: 'e' # Electrons (e) or Holes (h)
-  operation_mode: 'acc' # Gates either accumulate or deplete
-
-  ohmics: ['S']
-  barriers: ['LB', 'RB']
-  leads: ['STL']
-  plungers: ['P']
-
-properties:
-
-  abs_max_current: 1.5e-9 # A
-  abs_max_ohmic_bias: 1.0e-3 # V (value after division)
-  abs_max_gate_voltage: 3 # Volts
-  abs_max_gate_differential: 2.5 # Volts
-
-  turn_on: 'N/A' # Volts
-  saturation: 'N/A' # Volts
-
-  STL: 
-    pinch_off: 
-      value: 'N/A' # Volts
-      width: 'N/A' # Volts
-
-  LB: 
-      pinch_off: 
-        value: 'N/A' # Volts
-        width: 'N/A' # Volts
-      bias_points:
-        value: 'N/A' # Volts
-
-  RB: 
-    pinch_off:
-      value: 'N/A' # Volts
-      width: 'N/A' # Volts
-    bias_points:
-      value: 'N/A' # Volts
-
-  STR: 
-    pinch_off:
-      value: 'N/A' # Volts
-      width: 'N/A' # Volts
+{characteristics: {barriers: [LB, RB], charge_carrier: e, leads: [STL], ohmics: [
+      S], operation_mode: acc, plungers: [P], sample_name: N44_D54}, properties: {
+    LB: {bias_points: {value: N/A}, pinch_off: {value: 0.549, width: 0.17}}, RB: {
+      bias_points: {value: N/A}, pinch_off: {value: 0.584, width: 0.18}}, STL: {pinch_off: {
+        value: 1.494, width: N/A}}, STR: {pinch_off: {value: N/A, width: N/A}}, abs_max_current: 1.5e-09,
+    abs_max_gate_differential: 2.5, abs_max_gate_voltage: 3, abs_max_ohmic_bias: 0.001,
+    saturation: 2.35, turn_on: 1.616}}

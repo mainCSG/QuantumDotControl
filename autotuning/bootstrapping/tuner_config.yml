@@ -4,5 +4,5 @@ global_turn_on:
   guess: [-1.0e-9, 1, 1.3, 0]
 
 pinch_off:
-  abs_min_current: 0.05e-9 # A
+  abs_min_current: 0.025e-9 # A
   fit_function: sigmoid # come from the function fit class in qdtuner.py

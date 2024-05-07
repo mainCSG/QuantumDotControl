@@ -3,7 +3,7 @@ import qcodes as qc
 import numpy as np
 import scipy as sp
 import matplotlib.pyplot as plt
-import yaml, datetime, sys
+import yaml, datetime, sys, time, os, shutil, json
 from pathlib import Path
 
 from qcodes.dataset import AbstractSweep
@@ -53,7 +53,7 @@ class LinSweep_SIM928(AbstractSweep[np.float64]):
         # below_two = array[np.where(array < 2)].round(3)
         # above_two = array[np.where(array >= 2)].round(2)
         # array = np.concatenate((below_two, above_two))
-
+   
         return array
 
     @property
@@ -97,9 +97,17 @@ class SingleQuantumDotTuner:
                  device_config: str, 
                  station_config: str,
                  tuner_config: str,
-                 qcodes_config: str) -> None:
+                 qcodes_config: str,
+                 save_dir: str = "") -> None:
 
         self.DataFitter = DataFitter()
+
+        # Save file names
+        self.device_config = device_config
+        self.station_config = station_config
+        self.tuner_config = tuner_config
+        self.qcodes_config = qcodes_config
+        self.save_dir = save_dir
 
         # Read in tuner config information
         self.tuner_info = yaml.safe_load(Path(tuner_config).read_text())
@@ -149,22 +157,34 @@ class SingleQuantumDotTuner:
         self.drain_volt = getattr(self.station, self.multimeter_device).volt
         print("Done!")
 
-        print("Grounding device ... ")
+        print("Grounding device ... ", end=' ')
         self._zero_device()
         print("Done!")
 
-        print(f"Creating/initializing a database at ~/experiments_*.db ... ")
+        # Creates the qcodes database and sets-up the experiment
         todays_date = datetime.date.today().strftime("%Y-%m-%d")
+        self.db_folder = os.path.join(save_dir, f"{self.device_info['characteristics']['sample_name']}_{todays_date}")
+        os.makedirs(self.db_folder, exist_ok=True)
+        db_filepath =  os.path.join(self.db_folder, f"experiments_{self.device_info['characteristics']['sample_name']}_{todays_date}.db")
+        print(f"Creating/initializing a database at {db_filepath} ... ", end=' ')
         qc.dataset.initialise_or_create_database_at(
-            f"~/experiments_{todays_date}.db"
-            )
+            db_filepath
+        )
         print("Done!")
 
-        print(f"Creating/initializing the experiment in the database ... ")
+        print(f"Creating/initializing the experiment in the database ... ", end=' ')
         self.initialization_exp = qc.dataset.load_or_create_experiment(
             'Initialization',
             sample_name=self.device_info['characteristics']['sample_name']
         )
+        print("Done!")
+
+        # Copy all of the configs for safekeeping
+        print(f"Copying all of the config.yml files to the new directory ... ", end=' ')
+        shutil.copy(self.qcodes_config, self.db_folder)
+        shutil.copy(self.device_config, self.db_folder)
+        shutil.copy(self.tuner_config, self.db_folder)
+        shutil.copy(self.station_config, self.db_folder)
         print("Done!")
 
     def bias_device(self, Vbias=0):
@@ -255,7 +275,7 @@ class SingleQuantumDotTuner:
                     V_turn_on =  np.log(-y0/a)/b + x0
                 elif self.global_turn_on_info['fit_function'] == 'logarithmic':
                     V_turn_on = np.exp(-y0/a)/b + x0
-                V_sat = df_current[f'{self.voltage_device}_volt_{gates_involved[0]}'].iloc[-3] # saturation is the last voltage on the gates
+                V_sat = df_current[f'{self.voltage_device}_volt_{gates_involved[0]}'].iloc[-2] # saturation is the last voltage on the gates
 
                 # Plot / print results to user
                 axes.plot(X_masked, getattr(self.DataFitter, self.global_turn_on_info['fit_function'])(X_masked, a, b, x0, y0), 'r-')
@@ -267,8 +287,8 @@ class SingleQuantumDotTuner:
                 print(f"Device saturates at {np.round(V_sat, 2)} V")
 
                 # Store in device dictionary for later
-                self.device_info['properties']['turn_on'] = np.round(V_turn_on, 3)
-                self.device_info['properties']['saturation'] = np.round(V_sat, 3)
+                self.device_info['properties']['turn_on'] = float(round(V_turn_on, 3))
+                self.device_info['properties']['saturation'] = float(round(V_sat, 3))
 
                 self.deviceTurnsOn = True
 
@@ -283,7 +303,10 @@ class SingleQuantumDotTuner:
                     # Store in device dictionary for later
                     self.device_info['properties']['turn_on'] = V_turn_on
                     self.device_info['properties']['saturation'] = V_sat
-                    
+        
+        self._save_figure(plot_info='device_turn_on')
+        self._update_device_config_yaml()
+
     def check_pinch_offs(self, minV=None, maxV=None, dV=None, delay=0.01):
         
         # Can't pinch off if not turned on.
@@ -325,18 +348,19 @@ class SingleQuantumDotTuner:
             return self._check_break_conditions() or np.abs(self._get_drain_current()) < self.pinch_off_info['abs_min_current']
 
         for sweep in sweep_list:
-            print(f"Pinching off {str(sweep._param).split('_')[-1]} from {maxV} V to {minV} V ... ")
+
+            print(f"Pinching off {str(sweep._param).split('_')[-1]} from {maxV} V to {minV} V ... ", end=" ")
             result = qc.dataset.dond(
                 sweep,
                 self.drain_volt,
-                break_condition=adjusted_break_condition,
+                # break_condition=adjusted_break_condition,
                 measurement_name='{} Pinch Off'.format(str(sweep._param).split('_')[-1]),
                 exp=self.initialization_exp,
                 show_progress=True
             )   
             print(f"Done!")
 
-            print(f"Returning {str(sweep._param).split('_')[-1]} back to {maxV} V ... ")
+            print(f"Returning {str(sweep._param).split('_')[-1]} back to {maxV} V ... ", end=" ")
             self._set_gates_to_value([str(sweep._param).split('_')[-1]], maxV)
             print(f"Done!")
 
@@ -399,27 +423,30 @@ class SingleQuantumDotTuner:
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
                         a, b, x0, y0 = fit_params
                         
-                        V_pinchoff = round(np.exp(-y0/a)/b + x0,3)
+                        V_pinchoff = float(round(np.exp(-y0/a)/b + x0,3))
                         self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['value'] = V_pinchoff
                    
                     else:
 
                         fit_function = getattr(self.DataFitter, self.pinch_off_info['fit_function'])
-                        guess = (-5e-9,-100,self.device_info['properties']['turn_on'],5e-9)
+                        guess = (-5e-9, -100, self.device_info['properties']['turn_on'], 5e-9)
 
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
                         a, b, x0, y0 = fit_params
 
-                        V_pinchoff = round(min(
+                        V_pinchoff = float(round(min(
                             np.abs(x0 - np.sqrt(8) / b),
                             np.abs(x0 + np.sqrt(8) / b)
-                        ),2)
-                        V_pinchoff_width = abs(round(2 * np.sqrt(8) / b,2))
+                        ),3))
+                        V_pinchoff_width = float(abs(round(2 * np.sqrt(8) / b,2)))
                         self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['value'] = V_pinchoff
                         self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['width'] = V_pinchoff_width #V
 
-                    plt.plot(X, fit_function(X, a, b, x0, y0), 'r-')
+                    plt.plot(X_masked, fit_function(X_masked, a, b, x0, y0), 'r-')
                     axes.axvline(x=V_pinchoff, alpha=0.5, linestyle=':', c='b', label=r'$V_{\min}$')
+                    if str(sweep._param).split('_')[-1] not in self.leads:
+                        axes.axvline(x=V_pinchoff + self.voltage_sign * V_pinchoff_width, alpha=0.5, linestyle='--', c='b', label=r'$V_{\max}$')
+
                     axes.legend(loc='best')
                 
                 except RuntimeError:
@@ -438,7 +465,17 @@ class SingleQuantumDotTuner:
                     except RuntimeError:
                         print("Error - fitting to \"linear\" failed.")
 
-    def barrier_barrier_sweep(self, B1: str = None, B2: str = None, B1_bounds: tuple = (None, None), B2_bounds: tuple = (None, None), dV=None, delay=0.01, voltage_configuration: dict = {}):
+            self._save_figure(plot_info='{}_pinch'.format(str(sweep._param).split('_')[-1]))
+            self._update_device_config_yaml()
+
+    def barrier_barrier_sweep(self, 
+                              B1: str = None, 
+                              B2: str = None, 
+                              B1_bounds: tuple = (None, None),
+                              B2_bounds: tuple = (None, None), 
+                              dV=None, 
+                              delay=0.01, 
+                              voltage_configuration: dict = {}):
 
         if voltage_configuration != {}:
             for gate_name, voltage in voltage_configuration.items():
@@ -519,7 +556,7 @@ class SingleQuantumDotTuner:
             after_inner_actions = [smooth_reset],
             set_before_sweep=True, 
             show_progress=True, 
-            break_condition=self._check_break_conditions,
+            # break_condition=self._check_break_conditions,
             measurement_name='Barrier Barrier Sweep',
             exp=self.initialization_exp
         )
@@ -580,6 +617,8 @@ class SingleQuantumDotTuner:
 
         fig.tight_layout()
 
+        self._save_figure(plot_info=f'{B1}_{B2}_sweep')
+
     def coulomb_blockade(self, P: str = None, P_bounds: tuple = (None, None), voltage_configuration: dict = {}, dV = None, delay=0.2):
         
         if voltage_configuration != {}:
@@ -618,7 +657,7 @@ class SingleQuantumDotTuner:
             P_sweep,
             self.drain_volt,
             write_period=0.1,
-            break_condition=self._check_break_conditions,
+            # break_condition=self._check_break_conditions,
             measurement_name='Coulomb Blockade',
             exp=self.initialization_exp,
             show_progress=True
@@ -640,10 +679,14 @@ class SingleQuantumDotTuner:
 
         axes.set_title('Coulomb Blockade')
 
+        volt_config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
+        self._save_figure(plot_info=f'{P}_sweep_{volt_config_str}')
+
+
     def coulomb_diamonds(self, 
                          ohmic: str = None, 
                          gate: str = None, 
-                         S_bounds: tuple = (None, None),
+                         ohmic_bounds: tuple = (None, None),
                          gate_bounds: tuple = (None, None),
                          dV_ohmic: float = None, 
                          dV_gate: float = None,
@@ -663,7 +706,7 @@ class SingleQuantumDotTuner:
         if dV_gate == None:
             dV_gate = self.voltage_resolution
         
-        minV_ohmic, maxV_ohmic = S_bounds
+        minV_ohmic, maxV_ohmic = ohmic_bounds
         minV_gate, maxV_gate = gate_bounds
 
         if minV_gate == None:
@@ -706,7 +749,7 @@ class SingleQuantumDotTuner:
             after_inner_actions = [smooth_reset],
             set_before_sweep=True, 
             show_progress=True, 
-            break_condition=self._check_break_conditions,
+            # break_condition=self._check_break_conditions,
             measurement_name='Coulomb Blockade',
             exp=self.initialization_exp
         )
@@ -732,16 +775,16 @@ class SingleQuantumDotTuner:
         ohmic_grad = np.gradient(raw_current_data, axis=0)
 
         fig, (ax1, ax2) = plt.subplots(1,2, figsize=(10,10))
-        fig.suptitle("Coulomb Blockade")
+        fig.suptitle("Coulomb Diamonds")
 
-        im_ratio = raw_current_data.shape[0]/raw_current_data.shape[1]
+        im_aspect = np.abs((maxV_ohmic - minV_ohmic) * (maxV_gate - minV_gate))
 
         cbar_ax1 = plt.colorbar(ax1.imshow(
             raw_current_data,
             extent=[gate_data[0], gate_data[-1], ohmic_data[0], ohmic_data[-1]],
             origin='lower',
             cmap='coolwarm',
-            aspect=1/im_ratio
+            aspect=im_aspect
         ), ax=ax1,fraction=0.046, pad=0.04)
 
         cbar_ax1.set_label(r'$I_{SD}$ (nA)')
@@ -750,14 +793,14 @@ class SingleQuantumDotTuner:
         ax1.set_ylabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=gate))
 
         # V grad is actually horizontal
-        grad_vector = (1,1) # Takes the gradient along 45 degree axis
+        grad_vector = (0,1) # Takes the gradient along 45 degree axis
 
         cbar_ax2 = plt.colorbar(ax2.imshow(
             np.sqrt(grad_vector[0] * gate_grad**2 +   grad_vector[1]* ohmic_grad**2),
             extent=[gate_data[0], gate_data[-1], ohmic_data[0], ohmic_data[-1]],
             origin='lower',
             cmap='coolwarm',
-            aspect=1/im_ratio
+            aspect=im_aspect
         ), ax=ax2,fraction=0.046, pad=0.04)
 
         cbar_ax2.set_label(r'$\nabla_{\theta=45\circ} I_{SD}$ (nA/V)')
@@ -766,6 +809,9 @@ class SingleQuantumDotTuner:
         ax2.set_ylabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=gate))
 
         fig.tight_layout()
+
+        volt_config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
+        self._save_figure(plot_info=f'{ohmic}_{gate}_sweep_{volt_config_str}')
 
     def current_trace(self, f_sampling: int, t_capture: int, NPLC=1.0):
 
@@ -800,16 +846,18 @@ class SingleQuantumDotTuner:
 
         # MAX CURRENT
         isExceedingMaxCurrent = np.abs(self._get_drain_current()) > self.abs_max_current
+        time.sleep(0.1)
 
         # MAX BIAS
-        flag = []
-        for gate_name in self.ohmics:
-            gate_voltage = getattr(self.voltage_source, f'volt_{gate_name}')() 
-            if np.abs(gate_voltage * self.voltage_divider) > self.abs_max_ohmic_bias:
-                flag.append(True)
-            else:
-                flag.append(False)
-        isExceedingMaxOhmicBias = np.array(flag).any()
+        # flag = []
+        # for gate_name in self.ohmics:
+        #     gate_voltage = getattr(self.voltage_source, f'volt_{gate_name}')() 
+        #     if np.abs(gate_voltage * self.voltage_divider) > self.abs_max_ohmic_bias:
+        #         flag.append(True)
+        #     else:
+        #         flag.append(False)
+        # isExceedingMaxOhmicBias = np.array(flag).any()
+        # time.sleep(0.1)
 
         # MAX GATE VOLTAGE
         flag = []
@@ -820,26 +868,28 @@ class SingleQuantumDotTuner:
             else:
                 flag.append(False)
         isExceedingMaxGateVoltage = np.array(flag).any()
+        time.sleep(0.1)
 
-        # MAX GATE DIFFERENTIAL
-        flag = []
-        gates_to_check = self.barriers + self.leads
-        for i in range(len(gates_to_check)):
-            for j in range(i+1, len(gates_to_check)):
-                gate_voltage_i = getattr(self.voltage_source, f'volt_{self.all_gates[i]}')()
-                gate_voltage_j = getattr(self.voltage_source, f'volt_{self.all_gates[j]}')()
-                # Check if the absolute difference between gate voltages is greater than 0.5
-                if np.abs(gate_voltage_i - gate_voltage_j) >= self.abs_max_gate_differential:
-                    flag.append(True)
-                else:
-                    flag.append(False)
-        isExceedingMaxGateDifferential = np.array(flag).any()
-
+        # # MAX GATE DIFFERENTIAL
+        # flag = []
+        # gates_to_check = self.barriers + self.leads
+        # for i in range(len(gates_to_check)):
+        #     for j in range(i+1, len(gates_to_check)):
+        #         gate_voltage_i = getattr(self.voltage_source, f'volt_{self.all_gates[i]}')()
+        #         gate_voltage_j = getattr(self.voltage_source, f'volt_{self.all_gates[j]}')()
+        #         # Check if the absolute difference between gate voltages is greater than 0.5
+        #         if np.abs(gate_voltage_i - gate_voltage_j) >= self.abs_max_gate_differential:
+        #             flag.append(True)
+        #         else:
+        #             flag.append(False)
+        # isExceedingMaxGateDifferential = np.array(flag).any()
+        # time.sleep(0.1)
+        
         listOfBreakConditions = [
             isExceedingMaxCurrent,
-            isExceedingMaxOhmicBias,
+            # isExceedingMaxOhmicBias,
             isExceedingMaxGateVoltage,
-            isExceedingMaxGateDifferential,
+            # isExceedingMaxGateDifferential,
         ]
         isExceeded = np.array(listOfBreakConditions).any()
         breakConditions = np.where(np.any(listOfBreakConditions == True))[0]
@@ -905,3 +955,15 @@ class SingleQuantumDotTuner:
 
     def _calculate_num_of_steps(self, minV, maxV, dV):
         return round(np.abs(maxV-minV) / dV) + 1
+    
+    def _update_device_config_yaml(self):
+
+        print("Updating device_config.yml file with findings ... ")
+        with open(self.device_config, 'w') as outfile:
+            yaml.dump(self.device_info, outfile, default_flow_style=True)
+        print("Done!")
+
+    def _save_figure(self, plot_info):
+        completition_time = str(datetime.datetime.now().hour) + "_" + str(datetime.datetime.now().minute) # the current minute
+        plot_name = os.path.join(self.db_folder, f"{plot_info}_{completition_time}.png")
+        plt.savefig(fname=plot_name, dpi=300)

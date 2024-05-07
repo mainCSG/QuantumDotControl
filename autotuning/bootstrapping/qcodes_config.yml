@@ -2,7 +2,6 @@ instruments:
     sim900:
         type: qcodes_contrib_drivers.drivers.StanfordResearchSystems.SIM928.SIM928
         address: GPIB0::3::INSTR
-        timeout: 50
 
         init: 
      

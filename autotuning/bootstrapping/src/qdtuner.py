@@ -188,8 +188,9 @@ class SingleQuantumDotTuner:
         print("done!")
 
     def bias_ohmic(self, ohmic: str = None, V: float = 0):
-        print(f"Setting ohmic {ohmic} to {V} (which is {(V*self.voltage_divider*1e-3)} mV) ... ", end=" ")
+        print(f"Setting ohmic {ohmic} to {V} V (which is {round(V*self.voltage_divider*1e3,3)} mV) ... ", end=" ")
         self.voltage_source.set_smooth({ohmic: V})
+        self.ohmic_bias = V*self.voltage_divider
         print("done!")
 
     def turn_on_device(self, minV=0, maxV=None, dV=None, delay=0.01):
@@ -268,7 +269,8 @@ class SingleQuantumDotTuner:
             print("Insufficient points above turn-on to do any fitting. Decrease dV or increase Vmax.")
         else:
             try:
-                guess = self.global_turn_on_info['guess']
+                guess = [Y_masked.iloc[0], 1, X_masked.iloc[-1] - 1, 0]
+
                 fit_params, fit_cov = sp.optimize.curve_fit(getattr(self.DataFitter, self.global_turn_on_info['fit_function']), X_masked, Y_masked, guess)
                 # Extract relevant data from fit params
                 a, b, x0, y0 = fit_params
@@ -291,8 +293,8 @@ class SingleQuantumDotTuner:
                 self.device_info['properties']['turn_on']['voltage'] = float(round(V_turn_on, 3))
                 self.device_info['properties']['turn_on']['saturation_voltage'] = float(round(V_sat, 3))
 
-                I_measured = self._get_drain_current()
-                R_measured = round(V_sat / I_measured,3)
+                I_measured = np.abs(self._get_drain_current())
+                R_measured = round(self.ohmic_bias / I_measured,3)
                 self.device_info['properties']['turn_on']['measured_current'] = float(I_measured)
                 self.device_info['properties']['turn_on']['measured_resistance'] = float(R_measured)
                 self.deviceTurnsOn = True
@@ -422,13 +424,13 @@ class SingleQuantumDotTuner:
                     print("Error - fitting to \"linear\" failed.")
 
             else:
-                # Try and fit to sigmoid and get fit params
+                # Try and fit and get fit params
                 try: 
                     if str(sweep._param).split('_')[-1] in self.leads:
 
                         fit_function = getattr(self.DataFitter, 'logarithmic')
-                        guess = self.global_turn_on_info['guess']
-
+                        guess = [Y_masked.iloc[0], 1, X_masked.iloc[-1] - 1, 0]
+                    
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
                         a, b, x0, y0 = fit_params
                         
@@ -438,7 +440,7 @@ class SingleQuantumDotTuner:
                     else:
 
                         fit_function = getattr(self.DataFitter, self.pinch_off_info['fit_function'])
-                        guess = (-5e-9, -100, self.device_info['properties']['turn_on'], 5e-9)
+                        guess = (-5e-9, -100, self.device_info['properties']['turn_on']['voltage'], 5e-9)
 
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
                         a, b, x0, y0 = fit_params
@@ -646,14 +648,10 @@ class SingleQuantumDotTuner:
 
         if minV_P == None:
             minV_P = 0
-        else:
-            assert np.sign(minV_P) == self.voltage_sign or np.sign(minV_P) == 0, "Double check the sign of the gate voltage (minV) for B2."
 
         if maxV_P == None:
             maxV_P = self.voltage_sign
-        else:
-            assert np.sign(maxV_P) == self.voltage_sign or np.sign(maxV_P) == 0, "Double check the sign of the gate voltage (maxV) for B1."
-
+  
         num_steps_P = self._calculate_num_of_steps(minV_P, maxV_P, dV)
 
         print(f"Sweeping plunger gate {P} from {minV_P} V to {maxV_P} V ...")
@@ -824,23 +822,43 @@ class SingleQuantumDotTuner:
 
     def current_trace(self, f_sampling: int, t_capture: int, NPLC=1.0):
 
-        num_of_samples = f_sampling * t_capture 
-
+        time_param = qc.parameters.ElapsedTimeParameter('time')
         meas = qc.dataset.Measurement(exp=self.initialization_exp)
-        meas.register_parameter(self.drain_mm_device.timetrace)
-
-        self.drain_mm_device.NPLC(NPLC)
-        self.drain_mm_device.timetrace_dt(1/f_sampling)
-        self.drain_mm_device.timetrace_npts(num_of_samples)
-
-        print(f'Minimal allowable dt: {self.drain_mm_device.sample.timer_minimum()} s')
+        meas.register_parameter(time_param)
+        meas.register_parameter(self.drain_mm_device.volt, setpoints=[time_param])
 
         with meas.run() as datasaver:
-            datasaver.add_result((self.drain_mm_device.timetrace, self.drain_mm_device.timetrace()),
-                                (self.drain_mm_device.time_axis, self.drain_mm_device.time_axis()))
+            time_param.reset_clock()
+            elapsed_time = 0
+            while elapsed_time < t_capture:
+                time.sleep(1/f_sampling)
+                datasaver.add_result((self.drain_mm_device.volt, self.drain_mm_device.volt()),
+                                (time_param, time_param()))
+                elapsed_time = time_param.get()
+      
+        time_trace_df = datasaver.dataset.to_pandas_dataframe().reset_index()
+        df_current = time_trace_df.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
+        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.sensitivity) # sensitivity
 
-        time_trace_ds = datasaver.dataset
-        axs, cbs = qc.dataset.plot_dataset(time_trace_ds)
+        # Plot current v.s. random gate (since they are swept together)
+        axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x='time', marker= 'o',s=5)
+        df_current.plot.line(y=f'{self.multimeter_device}_current', x=f'time', ax=axes, linewidth=1)
+        axes.set_ylabel(r'$I$ (A)')
+        axes.set_xlabel(r'$t$ (s)')
+        axes.set_title(rf'Current noise, $f_s={f_sampling}$ Hz, $t_\max={t_capture}$ s')
+        plt.show()
+        
+        # Plot noise spectrum
+        t = df_current[f'time']
+        I = df_current[f'{self.multimeter_device}_current']
+        f, Pxx = sp.signal.periodogram(I, fs=f_sampling, scaling='density')
+
+        plt.loglog(f, Pxx)
+        plt.xlabel(r'$\omega$ (Hz)')
+        plt.ylabel(r'$S_I$ (A$^2$/Hz)')
+        plt.title(r"Current noise spectrum")
+        plt.show()
+
 
     def _check_break_conditions(self):
         # Go through device break conditions to see if anything is flagged,
@@ -967,7 +985,7 @@ class SingleQuantumDotTuner:
     
     def _update_device_config_yaml(self):
 
-        print("Updating device_config.yml file with findings ... ")
+        print("Updating device_config.yml file with findings ... ", end=' ')
         with open(self.device_config, 'w') as outfile:
             yaml.dump(self.device_info, outfile, default_flow_style=True)
         print("done!")

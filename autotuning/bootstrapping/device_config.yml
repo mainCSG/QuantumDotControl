@@ -1,7 +1,44 @@
-{characteristics: {barriers: [LB, RB], charge_carrier: e, leads: [STL], ohmics: [
-      S], operation_mode: acc, plungers: [P], sample_name: N44_D54}, properties: {
-    LB: {bias_points: {value: N/A}, pinch_off: {value: 0.549, width: 0.17}}, RB: {
-      bias_points: {value: N/A}, pinch_off: {value: 0.584, width: 0.18}}, STL: {pinch_off: {
-        value: 1.494, width: N/A}}, STR: {pinch_off: {value: N/A, width: N/A}}, abs_max_current: 1.5e-09,
-    abs_max_gate_differential: 2.5, abs_max_gate_voltage: 3, abs_max_ohmic_bias: 0.001,
-    saturation: 2.35, turn_on: 1.616}}
+{
+  characteristics: 
+    {
+      barriers: [LB, RB], 
+      charge_carrier: e, 
+      leads: [STL], 
+      ohmics: [S], 
+      operation_mode: acc, 
+      plungers: [P], 
+      sample_name: N44_D54
+    }, 
+  properties: 
+  {
+    turn_on: 
+    {
+      voltage: N/A
+      measured_current: N/A
+      measured_resistance: N/A
+      saturation_voltage: N/A
+    }
+    LB: 
+    {
+      bias_points: {voltage: N/A}, pinch_off: {voltage: N/A, width: N/A}
+    },
+    RB: 
+    {
+      bias_points: {voltage: N/A}, pinch_off: {voltage: N/A, width: N/A}
+    }, 
+    STL: 
+    {
+      pinch_off: {voltage: N/A, width: N/A}
+    }, 
+    STR: {
+      pinch_off: {voltage: N/A, width: N/A}
+    }, 
+    constraints:
+    {
+      abs_max_current: 1.5e-9,
+      abs_max_gate_differential: 2.5, 
+      abs_max_gate_voltage: 3, 
+      abs_max_ohmic_bias: 0.05
+    }
+  }
+}

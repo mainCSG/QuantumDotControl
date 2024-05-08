@@ -144,10 +144,10 @@ class SingleQuantumDotTuner:
         self.plungers = self.device_info['characteristics']['plungers']
         self.all_gates = self.barriers + self.leads + self.plungers
 
-        self.abs_max_current = self.device_info['properties']['abs_max_current']
-        self.abs_max_ohmic_bias = self.device_info['properties']['abs_max_ohmic_bias']
-        self.abs_max_gate_voltage = self.device_info['properties']['abs_max_gate_voltage']
-        self.abs_max_gate_differential = self.device_info['properties']['abs_max_gate_differential']
+        self.abs_max_current = self.device_info['properties']['constraints']['abs_max_current']
+        self.abs_max_ohmic_bias = self.device_info['properties']['constraints']['abs_max_ohmic_bias']
+        self.abs_max_gate_voltage = self.device_info['properties']['constraints']['abs_max_gate_voltage']
+        self.abs_max_gate_differential = self.device_info['properties']['constraints']['abs_max_gate_differential']
 
         print("Connecting to station ... ")
         self.station = qc.Station(config_file=qcodes_config)
@@ -155,11 +155,11 @@ class SingleQuantumDotTuner:
         self.voltage_source = getattr(self.station, self.voltage_device)
         self.drain_mm_device = getattr(self.station, self.multimeter_device)
         self.drain_volt = getattr(self.station, self.multimeter_device).volt
-        print("Done!")
+        print("done!")
 
         print("Grounding device ... ", end=' ')
         self._zero_device()
-        print("Done!")
+        print("done!")
 
         # Creates the qcodes database and sets-up the experiment
         todays_date = datetime.date.today().strftime("%Y-%m-%d")
@@ -170,14 +170,14 @@ class SingleQuantumDotTuner:
         qc.dataset.initialise_or_create_database_at(
             db_filepath
         )
-        print("Done!")
+        print("done!")
 
         print(f"Creating/initializing the experiment in the database ... ", end=' ')
         self.initialization_exp = qc.dataset.load_or_create_experiment(
             'Initialization',
             sample_name=self.device_info['characteristics']['sample_name']
         )
-        print("Done!")
+        print("done!")
 
         # Copy all of the configs for safekeeping
         print(f"Copying all of the config.yml files to the new directory ... ", end=' ')
@@ -185,14 +185,14 @@ class SingleQuantumDotTuner:
         shutil.copy(self.device_config, self.db_folder)
         shutil.copy(self.tuner_config, self.db_folder)
         shutil.copy(self.station_config, self.db_folder)
-        print("Done!")
+        print("done!")
 
-    def bias_device(self, Vbias=0):
-        gates = self.ohmics
-        for gate_name in gates:
-            self.voltage_source.set_smooth({gate_name: Vbias})
+    def bias_ohmic(self, ohmic: str = None, V: float = 0):
+        print(f"Setting ohmic {ohmic} to {V} (which is {(V*self.voltage_divider*1e-3)} mV) ... ", end=" ")
+        self.voltage_source.set_smooth({ohmic: V})
+        print("done!")
 
-    def check_turn_on(self, minV=0, maxV=None, dV=None, delay=0.01):
+    def turn_on_device(self, minV=0, maxV=None, dV=None, delay=0.01):
 
         if dV == None:
             dV = self.voltage_resolution
@@ -209,21 +209,21 @@ class SingleQuantumDotTuner:
         num_steps = self._calculate_num_of_steps(minV, maxV, dV)
         gates_involved = self.barriers + self.leads
 
-        print("Zeroing all gates ... ")
+        print("Zeroing all gates ... ", end=" ")
         self._zero_gates(gates_involved)
-        print("Done!")
+        print("done!")
 
-        print(f"Bringing gates to {minV} V ... ")
-        self._set_gates_to_value(gates_involved, minV)
-        print("Done!")
+        print(f"Bringing gates to {minV} V ... ", end=" ")
+        self._set_gates_to_voltage(gates_involved, minV)
+        print("done!")
 
-        print(f"Ramping up gates in {gates_involved} from {minV} V to {maxV} V ...")
         sweep_list = []
         for gate_name in gates_involved:
             sweep_list.append(
                 LinSweep_SIM928(getattr(self.voltage_source, f'volt_{gate_name}'), minV, maxV, num_steps, delay, get_after_set=False)
             )
 
+        print(f"Ramping up gates in {gates_involved} from {minV} V to {maxV} V ...", end=" ")
         # Execute the measurement
         result = qc.dataset.dond(
             qc.dataset.TogetherSweep(
@@ -236,6 +236,7 @@ class SingleQuantumDotTuner:
             exp=self.initialization_exp,
             show_progress=True
         )
+        print(f"done!")
 
         # Get last dataset recorded, convert to current units
         dataset = qc.load_last_experiment().last_data_set()
@@ -287,9 +288,13 @@ class SingleQuantumDotTuner:
                 print(f"Device saturates at {np.round(V_sat, 2)} V")
 
                 # Store in device dictionary for later
-                self.device_info['properties']['turn_on'] = float(round(V_turn_on, 3))
-                self.device_info['properties']['saturation'] = float(round(V_sat, 3))
+                self.device_info['properties']['turn_on']['voltage'] = float(round(V_turn_on, 3))
+                self.device_info['properties']['turn_on']['saturation_voltage'] = float(round(V_sat, 3))
 
+                I_measured = self._get_drain_current()
+                R_measured = round(V_sat / I_measured,3)
+                self.device_info['properties']['turn_on']['measured_current'] = float(I_measured)
+                self.device_info['properties']['turn_on']['measured_resistance'] = float(R_measured)
                 self.deviceTurnsOn = True
 
             except RuntimeError:
@@ -301,13 +306,13 @@ class SingleQuantumDotTuner:
                     V_turn_on = input("What was the turn on voltage (V)?")
                     V_sat = input("What was the saturation voltage (V)?")
                     # Store in device dictionary for later
-                    self.device_info['properties']['turn_on'] = V_turn_on
-                    self.device_info['properties']['saturation'] = V_sat
+                    self.device_info['properties']['turn_on']['voltage'] = V_turn_on
+                    self.device_info['properties']['turn_on']['saturation_voltage'] = V_sat
         
         self._save_figure(plot_info='device_turn_on')
         self._update_device_config_yaml()
 
-    def check_pinch_offs(self, minV=None, maxV=None, dV=None, delay=0.01):
+    def pinch_off_device(self, gates: list = [], minV=None, maxV=None, dV=None, delay=0.01):
         
         # Can't pinch off if not turned on.
         assert self.deviceTurnsOn, "Device does not turn on. Why are you pinching anything off?"
@@ -318,25 +323,29 @@ class SingleQuantumDotTuner:
         # Checks if the gate voltages provided are what they should be
         # given the device charge carrier and operation mode.
         if maxV == None:
-            maxV = self.device_info['properties']['saturation']
+            maxV = self.device_info['properties']['turn_on']['saturation_voltage']
         else:
             assert np.sign(maxV) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for your given device."
         
         if minV == None:
             if self.voltage_sign == 1:
-                minV = max(0, round(self.device_info['properties']['saturation'] - self.device_info['properties']['abs_max_gate_differential'], 3))
+                minV = max(0, round(self.device_info['properties']['turn_on']['saturation_voltage'] - self.abs_max_gate_differential, 3))
             elif self.voltage_sign == -1:
-                minV = min(0, round(self.device_info['properties']['saturation'] - self.device_info['properties']['abs_max_gate_differential'], 3))
+                minV = min(0, round(self.device_info['properties']['turn_on']['saturation_voltage'] - self.abs_max_gate_differential, 3))
         else:
             assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, "Double check the sign of the gate voltage (minV) for your given device."
 
         # When checking pinch-off have the gates initially where the device saturated
         num_steps = self._calculate_num_of_steps(minV, maxV, dV)
-        gates_involved = self.barriers + self.leads
+
+        if len(gates) == 0:
+            gates_involved = self.barriers + self.leads
+        else:
+            gates_involved = gates
 
         print(f"Settings gates in {gates_involved} to {maxV} V ... ")
-        self._set_gates_to_value(gates_involved, maxV)
-        print("Done!")
+        self._set_gates_to_voltage(gates_involved, maxV)
+        print("done!")
 
         sweep_list = []
         for gate_name in gates_involved:
@@ -345,7 +354,7 @@ class SingleQuantumDotTuner:
             )
 
         def adjusted_break_condition():
-            return self._check_break_conditions() or np.abs(self._get_drain_current()) < self.pinch_off_info['abs_min_current']
+            return np.abs(self._get_drain_current()) < self.pinch_off_info['abs_min_current']
 
         for sweep in sweep_list:
 
@@ -358,11 +367,11 @@ class SingleQuantumDotTuner:
                 exp=self.initialization_exp,
                 show_progress=True
             )   
-            print(f"Done!")
+            print(f"done!")
 
             print(f"Returning {str(sweep._param).split('_')[-1]} back to {maxV} V ... ", end=" ")
-            self._set_gates_to_value([str(sweep._param).split('_')[-1]], maxV)
-            print(f"Done!")
+            self._set_gates_to_voltage([str(sweep._param).split('_')[-1]], maxV)
+            print(f"done!")
 
             # Get last dataset recorded, convert to current units
             dataset = qc.load_last_experiment().last_data_set()
@@ -379,7 +388,7 @@ class SingleQuantumDotTuner:
             axes.set_ylabel(r'$I$ (A)')
             axes.set_xlabel(r'$V_{{{gate}}}$ (V)'.format(gate=str(sweep._param).split('_')[-1]))
             axes.set_title('{} Pinch Off'.format(str(sweep._param).split('_')[-1]))
-            axes.set_xlim(0, self.device_info['properties']['saturation'])
+            axes.set_xlim(0, self.device_info['properties']['turn_on']['saturation_voltage'])
             axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[0])*self.pinch_off_info['abs_min_current'], alpha=0.5,c='g', linestyle=':', label=r'$I_{\min}$')
             axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[0])*self.abs_max_current, alpha=0.5,c='g', linestyle='--', label=r'$I_{\max}$')
                 
@@ -424,7 +433,7 @@ class SingleQuantumDotTuner:
                         a, b, x0, y0 = fit_params
                         
                         V_pinchoff = float(round(np.exp(-y0/a)/b + x0,3))
-                        self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['value'] = V_pinchoff
+                        self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['voltage'] = V_pinchoff
                    
                     else:
 
@@ -439,7 +448,7 @@ class SingleQuantumDotTuner:
                             np.abs(x0 + np.sqrt(8) / b)
                         ),3))
                         V_pinchoff_width = float(abs(round(2 * np.sqrt(8) / b,2)))
-                        self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['value'] = V_pinchoff
+                        self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['voltage'] = V_pinchoff
                         self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['width'] = V_pinchoff_width #V
 
                     plt.plot(X_masked, fit_function(X_masked, a, b, x0, y0), 'r-')
@@ -468,7 +477,7 @@ class SingleQuantumDotTuner:
             self._save_figure(plot_info='{}_pinch'.format(str(sweep._param).split('_')[-1]))
             self._update_device_config_yaml()
 
-    def barrier_barrier_sweep(self, 
+    def sweep_barriers(self, 
                               B1: str = None, 
                               B2: str = None, 
                               B1_bounds: tuple = (None, None),
@@ -480,8 +489,8 @@ class SingleQuantumDotTuner:
         if voltage_configuration != {}:
             for gate_name, voltage in voltage_configuration.items():
                 print(f"Setting {gate_name} to {voltage} V ... ")
-                self._set_gates_to_value([gate_name], voltage)
-                print("Done!")
+                self._set_gates_to_voltage([gate_name], voltage)
+                print("done!")
 
         if dV == None:
             dV = self.voltage_resolution
@@ -495,28 +504,28 @@ class SingleQuantumDotTuner:
         minV_B2, maxV_B2 = B2_bounds
 
         if minV_B1 == None:
-            minV_B1 = self.device_info['properties'][B1]['pinch_off']['value']
+            minV_B1 = self.device_info['properties'][B1]['pinch_off']['voltage']
         else:
             assert np.sign(minV_B1) == self.voltage_sign, "Double check the sign of the gate voltage (minV) for B1."
 
         if minV_B2 == None:
-            minV_B2 = self.device_info['properties'][B2]['pinch_off']['value']
+            minV_B2 = self.device_info['properties'][B2]['pinch_off']['voltage']
         else:
             assert np.sign(minV_B2) == self.voltage_sign, "Double check the sign of the gate voltage (minV) for B2."
 
         if maxV_B1 == None:
             if self.voltage_sign == 1:
-                maxV_B1 = min(self.device_info['properties'][B1]['pinch_off']['value']+self.voltage_sign*self.device_info['properties'][B1]['pinch_off']['width'], self.device_info['properties']['saturation'])
+                maxV_B1 = min(self.device_info['properties'][B1]['pinch_off']['voltage']+self.voltage_sign*self.device_info['properties'][B1]['pinch_off']['width'], self.device_info['properties']['turn_on']['saturation_voltage'])
             elif self.voltage_sign == -1:
-                maxV_B1 = max(self.device_info['properties'][B1]['pinch_off']['value']+self.voltage_sign*self.device_info['properties'][B1]['pinch_off']['width'], self.device_info['properties']['saturation'])
+                maxV_B1 = max(self.device_info['properties'][B1]['pinch_off']['voltage']+self.voltage_sign*self.device_info['properties'][B1]['pinch_off']['width'], self.device_info['properties']['turn_on']['saturation_voltage'])
         else:
             assert np.sign(maxV_B1) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for B1."
 
         if maxV_B2 == None:
             if self.voltage_sign == 1:
-                maxV_B2 = min(self.device_info['properties'][B2]['pinch_off']['value']+self.voltage_sign*self.device_info['properties'][B2]['pinch_off']['width'], self.device_info['properties']['saturation'])
+                maxV_B2 = min(self.device_info['properties'][B2]['pinch_off']['voltage']+self.voltage_sign*self.device_info['properties'][B2]['pinch_off']['width'], self.device_info['properties']['turn_on']['saturation_voltage'])
             elif self.voltage_sign == -1:
-                maxV_B2 = max(self.device_info['properties'][B2]['pinch_off']['value']+self.voltage_sign*self.device_info['properties'][B2]['pinch_off']['width'], self.device_info['properties']['saturation'])
+                maxV_B2 = max(self.device_info['properties'][B2]['pinch_off']['voltage']+self.voltage_sign*self.device_info['properties'][B2]['pinch_off']['width'], self.device_info['properties']['turn_on']['saturation_voltage'])
         else:
             assert np.sign(maxV_B2) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for B2."
 
@@ -524,19 +533,19 @@ class SingleQuantumDotTuner:
         num_steps_B2 = self._calculate_num_of_steps(minV_B2, maxV_B2, dV)
 
         print(f"Setting lead gates to saturation gate voltage ... ")
-        self._set_gates_to_value(self.leads, self.device_info['properties']['saturation'])
-        print("Done!")
+        self._set_gates_to_voltage(self.leads, self.device_info['properties']['turn_on']['saturation_voltage'])
+        print("done!")
 
         print(f"Setting {B1} to {maxV_B1} V ...")
-        self._set_gates_to_value([B1], maxV_B1)
-        print(f"Done!")
+        self._set_gates_to_voltage([B1], maxV_B1)
+        print(f"done!")
 
         print(f"Setting {B2} to {maxV_B2} V ...")
-        self._set_gates_to_value([B2], maxV_B2)
-        print(f"Done!")
+        self._set_gates_to_voltage([B2], maxV_B2)
+        print(f"done!")
 
         def smooth_reset():
-            self._set_gates_to_value([B2], maxV_B2)
+            self._set_gates_to_voltage([B2], maxV_B2)
 
         # Running masurement with do2d
         print(f"Stepping {B1} from {maxV_B1} V to {minV_B1} V ...")
@@ -560,12 +569,12 @@ class SingleQuantumDotTuner:
             measurement_name='Barrier Barrier Sweep',
             exp=self.initialization_exp
         )
-        print("Done!")
+        print("done!")
 
         print(f"Settings gates {B1}, {B2} to {maxV_B1} V, {maxV_B2} V respectively ... ")
-        self._set_gates_to_value([B1], maxV_B1)
-        self._set_gates_to_value([B2], maxV_B2)
-        print("Done!")
+        self._set_gates_to_voltage([B1], maxV_B1)
+        self._set_gates_to_voltage([B2], maxV_B2)
+        print("done!")
 
         # Get last dataset recorded, convert to current units
         dataset = qc.load_last_experiment().last_data_set()
@@ -619,13 +628,13 @@ class SingleQuantumDotTuner:
 
         self._save_figure(plot_info=f'{B1}_{B2}_sweep')
 
-    def coulomb_blockade(self, P: str = None, P_bounds: tuple = (None, None), voltage_configuration: dict = {}, dV = None, delay=0.2):
+    def coulomb_blockade(self, P: str = None, P_bounds: tuple = (None, None), voltage_configuration: dict = {}, dV = None, delay=0.01):
         
         if voltage_configuration != {}:
             for gate_name, voltage in voltage_configuration.items():
                 print(f"Setting {gate_name} to {voltage} V ... ")
-                self._set_gates_to_value([gate_name], voltage)
-                print("Done!")
+                self._set_gates_to_voltage([gate_name], voltage)
+                print("done!")
 
         if P == None:
             P = self.plungers[0]
@@ -651,7 +660,7 @@ class SingleQuantumDotTuner:
         P_sweep = LinSweep_SIM928(getattr(self.voltage_source, f'volt_{P}'), minV_P, maxV_P, num_steps_P, delay, get_after_set=False)
 
         print(f"Setting plunger gate {P} to {minV_P} V ...")
-        self._set_gates_to_value([P], minV_P)
+        self._set_gates_to_voltage([P], minV_P)
         # Execute the measurement
         result = qc.dataset.dond(
             P_sweep,
@@ -691,14 +700,14 @@ class SingleQuantumDotTuner:
                          dV_ohmic: float = None, 
                          dV_gate: float = None,
                          voltage_configuration: dict = {},
-                         delay: float =0.2
+                         delay: float =0.01
                          ):
 
         if voltage_configuration != {}:
             for gate_name, voltage in voltage_configuration.items():
                 print(f"Setting {gate_name} to {voltage} V ... ")
-                self._set_gates_to_value([gate_name], voltage)
-                print("Done!")
+                self._set_gates_to_voltage([gate_name], voltage)
+                print("done!")
 
         if dV_ohmic == None:
             dV_ohmic = self.voltage_resolution
@@ -710,12 +719,12 @@ class SingleQuantumDotTuner:
         minV_gate, maxV_gate = gate_bounds
 
         if minV_gate == None:
-            minV_gate = self.device_info['properties'][gate]['pinch_off']['value']
+            minV_gate = self.device_info['properties'][gate]['pinch_off']['voltage']
         else:
             assert np.sign(minV_gate) == self.voltage_sign or np.sign(minV_gate) == 0, f"Double check the sign of the gate voltage (minV) for {gate}."
 
         if maxV_gate == None:
-            maxV_gate = self.device_info['properties']['saturation']
+            maxV_gate = self.device_info['properties']['turn_on']['saturation_voltage']
         else:
             assert np.sign(maxV_gate) == self.voltage_sign or np.sign(maxV_gate) == 0, f"Double check the sign of the gate voltage (maxV) for {gate}."
 
@@ -729,7 +738,7 @@ class SingleQuantumDotTuner:
         num_steps_gate = self._calculate_num_of_steps(minV_gate, maxV_gate, dV_gate)
 
         def smooth_reset():
-            self._set_gates_to_value([ohmic], maxV_ohmic)
+            self._set_gates_to_voltage([ohmic], maxV_ohmic)
 
         # Running masurement with do2d
         print(f"Stepping {gate} from {maxV_gate} V to {minV_gate}...")
@@ -750,15 +759,15 @@ class SingleQuantumDotTuner:
             set_before_sweep=True, 
             show_progress=True, 
             # break_condition=self._check_break_conditions,
-            measurement_name='Coulomb Blockade',
+            measurement_name='Coulomb Diamonds',
             exp=self.initialization_exp
         )
-        print("Done!")
+        print("done!")
 
         print(f"Settings gates {gate}, {ohmic} to {maxV_gate} V, {maxV_ohmic} V respectively ... ")
-        self._set_gates_to_value([gate], maxV_gate)
-        self._set_gates_to_value([ohmic], maxV_ohmic)
-        print("Done!")
+        self._set_gates_to_voltage([gate], maxV_gate)
+        self._set_gates_to_voltage([ohmic], maxV_ohmic)
+        print("done!")
 
         # Get last dataset recorded, convert to current units
         dataset = qc.load_last_experiment().last_data_set()
@@ -837,16 +846,16 @@ class SingleQuantumDotTuner:
         # Go through device break conditions to see if anything is flagged,
         # should return a Boolean.
         
-        breakConditionsDict = {
-            0: 'Maximum current is exceeded.',
-            1: 'Maximum ohmic bias is exceeded.',
-            2: 'Maximum gate voltage is exceeded.',
-            3: 'Maximum gate differential is exceeded.',
-        }
+        # breakConditionsDict = {
+        #     0: 'Maximum current is exceeded.',
+        #     1: 'Maximum ohmic bias is exceeded.',
+        #     2: 'Maximum gate voltage is exceeded.',
+        #     3: 'Maximum gate differential is exceeded.',
+        # }
 
         # MAX CURRENT
         isExceedingMaxCurrent = np.abs(self._get_drain_current()) > self.abs_max_current
-        time.sleep(0.1)
+        # time.sleep(0.1)
 
         # MAX BIAS
         # flag = []
@@ -860,15 +869,15 @@ class SingleQuantumDotTuner:
         # time.sleep(0.1)
 
         # MAX GATE VOLTAGE
-        flag = []
-        for gate_name in self.all_gates:
-            gate_voltage = getattr(self.voltage_source, f'volt_{gate_name}')()
-            if np.abs(gate_voltage) > self.abs_max_gate_voltage:
-                flag.append(True)
-            else:
-                flag.append(False)
-        isExceedingMaxGateVoltage = np.array(flag).any()
-        time.sleep(0.1)
+        # flag = []
+        # for gate_name in self.all_gates:
+        #     gate_voltage = getattr(self.voltage_source, f'volt_{gate_name}')()
+        #     if np.abs(gate_voltage) > self.abs_max_gate_voltage:
+        #         flag.append(True)
+        #     else:
+        #         flag.append(False)
+        # isExceedingMaxGateVoltage = np.array(flag).any()
+        # time.sleep(0.1)
 
         # # MAX GATE DIFFERENTIAL
         # flag = []
@@ -888,14 +897,14 @@ class SingleQuantumDotTuner:
         listOfBreakConditions = [
             isExceedingMaxCurrent,
             # isExceedingMaxOhmicBias,
-            isExceedingMaxGateVoltage,
+            # isExceedingMaxGateVoltage,
             # isExceedingMaxGateDifferential,
         ]
         isExceeded = np.array(listOfBreakConditions).any()
-        breakConditions = np.where(np.any(listOfBreakConditions == True))[0]
-        if len(breakConditions) != 0:
-            for index in breakConditions.tolist():
-                print(breakConditionsDict[index]+"\n")
+        # breakConditions = np.where(np.any(listOfBreakConditions == True))[0]
+        # if len(breakConditions) != 0:
+        #     for index in breakConditions.tolist():
+        #         print(breakConditionsDict[index]+"\n")
 
         return isExceeded
 
@@ -903,9 +912,9 @@ class SingleQuantumDotTuner:
         # Returns the true current measured in amps
         return self.sensitivity * (self.drain_volt() - self.preamp_bias)
 
-    def _set_gates_to_value(self, gates: list, value: float):
+    def _set_gates_to_voltage(self, gates: list, voltage: float):
         self.voltage_source.set_smooth(
-            dict(zip(gates, [value]*len(gates)))
+            dict(zip(gates, [voltage]*len(gates)))
         )
 
     def _zero_ohmics(self, ohmics: list):
@@ -961,7 +970,7 @@ class SingleQuantumDotTuner:
         print("Updating device_config.yml file with findings ... ")
         with open(self.device_config, 'w') as outfile:
             yaml.dump(self.device_info, outfile, default_flow_style=True)
-        print("Done!")
+        print("done!")
 
     def _save_figure(self, plot_info):
         completition_time = str(datetime.datetime.now().hour) + "_" + str(datetime.datetime.now().minute) # the current minute

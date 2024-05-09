@@ -5,3 +5,6 @@ global_turn_on:
 pinch_off:
   abs_min_current: 0.025e-9 # A
   fit_function: sigmoid # come from the function fit class in qdtuner.py
+
+barrier_barrier:
+  segmentation_model: N/A

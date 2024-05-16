@@ -5,7 +5,7 @@ import scipy as sp
 import matplotlib.pyplot as plt
 import yaml, datetime, sys, time, os, shutil, json
 from pathlib import Path
-from typing import List
+from typing import List, Dict
 
 from qcodes.dataset import AbstractSweep
 from qcodes.dataset.dond.do_nd_utils import ActionsT
@@ -158,7 +158,7 @@ class QuantumDotFET:
         self.general_info = self.station_info['general_info']
         self.multimeter_device = self.general_info['multimeter_device']
         self.voltage_device = self.general_info['voltage_device']
-        self.sensitivity = self.general_info['sensitivity']
+        self.preamp_sensitivity = self.general_info['preamp_sensitivity']
         self.preamp_bias = self.general_info['preamp_bias']
         self.voltage_divider = self.general_info['voltage_divider']
         self.voltage_resolution = self.general_info['voltage_resolution']
@@ -330,7 +330,7 @@ class QuantumDotFET:
         df = dataset.to_pandas_dataframe().reset_index()
         df_current = df.copy()
         df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
-        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.sensitivity) # sensitivity
+        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot current v.s. gates involved (since they are swept together)
         axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_volt_{gates_involved[0]}', marker= 'o',s=10)
@@ -354,7 +354,7 @@ class QuantumDotFET:
             print("Insufficient points above minimum current threshold to do any fitting!")
         else:
             try:
-                guess = [Y_masked.iloc[0], 1, X_masked.iloc[-1] - 1, 0]
+                guess = [Y_masked.iloc[0], self.voltage_sign, X_masked.iloc[-1] - self.voltage_sign, 0]
 
                 fit_params, fit_cov = sp.optimize.curve_fit(getattr(self.DataFit, self.global_turn_on_info['fit_function']), X_masked, Y_masked, guess)
                 
@@ -403,8 +403,9 @@ class QuantumDotFET:
                     gates: List[str] | str = None, 
                     minV: float = None, 
                     maxV: float = None, 
-                    dV: float = None, 
-                    delay: float = 0.01):
+                    dV: float = None,
+                    delay: float = 0.01,
+                    voltage_configuration: dict = {}):
         """Attempts to pinch off gates from maxV to minV in steps of dV. If gates
         is not provided, defaults to barriers and leads in the FET channel. If minV is not 
         provided, defaults to saturation voltage minus allowed gate differential. If maxV
@@ -416,6 +417,7 @@ class QuantumDotFET:
             maxV (float, optional): Maximum sweep voltage (V). Defaults to None.
             dV (float, optional): Step size (V). Defaults to None.
             delay (float, optional): Delay between each step in the sweep (s). Defaults to 0.01.
+            voltage_configuration (dict, optional): Desired voltage configuration. Defaults to None.
 
         Returns:
             None: 
@@ -427,6 +429,13 @@ class QuantumDotFET:
         """
 
         assert self.deviceTurnsOn, "Device does not turn on. Why are you pinching anything off?"
+
+        # Bring device to voltage configuration
+        if voltage_configuration is not None:
+            for gate_name, voltage in voltage_configuration.items():
+                print(f"Setting {gate_name} to {voltage} V ... ")
+                self._set_gates_to_voltage([gate_name], voltage)
+                print("done!")
 
         if dV is None:
             dV = self.voltage_resolution
@@ -494,7 +503,7 @@ class QuantumDotFET:
             df = dataset.to_pandas_dataframe().reset_index()
             df_current = df.copy()
             df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
-            df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.sensitivity) # sensitivity
+            df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
             # Plot current v.s. param being swept
             axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x=f'{str(sweep._param)}', marker= 'o',s=10)
@@ -543,7 +552,7 @@ class QuantumDotFET:
                     if str(sweep._param).split('_')[-1] in self.leads:
 
                         fit_function = getattr(self.DataFit, 'logarithmic')
-                        guess = [Y_masked.iloc[0], 1, X_masked.iloc[-1] - 1, 0]
+                        guess = [Y_masked.iloc[0], self.voltage_sign, X_masked.iloc[-1] - self.voltage_sign, 0]
                     
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
                         a, b, x0, y0 = fit_params
@@ -554,7 +563,7 @@ class QuantumDotFET:
                     else:
 
                         fit_function = getattr(self.DataFit, self.pinch_off_info['fit_function'])
-                        guess = (-5e-9, -100, self.device_info['properties']['turn_on']['voltage'], 5e-9)
+                        guess = (Y.iloc[0], -1 * self.voltage_sign * 100, self.device_info['properties']['turn_on']['voltage'], 0)
 
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
                         a, b, x0, y0 = fit_params
@@ -731,7 +740,7 @@ class QuantumDotFET:
         df = dataset.to_pandas_dataframe().reset_index()
         df_current = df.copy()
         df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
-        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.sensitivity) # sensitivity
+        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot 2D colormap
         df_pivoted = df_current.pivot_table(values=f'{self.multimeter_device}_current', index=[f'{self.voltage_device}_volt_{B1}'], columns=[f'{self.voltage_device}_volt_{B2}'])
@@ -851,7 +860,7 @@ class QuantumDotFET:
         df = dataset.to_pandas_dataframe().reset_index()
         df_current = df.copy()
         df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
-        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.sensitivity) # sensitivity
+        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot current v.s. random gate (since they are swept together)
         axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_volt_{P}', marker= 'o',s=10)
@@ -972,7 +981,7 @@ class QuantumDotFET:
         df = dataset.to_pandas_dataframe().reset_index()
         df_current = df.copy()
         df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
-        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.sensitivity) # sensitivity
+        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot 2D colormap
         df_pivoted = df_current.pivot_table(values=f'{self.multimeter_device}_current', index=[f'{self.voltage_device}_volt_{gate}'], columns=[f'{self.voltage_device}_volt_{ohmic}'])
@@ -1059,7 +1068,7 @@ class QuantumDotFET:
       
         time_trace_df = datasaver.dataset.to_pandas_dataframe().reset_index()
         df_current = time_trace_df.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
-        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.sensitivity) # sensitivity
+        df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot current v.s. random gate (since they are swept together)
         axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x='time', marker= 'o',s=5)
@@ -1154,7 +1163,7 @@ class QuantumDotFET:
             float: Current reading (A)
         """
         raw_voltage = self.drain_volt()
-        current = float(self.sensitivity * (raw_voltage - self.preamp_bias))
+        current = float(self.preamp_sensitivity * (raw_voltage - self.preamp_bias))
         return current
 
     def _set_gates_to_voltage(self, 
@@ -1171,6 +1180,10 @@ class QuantumDotFET:
         self.voltage_source.set_smooth(
             dict(zip(gates, [voltage]*len(gates)))
         )
+
+    def _smoothly_set_gate_voltages(self,
+                                    voltage_configuration: Dict[str: float]):
+        pass
 
     def _query_yes_no(self, question, default="no"):
         """Ask a yes/no question via raw_input() and return their answer.

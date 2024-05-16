@@ -11,160 +11,60 @@ instruments:
             dac_delay: 0.1
 
         add_parameters:     
-            {
-                volt_S:
-                    {
-                        source: dac1,
-                        label: Source Ohmic,
-                        unit: V,
-                        scale: 1000,
-                        initial_value: 0.
-                    },
-                volt_STL:
-                    {
-                        source: dac2,
-                        label: Lead Gate (L),
-                        unit: V,
-                        scale: 1000,
-                        initial_value: 0.
-                    },
-                volt_LB:
-                    {
-                        source: dac3,
-                        label: Left Barrier Gate,
-                        unit: V,
-                        scale: 1000,
-                        initial_value: 0.
-                    },
-                volt_P:
-                    {
-                        source: dac4,
-                        label: Plunger Gate,
-                        unit: V,
-                        scale: 1000,
-                        initial_value: 0.
-                    },
-                volt_RB:
-                    {
-                        source: dac5,
-                        label: Right Barrier Gate,
-                        unit: V,
-                        scale: 1000,
-                        initial_value: 0.
-                    },
-                volt_STR:
-                    {
-                        source: dac6,
-                        label: Lead Gate (R),
-                        unit: V,
-                        scale: 1000,
-                        initial_value: 0.
-                    },
-            }
-
-        add_parameters:
-            # Following params control ramp rate for set_smooth method.
-            # E.g. volt_S will ramp at a rate of 0.001 V per 1 second.
-
+            
+            S: {source: dac3, label: Source Ohmic Gate,unit: V,scale: 1,initial_value: 0.}
+            S_step: {initial_value: 0.01}
+        
+            STL: {source: dac5, label: Lead Gate (L),unit: V,scale: 1,initial_value: 0.}
+            STL_step: {initial_value: 0.01}
+            
+            LB: {source: dac6, label: Barrier Gate (L),unit: V,scale: 1,initial_value: 0.}
+            LB_step: {initial_value: 0.01}
+            
+            P: {source: dac7, label: Plunger Gate,unit: V,scale: 1,initial_value: 0.}
+            P_step: {initial_value: 0.01}
+            
+            RB: {source: dac8, label: Barrier Gate (R),unit: V,scale: 1,initial_value: 0.}
+            RB_step: {initial_value: 0.01}
+            
+            STR: {source: dac9, label: Lead Gate (R),unit: V,scale: 1,initial_value: 0.}
+            STR_step: {initial_value: 0.01}
+            
             smooth_timestep: {initial_value: 0.05}
-
-            volt_S_step: {initial_value: 0.01}
-
-            volt_STL_step: {initial_value: 0.01}
-
-            volt_LB_step: {initial_value: 0.01}
-
-            volt_P_step: {initial_value: 0.01}
-
-            volt_RB_step: {initial_value: 0.01}
-
-            volt_STR_step: {initial_value: 0.01}
+                  
 
     keithley2000:
         type: qcodes.instrument_drivers.Keithley.Keithley_2000.Keithley2000
         address: GPIB0::17::INSTR
 
         parameters:
-            mode: {initial_value: 'dc voltage'}
 
+            mode: {initial_value: 'dc voltage'}
             amplitude: {alias: volt}
 
     sim900:
         type: qcodes_contrib_drivers.drivers.StanfordResearchSystems.SIM928.SIM928
         address: GPIB0::3::INSTR
 
-        # init: 
-     
-            # slot_names: {8: 'S', 2: 'STL', 3: 'LB', 4: 'P', 5: 'RB', 6: 'STR'}
-
-        parameters:
-            # Following params control ramp rate for set_smooth method.
-            # E.g. volt_S will ramp at a rate of 0.001 V per 1 second.
-
-            smooth_timestep: {initial_value: 0.05}
-
-            volt_S_step: {initial_value: 0.01}
-
-            volt_STL_step: {initial_value: 0.01}
-
-            volt_LB_step: {initial_value: 0.01}
-
-            volt_P_step: {initial_value: 0.01}
-
-            volt_RB_step: {initial_value: 0.01}
-
-            volt_STR_step: {initial_value: 0.01}
-
         add_parameters:     
             {
-                volt_S:
-                    {
-                        source: volt_8,
-                        label: Source Ohmic,
-                        unit: V,
-                        scale: 1,
-                        initial_value: 0.
-                    },
-                volt_STL:
-                    {
-                        source: volt_2,
-                        label: Lead Gate (L),
-                        unit: V,
-                        scale: 1,
-                        initial_value: 0.
-                    },
-                volt_LB:
-                    {
-                        source: volt_3,
-                        label: Left Barrier Gate,
-                        unit: V,
-                        scale: 1,
-                        initial_value: 0.
-                    },
-                volt_P:
-                    {
-                        source: volt_4,
-                        label: Plunger Gate,
-                        unit: V,
-                        scale: 1,
-                        initial_value: 0.
-                    },
-                volt_RB:
-                    {
-                        source: volt_5,
-                        label: Right Barrier Gate,
-                        unit: V,
-                        scale: 1,
-                        initial_value: 0.
-                    },
-                volt_STR:
-                    {
-                        source: volt_6,
-                        label: Lead Gate (R),
-                        unit: V,
-                        scale: 1,
-                        initial_value: 0.
-                    },
+                S: {source: volt_8, label: Source Ohmic Gate,unit: V,scale: 1,initial_value: 0.},
+                S_step: {source: volt_8_step, unit: V, initial_value: 0.01},
+               
+                STL: {source: volt_2, label: Lead Gate (L),unit: V,scale: 1,initial_value: 0.},
+                STL_step: {source: volt_2_step, unit: V, initial_value: 0.01},
+               
+                LB: {source: volt_3, label: Barrier Gate (L),unit: V,scale: 1,initial_value: 0.},
+                LB_step: {source: volt_3_step, unit: V, initial_value: 0.01},
+               
+                P: {source: volt_4, label: Plunger Gate,unit: V,scale: 1,initial_value: 0.},
+                P_step: {source: volt_4_step, unit: V, initial_value: 0.01},
+               
+                RB: {source: volt_5, label: Barrier Gate (R),unit: V,scale: 1,initial_value: 0.},
+                RB_step: {source: volt_5_step, unit: V, initial_value: 0.01},
+               
+                STR: {source: volt_6, label: Lead Gate (R),unit: V,scale: 1,initial_value: 0.},
+                STR_step: {source: volt_6_step, unit: V, initial_value: 0.01},
             }
 
     agilent:

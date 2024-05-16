@@ -168,10 +168,10 @@ class App:
         c_value = self.get_entry_value("C (mV)")
         run_id = self.get_entry_value("Run-ID")
         vst, vsd, I = self.data_processor.parse_db_file(file_path, eval(run_id), is2Dsweep=True)
-
+        print(vst, vsd)
         G = np.gradient(I,np.abs(1e-3*(vst[1] - vst[0])), axis=0)
 
-        self.plotter.interactive2D(vst, vsd, G.T, title=r"$G(V_{SD}, V_{ST})$", xlabel=r'$V_{ST}\ (mV)$', ylabel=r'$V_{SD}\ (mV)$')
+        self.plotter.interactive2D(vst, vsd[::-1], G.T, title=r"$G(V_{SD}, V_{SD})$", xlabel=r'$V_{ST}\ (mV)$', ylabel=r'$V_{ST}\ (mV)$')
 
     def charge_noise_window(self):
         additional_entries = ["Run-ID [X,Y] (HS)", 

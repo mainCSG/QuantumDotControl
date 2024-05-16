@@ -1,8 +1,8 @@
-{characteristics: {barriers: [LB, RB], charge_carrier: e, leads: [STL], ohmics: [
+{characteristics: {barriers: [LB, RB], charge_carrier: h, leads: [STL], ohmics: [
       S], operation_mode: acc, plungers: [P], sample_name: N44_D54}, properties: {
-    LB: {bias_points: {voltage: N/A}, pinch_off: {voltage: 0.257, width: 1.88}}, RB: {
-      bias_points: {voltage: N/A}, pinch_off: {voltage: 0.754, width: 0.12}}, STL: {
+    LB: {bias_points: {voltage: N/A}, pinch_off: {voltage: 1.315, width: 0.0}}, RB: {
+      bias_points: {voltage: N/A}, pinch_off: {voltage: 1.796, width: 0.01}}, STL: {
       pinch_off: {voltage: 0.898, width: N/A}}, STR: {pinch_off: {voltage: N/A, width: N/A}},
     constraints: {abs_max_current: 1.5e-09, abs_max_gate_differential: 2.5, abs_max_gate_voltage: 3,
       abs_max_ohmic_bias: 0.05}, turn_on: {measured_current: 1.4752252e-09, measured_resistance: 33893.13,
-      saturation_voltage: 2.85, voltage: 1.891}}}
+      saturation_voltage: -2.85, voltage: -1.891}}}

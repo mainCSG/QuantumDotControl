@@ -1,7 +1,7 @@
 instruments: 
     ivvi:
         type: qcodes_contrib_drivers.drivers.QuTech.IVVI
-        address: COM3
+        address: COM6
 
         init:
             numdacs: 16
@@ -12,25 +12,17 @@ instruments:
 
         add_parameters:     
             
-            S: {source: dac3, label: Source Ohmic Gate,unit: V,scale: 1,initial_value: 0.}
-            S_step: {initial_value: 0.01}
+            S: {source: dac3, label: Source Ohmic Gate,unit: V,scale: 1,step=1.0e-3,initial_value: 0.}
         
-            STL: {source: dac5, label: Lead Gate (L),unit: V,scale: 1,initial_value: 0.}
-            STL_step: {initial_value: 0.01}
+            STL: {source: dac5, label: Lead Gate (L),unit: V,scale: 1,step=1.0e-3,initial_value: 0.}
             
-            LB: {source: dac6, label: Barrier Gate (L),unit: V,scale: 1,initial_value: 0.}
-            LB_step: {initial_value: 0.01}
+            LB: {source: dac6, label: Barrier Gate (L),unit: V,scale: 1,step=1.0e-3,initial_value: 0.}
             
-            P: {source: dac7, label: Plunger Gate,unit: V,scale: 1,initial_value: 0.}
-            P_step: {initial_value: 0.01}
+            P: {source: dac7, label: Plunger Gate,unit: V,scale: 1,step=1.0e-3,initial_value: 0.}
             
-            RB: {source: dac8, label: Barrier Gate (R),unit: V,scale: 1,initial_value: 0.}
-            RB_step: {initial_value: 0.01}
+            RB: {source: dac8, label: Barrier Gate (R),unit: V,scale: 1,step=1.0e-3, initial_value: 0.}
             
-            STR: {source: dac9, label: Lead Gate (R),unit: V,scale: 1,initial_value: 0.}
-            STR_step: {initial_value: 0.01}
-            
-            smooth_timestep: {initial_value: 0.05}
+            STR: {source: dac9, label: Lead Gate (R),unit: V,scale: 1,step=1.0e-3,initial_value: 0.}
                   
 
     keithley2000:
@@ -40,7 +32,10 @@ instruments:
         parameters:
 
             mode: {initial_value: 'dc voltage'}
-            amplitude: {alias: volt}
+        
+        add_parameters:
+
+            volt: {source: amplitude}
 
     sim900:
         type: qcodes_contrib_drivers.drivers.StanfordResearchSystems.SIM928.SIM928

@@ -1173,6 +1173,7 @@ class QuantumDotFET:
                                     voltage_configuration: Dict[str, float] = {},
                                     equitime: bool = False):
 
+
         gates_to_check = self.barriers + self.leads
         for gate_name in gates_to_check:
             if gate_name in voltage_configuration.keys():
@@ -1184,7 +1185,12 @@ class QuantumDotFET:
             deltav = {}
             for gate_name, voltage in voltage_configuration.items():
                 deltav[gate_name] = voltage-getattr(self.voltage_source, gate_name).get()
-                stepsize = getattr(self.voltage_source, f'{gate_name}_step').get()
+                gate_step_param = getattr(self.voltage_source, f'{gate_name}_step', None)
+                if gate_step_param is None:
+                    # work around for IVVI
+                    stepsize = getattr(self.voltage_source, f'{gate_name}', None).step
+                else:
+                    stepsize = gate_step_param()
                 steps = abs(int(np.ceil(deltav[gate_name]/stepsize)))
                 if steps > maxsteps:
                     maxsteps = steps
@@ -1198,12 +1204,18 @@ class QuantumDotFET:
             prevvals = {}
             for gate_name, voltage in voltage_configuration.items():
                 prevvals[gate_name] = getattr(self.voltage_source, gate_name).get()
+                
             while len(done) != len(voltage_configuration):
                 intermediate.append({})
                 for gate_name, voltage in voltage_configuration.items():
                     if gate_name in done:
                         continue
-                    stepsize = getattr(self.voltage_source, f'{gate_name}_step').get()
+                    gate_step_param = getattr(self.voltage_source, f'{gate_name}_step', None)
+                    if gate_step_param is None:
+                        # work around for IVVI
+                        stepsize = getattr(self.voltage_source, f'{gate_name}', None).step
+                    else:
+                        stepsize = gate_step_param()
                     deltav = voltage-prevvals[gate_name]
                     if abs(deltav) <= stepsize:
                         intermediate[-1][gate_name] = voltage
@@ -1215,9 +1227,13 @@ class QuantumDotFET:
                     prevvals[gate_name] = intermediate[-1][gate_name]
 
         for voltages in intermediate:
-            for i in voltages:
-                getattr(self.voltage_source, gate_name).set(voltages[i])
-            time.sleep(self.voltage_source.smooth_timestep())
+            for gate_name in voltages:
+                getattr(self.voltage_source, gate_name).set(voltages[gate_name])
+            delay_param = getattr(self.voltage_source, 'smooth_timestep', None)
+            if delay_param is None:
+                time.sleep(getattr(self.voltage_source, 'dac_set_sleep', None)())
+            else:
+                time.sleep(delay_param())
 
     def _query_yes_no(self, question, default="no"):
         """Ask a yes/no question via raw_input() and return their answer.

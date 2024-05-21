@@ -12,6 +12,29 @@ from qcodes.dataset.dond.do_nd_utils import ActionsT
 from qcodes.parameters import ParameterBase
 import numpy.typing as npt
 
+import skimage
+from skimage.transform import hough_line, hough_line_peaks, probabilistic_hough_line
+from skimage.feature import canny
+from skimage.draw import line as draw_line
+from skimage import data
+import matplotlib.cm as cm
+
+original_sys_path = sys.path.copy()
+
+try:
+
+    sys.path.append(
+        os.path.abspath(
+            os.path.join(os.path.dirname(__file__), '../../coarse_tuning/src')
+        )
+    )
+
+    from inference import *
+
+finally:
+
+    sys.path = original_sys_path
+
 class LinSweep_SIM928(AbstractSweep[np.float64]):
     """
     Linear sweep.
@@ -92,6 +115,142 @@ class DataFit:
     
     def linear(self, x, m, b):
         return m * x + b         
+    
+class FET_DataAnalyzer:
+    def __init__(self, tuner_config) -> None:
+        self.tuner_info = yaml.safe_load(Path(tuner_config).read_text())
+
+        self.model_path = self.tuner_info['barrier_barrier']['segmentation_model_path']
+        self.model_config_path = self.tuner_info['barrier_barrier']['segmentation_model_config_path']
+        self.model_name =self.tuner_info['barrier_barrier']['segmentation_model_name']
+        self.model_processor = self.tuner_info['barrier_barrier']['segmentation_model_processor']
+        self.confidence_threshold = self.tuner_info['barrier_barrier']['segmentation_confidence_threshold']
+        self.polygon_threshold = self.tuner_info['barrier_barrier']['segmentation_polygon_threshold']
+        self.segmentation_class = self.tuner_info['barrier_barrier']['segmentation_class']
+        
+    def extract_bias_point(self,
+                           data: pd.DataFrame,
+                           plot_process: bool,
+                           axes: plt.Axes):
+        
+        # Inference image for anything above 0.5
+        outputs, metadata, image, Xdata, Ydata = inference(
+            data,
+            self.model_path,
+            self.model_config_path,
+            self.model_name,
+            self.model_processor,
+            self.confidence_threshold,
+            self.polygon_threshold,
+            plot=False
+        )
+
+        # Only keep things with class 'CD' = 'Central Dot'
+        outputs = outputs[outputs.pred_classes == metadata.thing_classes.index(self.segmentation_class)]
+
+        # Get the bounding box with the best score
+        bboxes = outputs.pred_boxes.tensor.numpy()
+        max_score_index = np.argmax(outputs.scores)
+        best_bbox = bboxes[max_score_index]
+        best_score = outputs.scores[max_score_index]
+
+        bbox_units = pixel_polygon_to_image_units(best_bbox, data)
+        x, y = bbox_units[:,0], bbox_units[:,1]
+        x1,x2 = x
+        y1,y2 = y
+
+        if plot_process:
+            # Plot the bounding box
+            axes.plot([x1, x2], [y1, y1], linewidth=3, alpha=0.5, linestyle='--', color='k')  # Top line
+            axes.plot([x1, x2], [y2, y2], linewidth=3, alpha=0.5,  linestyle='--', color='k')  # Bottom line
+            axes.plot([x1, x1], [y1, y2], linewidth=3, alpha=0.5,  linestyle='--', color='k')  # Left line
+            axes.plot([x2, x2], [y1, y2], linewidth=3, alpha=0.5,  linestyle='--', color='k')  # Right line
+            label_text = 'CD' +' ' + str(round(best_score.item() * 100)) + "%"
+            axes.text(x1, y2, label_text, color='k', fontsize=10, verticalalignment='bottom')
+
+        voltage_window = {Xdata.name.split('_')[-1]: (x1,x2), Ydata.name.split('_')[-1]:(y1,y2)}
+        print(f"Suggested voltage window: {voltage_window}")
+
+        range_X = voltage_window[Xdata.name.split('_')[-1]]
+        range_Y = voltage_window[Ydata.name.split('_')[-1]]
+        windowed_data = data[
+            (data[Xdata.name] >= range_X[0]) & (data[Xdata.name] <= range_X[1]) &
+            (data[Ydata.name] >= range_Y[0]) & (data[Ydata.name] <= range_Y[1])
+        ]
+
+        window_data_image, Xdata, Ydata = convert_data_to_image(windowed_data)
+        window_data_image = window_data_image[:,:,0]
+        edges = canny(window_data_image,sigma=0.5, low_threshold=0.1*np.iinfo(np.uint8).max, high_threshold=0.3 * np.iinfo(np.uint8).max)
+        lines = probabilistic_hough_line(edges, threshold=0, line_length=3,
+                                        line_gap=0)
+        
+        if plot_process:
+            # Generating figure 2
+            fig, ax = plt.subplots(1, 3, figsize=(15, 5))
+            ax = ax.ravel()
+
+            ax[0].imshow(window_data_image, cmap=cm.gray, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()],)
+            ax[0].set_title('Input image')
+
+            ax[1].imshow(edges, cmap=cm.gray, origin='lower',  extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()],)
+            ax[1].set_title('Masked Canny edges')
+
+        potential_points = {}
+        angles_data = []
+        slopes_data = []
+        for line in lines:
+            p0_pixel, p1_pixel = line
+            p0, p1 = pixel_polygon_to_image_units(line, windowed_data)
+
+            dy =  (p1[1]-p0[1])
+            dx = (p1[0]-p0[0])
+            if dx == 0:
+                continue
+            m = dy/dx
+            theta = np.arctan(m)*(180/np.pi)
+            if theta > -40 or theta < -60:
+                continue
+            angles_data.append(theta)
+            slopes_data.append(m)
+            midpoint_pixel = (np.array(p0_pixel) + np.array(p1_pixel))/2
+            midpoint_units = (np.array(p0) + np.array(p1))/2
+            # print(midpoint)
+            midpoint_pixel = midpoint_pixel.astype(int)
+
+            X_name,Y_name,Z_name = windowed_data.columns[:3]
+            current_at_midpoint = windowed_data[Z_name].to_numpy().reshape(len(Xdata), len(Ydata))[midpoint_pixel[0],midpoint_pixel[1]]
+            potential_points[tuple(midpoint_units)] = current_at_midpoint
+
+            if plot_process: 
+                ax[1].plot((p0[0], p1[0]), (p0[1], p1[1]))
+                ax[1].scatter([midpoint_units[0]],[midpoint_units[1]], marker='*',s=50)
+                ax[0].plot((p0[0], p1[0]), (p0[1], p1[1]))
+                ax[0].scatter([midpoint_units[0]],[midpoint_units[1]], marker='*',s=50)
+
+        if plot_process:      
+            ax[1].set_title('Hough Transform')
+            ax[1].set_axis_off()
+
+            ax[1].set_title('Histogram of Detected Line Angles')
+            ax[2].hist(angles_data, bins=2*int(np.sqrt(len(slopes_data))))
+            ax[2].set_xlabel(r"$\theta^\circ$")
+            ax[2].set_ylabel(r"$f$")
+
+        max_key = np.array(max(potential_points, key=potential_points.get))
+        bias_point = {Xdata.name.split('_')[-1]: max_key[0], Ydata.name.split('_')[-1]: max_key[1]}
+        axes.scatter(*max_key, marker='*', s=30, c='k', label='Bias Point')
+        axes.legend(loc='best')
+        print(f"Suggested bias point: {bias_point}")
+
+        return bias_point, voltage_window
+
+    def extract_plunger_value(self,
+                              data):
+        pass
+
+    def extract_lever_arms(self,
+                           data):
+        pass
 
 class DataAcquisition:
     def __init__(self,
@@ -140,6 +299,7 @@ class QuantumDotFET:
             save_dir (str): Directory to save data and plots generated.
         """
         self.DataFit = DataFit()
+        self.DataAnalyzer = FET_DataAnalyzer(tuner_config)
 
         # Save file names
         self.device_config = device_config
@@ -265,7 +425,7 @@ class QuantumDotFET:
                 minV: float = 0.0, 
                 maxV: float = None, 
                 dV: float = None, 
-                delay: float = 0.01):
+                delay: float = 0.01) -> pd.DataFrame:
         """Attempts to 'turn-on' the FET by sweeping barriers and leads
         in the FET channel until either,
          (1) Maximum allowed current is reached 
@@ -278,7 +438,7 @@ class QuantumDotFET:
             delay (float, optional): Delay between each step in the sweep (s). Defaults to 0.01.
 
         Returns: 
-            None
+            df (pd.DataFrame): Return measurement data. 
 
         **Example**
 
@@ -395,9 +555,11 @@ class QuantumDotFET:
                     # Store in device dictionary for later
                     self.device_info['properties']['turn_on']['voltage'] = V_turn_on
                     self.device_info['properties']['turn_on']['saturation_voltage'] = V_sat
-        
+
         self._save_figure(plot_info='device_turn_on')
         self._update_device_config_yaml()
+
+        return df
 
     def pinch_off(self, 
                     gates: List[str] | str = None, 
@@ -405,7 +567,7 @@ class QuantumDotFET:
                     maxV: float = None, 
                     dV: float = None,
                     delay: float = 0.01,
-                    voltage_configuration: dict = {}):
+                    voltage_configuration: dict = {}) -> pd.DataFrame:
         """Attempts to pinch off gates from maxV to minV in steps of dV. If gates
         is not provided, defaults to barriers and leads in the FET channel. If minV is not 
         provided, defaults to saturation voltage minus allowed gate differential. If maxV
@@ -420,7 +582,7 @@ class QuantumDotFET:
             voltage_configuration (dict, optional): Desired voltage configuration. Defaults to None.
 
         Returns:
-            None: 
+            df (pd.DataFrame): Return measurement data. 
 
         **Example**
 
@@ -608,7 +770,8 @@ class QuantumDotFET:
                         B2_bounds: tuple = (None, None), 
                         dV: float | tuple = None,
                         delay: float = 0.01, 
-                        voltage_configuration: dict = None):
+                        voltage_configuration: dict = None,
+                        extract_bias_point: bool = False) -> tuple[pd.DataFrame, plt.Axes]:
         """Performs a 2D sweep of the barriers in the FET channel. If user doesn't
         provide bounds, it will perform a 2D sweep based on the voltage pinch off window
         determined earlier.
@@ -621,9 +784,12 @@ class QuantumDotFET:
             dV (float | tuple, optional): Step size (V). Defaults to None.
             delay (float, optional): Delay between each step in the sweep (s). Defaults to 0.01.
             voltage_configuration (dict, optional): Desired voltage configuration. Defaults to None.
+            extract_bias_point (bool, optional): Will attempt to extract bias point. Defaults to False.
 
         Returns: 
-            None
+            df (pd.DataFrame): Return measurement data. 
+            ax1 (plt.Axes): Axis for the raw current data.
+
 
         Examples:
             
@@ -779,12 +945,28 @@ class QuantumDotFET:
 
         self._save_figure(plot_info=f'{B1}_{B2}_sweep')
 
+        if extract_bias_point:
+
+            # Inference data
+            bias_point, voltage_window = self.DataAnalyzer.extract_bias_point(
+                df,
+                plot_process=True,
+                axes=ax1
+            )
+
+            for barrier_gate_name, voltage in bias_point.items():
+                self.device_info['properties'][barrier_gate_name]['bias_point'] = voltage
+
+            self._update_device_config_yaml()
+
+        return (df,ax1)
+
     def coulomb_blockade(self, 
                          P: str = None, 
                          P_bounds: tuple = (None, None), 
                          dV: float = None, 
                          delay: float = 0.01,
-                         voltage_configuration: dict = None):
+                         voltage_configuration: dict = None) -> pd.DataFrame:
         """Attempts to sweep plunger gate to see coulomb blockade features. Ideally
         the voltage configuration provided should be that which creates a well defined
         central dot between the two barriers.
@@ -797,7 +979,7 @@ class QuantumDotFET:
             voltage_configuration (dict, optional): Device gate voltages. Defaults to None.
 
         Returns:
-            None
+            df (pd.DataFrame): Return measurement data. 
 
         **Example**
         >>> QD_FET_Tuner.coulomb_blockade(
@@ -864,6 +1046,8 @@ class QuantumDotFET:
         config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
         self._save_figure(plot_info=f'{P}_sweep_{config_str}')
 
+        return df
+
     def coulomb_diamonds(self, 
                          ohmic: str = None, 
                          gate: str = None, 
@@ -872,8 +1056,7 @@ class QuantumDotFET:
                          dV_ohmic: float = None, 
                          dV_gate: float = None,
                          delay: float = 0.01,
-                         voltage_configuration: dict = None,
-                         ):
+                         voltage_configuration: dict = None) -> tuple[pd.DataFrame, plt.Axes]:
         """Performs a bias spectroscopy of the device recovering Coulomb diamonds.
 
         Args:
@@ -887,7 +1070,7 @@ class QuantumDotFET:
             voltage_configuration (dict, optional): Device voltage configuration. Defaults to None.
 
         Returns: 
-            None
+            df (pd.DataFrame): Return measurement data. 
 
         **Example**
         >>>QD_FET_Tuner.coulomb_diamonds(
@@ -1016,11 +1199,13 @@ class QuantumDotFET:
 
         config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
         self._save_figure(plot_info=f'{ohmic}_{gate}_sweep_{config_str}')
+        
+        return (pd.DataFrame, ax1)
 
     def current_trace(self, 
                       f_sampling: int, 
                       t_capture: int, 
-                      plot_psd: bool = False):
+                      plot_psd: bool = False) -> pd.DataFrame:
         """Records current data from multimeter device at a given sampling rate
         for a given amount of time. 
 
@@ -1030,7 +1215,7 @@ class QuantumDotFET:
             plot_psd (bool, optional): Plots power spectral density spectrum. Defaults to "False".
         
         Returns:
-            None
+            df (pd.DataFrame): Return measurement data. 
 
         **Example**
         >>>QD_FET_Tuner.current_trace(
@@ -1054,8 +1239,8 @@ class QuantumDotFET:
                                 (time_param, time_param()))
                 elapsed_time = time_param.get()
       
-        time_trace_df = datasaver.dataset.to_pandas_dataframe().reset_index()
-        df_current = time_trace_df.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
+        df = datasaver.dataset.to_pandas_dataframe().reset_index()
+        df_current = df.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot current v.s. random gate (since they are swept together)
@@ -1077,6 +1262,8 @@ class QuantumDotFET:
             plt.ylabel(r'$S_I$ (A$^2$/Hz)')
             plt.title(r"Current noise spectrum")
             plt.show()
+
+        return df
 
     def _check_break_conditions(self):
         # Go through device break conditions to see if anything is flagged,

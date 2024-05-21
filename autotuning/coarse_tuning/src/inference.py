@@ -14,7 +14,7 @@ from detectron2.engine import DefaultTrainer
 import torch
 from PIL import Image, ImageDraw
 
-
+from typing import List, Dict
 
 from skimage import measure
 
@@ -27,8 +27,10 @@ def mask_to_polygon(binary_mask, tolerance=0):
     polygons = []
     # pad mask to close contours of shapes which start and end at an edge
     padded_binary_mask = np.pad(binary_mask, pad_width=1, mode='constant', constant_values=0)
+
     contours = measure.find_contours(padded_binary_mask, 0.5)
     contours = np.subtract(contours, 1)
+
     for contour in contours:
         contour = close_contour(contour)
         contour = measure.approximate_polygon(contour, tolerance)
@@ -80,52 +82,70 @@ def setup_predictor(model_path: str,
     return predictor, inference_metadata
 
 def convert_data_to_image(data: pd.DataFrame):
-    X, Y, Z = data.columns[:3]
-    raw_numpy_data = data.pivot_table(values=Z, index=[X], columns=[Y])
+    Y, X, Z = data.columns[:3]
+    raw_numpy_data = data.pivot_table(values=Z, index=[Y], columns=[X])
     Xdata, Ydata = raw_numpy_data.columns, raw_numpy_data.index
 
     raw_numpy_data = raw_numpy_data.values
 
     image_data = raw_numpy_data.copy()
-    image_data /= raw_numpy_data.max()
+    image_data -= raw_numpy_data.min()
+    image_data /= image_data.max()
+
     image_data *= 255
     image = image_data.astype(np.uint8)
     image = np.stack((image,image,image),axis=2)
     return image, Xdata, Ydata
 
-def pixel_mask_to_polygon_units(mask, data, plot=False):
+def pixel_mask_to_image_units(mask, data, plot=False):
     image, Xdata, Ydata = convert_data_to_image(data)
     polygon_pixels = np.array(mask_to_polygon(mask.numpy().astype(int))).astype(int).reshape(-1,2)
     xs, ys = polygon_pixels[:,0], polygon_pixels[:,1]
 
-    polygon_units = []
+    image_units = []
     for coordinate in polygon_pixels:
-        polygon_units.append([Xdata[coordinate[0]], Ydata[coordinate[1]]])
-    polygon_units = np.array(polygon_units)
+        image_units.append([Xdata[coordinate[0]], Ydata[coordinate[1]]])
+    image_units = np.array(image_units)
 
     if plot:
         plt.imshow(image, extent=[Xdata.min(), Xdata.max(), Ydata.min(), Ydata.max()])
-        plt.plot(polygon_units[:,0], polygon_units[:,1])
+        plt.plot(image_units[:,0], image_units[:,1])
         plt.show()
 
-    return polygon_units
+    return image_units
 
+def pixel_polygon_to_image_units(polygon, data, plot=False):
+    image, Xdata, Ydata = convert_data_to_image(data)
+    polygon_pixels = np.array(polygon).astype(int).reshape(-1,2)
+    xs, ys = polygon_pixels[:,0], polygon_pixels[:,1]
+
+    image_units = []
+    for coordinate in polygon_pixels:
+        image_units.append([Xdata[coordinate[0]], Ydata[coordinate[1]]])
+    image_units = np.array(image_units)
+
+    if plot:
+        plt.imshow(image, extent=[Xdata.min(), Xdata.max(), Ydata.min(), Ydata.max()])
+        plt.plot(image_units[:,0], image_units[:,1])
+        plt.show()
+
+    return image_units
 
 def inference(data: pd.DataFrame, 
               model_path: str, 
               config_path: str,
               model_name: str,
               processor: str,
-              polygon_threshold: float,
               confidence_threshold: float,
-              plot_predictions: bool):
+              polygon_threshold: float,
+              plot: str = None):
 
     predictor, metadata = setup_predictor(model_path, config_path, model_name, processor, confidence_threshold)
     image, Xdata, Ydata = convert_data_to_image(data)
+    outputs = predictor(image)['instances']
 
-    outputs = predictor(image) 
     filtered_masks = []
-    for i, mask in enumerate(outputs['instances'].pred_masks.to('cpu')):
+    for i, mask in enumerate(outputs.pred_masks.to('cpu')):
         polygon = np.array(mask_to_polygon(mask.numpy().astype(int), polygon_threshold)).astype(int)
         img = Image.new('L', (image.shape[1], image.shape[0]), 0)
         ImageDraw.Draw(img).polygon(polygon[0].tolist(), outline=1, fill=1)
@@ -133,20 +153,22 @@ def inference(data: pd.DataFrame,
         filtered_masks.append(torch.from_numpy(new_binary_mask))
 
     filtered_masks = torch.stack(filtered_masks)
-    outputs['instances'].set('pred_masks', filtered_masks)
+    outputs.set('pred_masks', filtered_masks)
 
-    if plot_predictions:
+    if plot:
+        plt.figure()
+
         v = Visualizer(
             image,
             metadata, 
-            scale=1,
+            scale=3,
         )
+        out = v.draw_instance_predictions(outputs.to("cpu"))
+        
+        plt.imshow(out.get_image(), extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], origin='lower')
+        plt.xlabel(Xdata.name +" (V)")
+        plt.ylabel(Ydata.name+ " (V)")
+        plt.title(r'$I_{SD}$ Inferenced')
 
-        out = v.draw_instance_predictions(outputs["instances"].to("cpu"))
-        plt.title("Data")
-        plt.imshow(out.get_image(), extent=[Xdata.min(), Xdata.max(), Ydata.min(), Ydata.max()])
-        plt.xlabel(r'$V_X$ (mV)')
-        plt.ylabel(r'$V_Y$ (mV)')
-        plt.show()
 
-    return outputs, metadata, image
+    return outputs, metadata, image, Xdata, Ydata

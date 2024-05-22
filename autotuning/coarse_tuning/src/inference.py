@@ -30,7 +30,8 @@ def mask_to_polygon(binary_mask, tolerance=0):
 
     contours = measure.find_contours(padded_binary_mask, 0.5)
     contours = np.subtract(contours, 1)
-
+    if len(contours) > 1:
+        return
     for contour in contours:
         contour = close_contour(contour)
         contour = measure.approximate_polygon(contour, tolerance)
@@ -142,11 +143,16 @@ def inference(data: pd.DataFrame,
 
     predictor, metadata = setup_predictor(model_path, config_path, model_name, processor, confidence_threshold)
     image, Xdata, Ydata = convert_data_to_image(data)
+
     outputs = predictor(image)['instances']
 
     filtered_masks = []
     for i, mask in enumerate(outputs.pred_masks.to('cpu')):
-        polygon = np.array(mask_to_polygon(mask.numpy().astype(int), polygon_threshold)).astype(int)
+        polygon = mask_to_polygon(mask.numpy().astype(int), polygon_threshold)
+        if polygon is None:
+            filtered_masks.append(mask)
+            continue
+        polygon = np.array(polygon).astype(int)
         img = Image.new('L', (image.shape[1], image.shape[0]), 0)
         ImageDraw.Draw(img).polygon(polygon[0].tolist(), outline=1, fill=1)
         new_binary_mask = np.array(img)
@@ -161,7 +167,7 @@ def inference(data: pd.DataFrame,
         v = Visualizer(
             image,
             metadata, 
-            scale=3,
+            scale=1,
         )
         out = v.draw_instance_predictions(outputs.to("cpu"))
         

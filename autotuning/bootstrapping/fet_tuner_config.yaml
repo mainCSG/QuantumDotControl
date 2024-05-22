@@ -12,5 +12,5 @@ barrier_barrier:
   segmentation_model_processor: cpu
   segmentation_model_config_path: /Users/andrijapaurevic/Documents/uWaterloo/research/mainCSG/QuantumDotControl/autotuning/coarse_tuning/src/config.yaml
   segmentation_class: CD
-  segmentation_confidence_threshold: 0.7
+  segmentation_confidence_threshold: 0.8
   segmentation_polygon_threshold: 3

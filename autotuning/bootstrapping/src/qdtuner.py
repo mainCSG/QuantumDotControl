@@ -142,7 +142,7 @@ class FET_DataAnalyzer:
             self.model_processor,
             self.confidence_threshold,
             self.polygon_threshold,
-            plot=False
+            plot=plot_process
         )
 
         # Only keep things with class 'CD' = 'Central Dot'
@@ -208,7 +208,7 @@ class FET_DataAnalyzer:
                 continue
             m = dy/dx
             theta = np.arctan(m)*(180/np.pi)
-            if theta > -40 or theta < -60:
+            if theta > -40 or theta < -50:
                 continue
             angles_data.append(theta)
             slopes_data.append(m)
@@ -244,12 +244,94 @@ class FET_DataAnalyzer:
 
         return bias_point, voltage_window
 
-    def extract_plunger_value(self,
-                              data):
-        pass
+    def extract_max_conductance_point(self,
+                                      data: pd.DataFrame,
+                                      plot_process: bool = False,
+                                      sigma: float = 0.5) -> tuple:
+
+        V_name, I_name = data.columns
+
+        data = data.rename(
+            columns={I_name: '{}_current'.format(I_name.split('_')[0])}
+            )
+        data.iloc[:,-1] = data.iloc[:,-1].subtract(0).mul(1) # sensitivity
+        data.iloc[:,0] = data.iloc[:,0].subtract(0).mul(1e-3) # sensitivity 
+        
+        V_name, I_name = data.columns
+
+        I_data = data[I_name]
+        V_data = data[V_name]
+
+        I_filtered = sp.ndimage.gaussian_filter1d(
+            I_data, sigma
+        )
+
+        G_data = np.gradient(I_filtered, np.abs(V_data.iloc[-1] - V_data.iloc[-2]))
+        G_filtered = sp.ndimage.gaussian_filter1d(
+            G_data, sigma
+        )
+
+        threshold = max(G_filtered) / 10
+
+        maxima = sp.signal.argrelextrema(G_filtered, np.greater)[0]
+        maxima_indices = maxima[G_filtered[maxima] >= threshold]
+
+        if len(maxima_indices) != 0:
+            results = dict(zip(V_data.iloc[maxima_indices], G_filtered[maxima_indices]))
+
+            results_sorted = dict(sorted(results.items(), key=lambda item: item[1]))
+
+        if plot_process:
+
+            # Create figure and axes
+            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 6), sharex=True)
+
+            # Plot for I_SD vs V_ST
+            ax1.set_title(r"$I_{SD}$")
+            ax1.set_ylabel(r"$I_{SD}\ (A)$")
+            ax1.plot(V_data, I_data, 'k-', alpha=0.3,linewidth=0.75)
+            ax1.plot(V_data, I_filtered, 'k-', linewidth=1.5)
+
+            # Plot for G vs V_ST
+            ax2.set_title(r"$G_{SD}$")
+            ax2.set_ylabel(r"$G_{SD}\ (S)$")
+            ax2.set_xlabel(r"$V_{P}\ (V)$")
+            ax2.plot(V_data, G_data, 'k-', alpha=0.3, linewidth=0.75)
+            ax2.plot(V_data, G_filtered, 'k-', linewidth=1.5)
+            ax2.hlines(y=threshold, xmin=V_data.iloc[0], xmax=V_data.iloc[-1], color='black', linestyle='--', linewidth=1.5)
+
+        def legend_without_duplicate_labels(ax):
+                # Helper function to prevent duplicates in the legend.
+                handles, labels = ax.get_legend_handles_labels()
+                unique = [(h, l) for i, (h, l) in enumerate(zip(handles, labels)) if l not in labels[:i]]
+                ax.legend(*zip(*unique))
+
+        # Plot all the points of interest according to their sensitivity
+        if len(maxima_indices) > 0:
+            for i in maxima_indices:
+
+                index = list(results_sorted.keys()).index(V_data.iloc[i])
+                if index == len(results_sorted)-1:
+                    label = "High Sensitivity"
+                    color = 'b'
+                elif index == 0: 
+                    label = "Low Sensitivity"
+                    color = 'r'
+                else:
+                    label = "Medium Sensitivity"
+                    color = 'g'
+
+                if plot_process:
+                    ax1.text(V_data.iloc[i], I_filtered[i], f'{V_data.iloc[i]:.2f} mV', color='black', fontsize=6, fontweight=750, ha='right', va='bottom', bbox=dict(facecolor='white', edgecolor='black', boxstyle='round,pad=0.5', alpha=0.25))
+                    ax2.scatter(V_data.iloc[i], G_filtered[i], c=color, label=label)
+                    ax1.scatter(V_data.iloc[i], I_filtered[i], c=color, label=label)
+                    ax1.legend(loc='best')
+                    legend_without_duplicate_labels(ax1)
+
+        return list(results_sorted.items())[-1]
 
     def extract_lever_arms(self,
-                           data):
+                           data: pd.DataFrame):
         pass
 
 class DataAcquisition:
@@ -760,7 +842,8 @@ class QuantumDotFET:
                     except RuntimeError:
                         print("Error - fitting to \"linear\" failed.")
 
-            self._save_figure(plot_info='{}_pinch'.format(str(sweep._param).split('_')[-1]))
+            config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
+            self._save_figure(plot_info=f"{str(sweep._param).split('_')[-1]}_pinch_{config_str}")
             self._update_device_config_yaml()
 
     def sweep_barriers(self, 
@@ -943,7 +1026,8 @@ class QuantumDotFET:
 
         fig.tight_layout()
 
-        self._save_figure(plot_info=f'{B1}_{B2}_sweep')
+        config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
+        self._save_figure(plot_info=f'{B1}_{B2}_sweep_{config_str}')
 
         if extract_bias_point:
 
@@ -966,7 +1050,7 @@ class QuantumDotFET:
                          P_bounds: tuple = (None, None), 
                          dV: float = None, 
                          delay: float = 0.01,
-                         voltage_configuration: dict = None) -> pd.DataFrame:
+                         voltage_configuration: dict = None) -> tuple[pd.DataFrame, plt.Axes]:
         """Attempts to sweep plunger gate to see coulomb blockade features. Ideally
         the voltage configuration provided should be that which creates a well defined
         central dot between the two barriers.
@@ -1046,7 +1130,7 @@ class QuantumDotFET:
         config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
         self._save_figure(plot_info=f'{P}_sweep_{config_str}')
 
-        return df
+        return (df, axes)
 
     def coulomb_diamonds(self, 
                          ohmic: str = None, 

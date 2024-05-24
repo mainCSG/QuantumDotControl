@@ -12,17 +12,17 @@ instruments:
 
         add_parameters:     
             
-            S: {source: dac3, label: Source Ohmic Gate,unit: V,scale: 1,step=1.0e-3,initial_value: 0.}
+            S: {source: dac3, label: Source Ohmic Gate, unit: V,scale: 1,step: 1.0e-3,initial_value: 0.}
         
-            STL: {source: dac5, label: Lead Gate (L),unit: V,scale: 1,step=1.0e-3,initial_value: 0.}
+            STL: {source: dac5, label: Lead Gate (L), unit: V,scale: 1,step: 1.0e-3,initial_value: 0.}
             
-            LB: {source: dac6, label: Barrier Gate (L),unit: V,scale: 1,step=1.0e-3,initial_value: 0.}
+            LB: {source: dac6, label: Barrier Gate (L), unit: V,scale: 1,step: 1.0e-3,initial_value: 0.}
             
-            P: {source: dac7, label: Plunger Gate,unit: V,scale: 1,step=1.0e-3,initial_value: 0.}
+            P: {source: dac7, label: Plunger Gate, unit: V,scale: 1,step: 1.0e-3,initial_value: 0.}
             
-            RB: {source: dac8, label: Barrier Gate (R),unit: V,scale: 1,step=1.0e-3, initial_value: 0.}
+            RB: {source: dac8, label: Barrier Gate (R), unit: V,scale: 1,step: 1.0e-3, initial_value: 0.}
             
-            STR: {source: dac9, label: Lead Gate (R),unit: V,scale: 1,step=1.0e-3,initial_value: 0.}
+            STR: {source: dac9, label: Lead Gate (R), unit: V,scale: 1,step: 1.0e-3,initial_value: 0.}
                   
 
     keithley2000:

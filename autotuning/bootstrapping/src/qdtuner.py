@@ -27,6 +27,9 @@ from skimage.feature import canny
 from skimage.filters import threshold_otsu
 from skimage.morphology import diamond, rectangle  # noqa
 
+import logging
+from colorlog import ColoredFormatter
+import sys
 
 original_sys_path = sys.path.copy()
 
@@ -378,9 +381,10 @@ class DataAnalysis:
         V_P_med, G_med = list(results_sorted.items())[int(len(results_sorted.items())//2)]
         V_P_low, G_low = list(results_sorted.items())[0]
 
-        return {'high': {'VP': V_P_high, 'G': G_high},
-                'medium': {'VP': V_P_med, 'G': G_med},
-                'low': {'VP': V_P_low, 'G': G_low}}
+        gate_name = V_name.split('_')[-1]
+        return {'high': {gate_name: V_P_high, 'conductance': G_high},
+                'medium': {gate_name: V_P_med, 'conductance': G_med},
+                'low': {gate_name: V_P_low, 'conductance': G_low}}
 
     def extract_lever_arms(self,
                            data: pd.DataFrame,
@@ -456,8 +460,8 @@ class DataAnalysis:
 
         ax.imshow(Zdata, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
         ax.set_title(r'$I_{SD}$')
-        ax.set_ylabel(r'$V_{SD}\ (mV)$')
-        ax.set_xlabel(r'$V_{P}\ (V)$')
+        ax.set_ylabel(r'$V_{SD}$ (V)')
+        ax.set_xlabel(r'$V_{P}$ (V)')
         ax.set_aspect('auto')
 
         addition_voltages = []
@@ -561,7 +565,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         DataAnalysis.__init__(self, tuner_config=tuner_config)
         DataAcquisition.__init__(self)
-
+    
         # Save file names
         self.device_config = device_config
         self.setup_config = setup_config
@@ -569,90 +573,101 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         self.station_config = station_config
         self.save_dir = save_dir
 
-        # Read in tuner config information
-        self.tuner_info = yaml.safe_load(Path(tuner_config).read_text())
-        self.global_turn_on_info = self.tuner_info['global_turn_on']
-        self.pinch_off_info = self.tuner_info['pinch_off']
+        self._load_config_files()
+        
+        todays_date = datetime.date.today().strftime("%Y-%m-%d")
+        self.db_folder = os.path.join(save_dir, f"{self.device_info['characteristics']['sample_name']}_{todays_date}")
 
-        # Read in station config information
-        self.station_info = yaml.safe_load(Path(setup_config).read_text())
-        self.general_info = self.station_info['general_info']
-        self.multimeter_device = self.general_info['multimeter_device']
-        self.voltage_device = self.general_info['voltage_device']
-        self.preamp_sensitivity = self.general_info['preamp_sensitivity']
-        self.preamp_bias = self.general_info['preamp_bias']
-        self.voltage_divider = self.general_info['voltage_divider']
-        self.voltage_resolution = self.general_info['voltage_resolution']
+        ATTEMPT, COMPLETE = logging.INFO - 2, logging.INFO - 1
 
-        # Read in device config information
-        self.device_info = yaml.safe_load(Path(device_config).read_text())
-        self.charge_carrier = self.device_info['characteristics']['charge_carrier']
-        self.operation_mode = self.device_info['characteristics']['operation_mode']
+        logging.addLevelName(ATTEMPT, 'ATTEMPT')
+        logging.addLevelName(COMPLETE, 'COMPLETE')
 
-        if (self.charge_carrier, self.operation_mode) == ('e', 'acc'):
-            self.voltage_sign = +1
-        if (self.charge_carrier, self.operation_mode) == ('e', 'dep'):
-            self.voltage_sign = -1
-        if (self.charge_carrier, self.operation_mode) == ('h', 'acc'):
-            self.voltage_sign = -1
-        if (self.charge_carrier, self.operation_mode) == ('h', 'dep'):
-            self.voltage_sign = +1
+        def attempt(self, message, *args, **kwargs):
+            if self.isEnabledFor(ATTEMPT):
+                self._log(ATTEMPT, message, args, **kwargs)
+        
+        def complete(self, message, *args, **kwargs):
+            if self.isEnabledFor(COMPLETE):
+                self._log(COMPLETE, message, args, **kwargs)
 
-        self.ohmics = self.device_info['characteristics']['ohmics']
-        self.barriers = self.device_info['characteristics']['barriers']
-        self.leads = self.device_info['characteristics']['leads']
-        self.plungers = self.device_info['characteristics']['plungers']
-        self.all_gates = self.barriers + self.leads + self.plungers
+        logging.Logger.attempt = attempt
+        logging.Logger.complete = complete
 
-        self.abs_max_current = self.device_info['properties']['constraints']['abs_max_current']
-        self.abs_max_ohmic_bias = self.device_info['properties']['constraints']['abs_max_ohmic_bias']
-        self.abs_max_gate_voltage = self.device_info['properties']['constraints']['abs_max_gate_voltage']
-        self.abs_max_gate_differential = self.device_info['properties']['constraints']['abs_max_gate_differential']
+        console_formatter = ColoredFormatter(
+                "%(log_color)s%(asctime)s - %(name)s - %(levelname)s %(message)s",
+                datefmt=None,
+                reset=True,
+                log_colors={
+                    'ATTEMPT': 'yellow',
+                    'COMPLETE': 'green',
+                    'DEBUG': 'white',
+                    'INFO': 'white',
+                    'WARNING': 'red',
+                    'ERROR': 'bold_red',
+                    'CRITICAL': 'bold_red'
+                }
+        )
 
-        print("Connecting to station ... ")
-        self.station = qc.Station(config_file=station_config)
+        file_formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s %(message)s"
+        )
+
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(console_formatter)
+
+        file_handler = logging.FileHandler(
+            os.path.join(self.db_folder, 'run_info.log')
+        )
+        file_handler.setFormatter(file_formatter)
+
+        self.logger = logging.getLogger(__name__)
+        self.logger.addHandler(console_handler)
+        self.logger.addHandler(file_handler)
+
+        self.logger.setLevel(min(self.logger.getEffectiveLevel(), ATTEMPT))
+
+        self.logger.attempt("connecting to station")
+        self.station = qc.Station(config_file=self.station_config)
         self.station.load_instrument(self.voltage_device)
         self.station.load_instrument(self.multimeter_device)
         self.voltage_source = getattr(self.station, self.voltage_device)
         self.drain_mm_device = getattr(self.station, self.multimeter_device)
         self.drain_volt = getattr(self.station, self.multimeter_device).volt
-        print("done!")
-
-        print("Grounding device ... ", end=' ')
-        self.ground_device()
-        print("done!")
+        self.logger.complete("\n")
 
         # Creates the qcodes database and sets-up the experiment
-        todays_date = datetime.date.today().strftime("%Y-%m-%d")
-        self.db_folder = os.path.join(save_dir, f"{self.device_info['characteristics']['sample_name']}_{todays_date}")
+        
         os.makedirs(self.db_folder, exist_ok=True)
         db_filepath =  os.path.join(self.db_folder, f"experiments_{self.device_info['characteristics']['sample_name']}_{todays_date}.db")
-        print(f"Creating/initializing a database at {db_filepath} ... ", end=' ')
         qc.dataset.initialise_or_create_database_at(
             db_filepath
         )
-        print("done!")
+        self.logger.info(f"database created/loaded @ {db_filepath}")
 
-        print(f"Creating/initializing the experiment in the database ... ", end=' ')
+        self.logger.info(f"experiment created/loaded in database")
         self.initialization_exp = qc.dataset.load_or_create_experiment(
             'Initialization',
             sample_name=self.device_info['characteristics']['sample_name']
         )
-        print("done!")
 
         # Copy all of the configs for safekeeping
-        print(f"Copying all of the config.yml files to the new directory ... ", end=' ')
+        self.logger.info(f"copying all of the config.yml files")
         shutil.copy(self.station_config, self.db_folder)
         shutil.copy(self.device_config, self.db_folder)
         shutil.copy(self.tuner_config, self.db_folder)
         shutil.copy(self.setup_config, self.db_folder)
-        print("done!")
+
+        
+        self.ground_device()
 
     def ground_device(self):
         """Grounds all of the gates in the device.
         """
         device_gates = self.ohmics + self.all_gates
+        self.logger.attempt("grounding device")
         self._smoothly_set_gates_to_voltage(device_gates, 0.)
+        self.logger.complete("\n")
 
     def bias_ohmic(self, 
                    ohmic: str = None, 
@@ -673,14 +688,12 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         >>> QD_FET_Tuner.bias_ohmic(ohmic='S', V=0.005)
         Setting ohmic 'S' to 0.005 V (which is 0.05 mV) ... done!
-        """     
-        print(
-            f"Setting ohmic {ohmic} to {V} V (which is {round(V*self.voltage_divider*1e3,3)} mV) ... ", 
-            end=" "
-        )
+        """  
+        self.logger.attempt(f"setting ohmic ({ohmic}) to {V} V")
+        self.logger.info(f'device receives {round(V*self.voltage_divider*1e3,3)} mV based on divider')
         self._smoothly_set_gates_to_voltage(ohmic, V)
         self.ohmic_bias = V*self.voltage_divider
-        print("done!")
+        self.logger.complete("\n")
 
     def turn_on(self, 
                 minV: float = 0.0, 
@@ -715,16 +728,15 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             maxV = self.voltage_sign * self.abs_max_gate_voltage
 
         # Ensure we stay in the allowed voltage space 
-        assert np.sign(maxV) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for your given device."
-        assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, "Double check the sign of the gate voltage (minV) for your given device."
+        assert np.sign(maxV) == self.voltage_sign, self.logger.error("Double check the sign of the gate voltage (maxV) for your given device.")
+        assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, self.logger.error("Double check the sign of the gate voltage (minV) for your given device.")
 
         # Set up gate sweeps
         num_steps = self._calculate_num_of_steps(minV, maxV, dV)
         gates_involved = self.barriers + self.leads
 
-        print(f"Setting all gates involved ({gates_involved}) to {minV} V ... ", end=" ")
+        self.logger.info(f"setting {gates_involved} to {minV} V")
         self._smoothly_set_gates_to_voltage(gates_involved, minV)
-        print("done!")
 
         sweep_list = []
         for gate_name in gates_involved:
@@ -733,7 +745,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             )
 
         # Execute the measurement
-        print(f"Beginning sweep from {minV} V to {maxV} V ... ", end=" ")
+        self.logger.attempt(f"sweeping {gates_involved} together from {minV} V to {maxV} V")
         result = qc.dataset.dond(
             qc.dataset.TogetherSweep(
                 *sweep_list
@@ -744,7 +756,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             exp=self.initialization_exp,
             show_progress=True
         )
-        print(f"done!")
+        self.logger.complete('\n')
 
         # Get last dataset recorded, convert to units of current (A)
         dataset = qc.load_last_experiment().last_data_set()
@@ -772,7 +784,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         # Try fitting data to tuner config information
         if len(mask) <= 4 or len(X_masked) <= 4:
-            print("Insufficient points above minimum current threshold to do any fitting!")
+            self.logger.error("insufficient points above minimum current threshold")
         else:
             try:
                 guess = [Y_masked.iloc[0], self.voltage_sign, X_masked.iloc[-1] - self.voltage_sign, 0]
@@ -793,8 +805,8 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 axes.axvline(x=V_sat,alpha=0.5, linestyle='--',c='b',label=r'$V_{\max}$')
                 axes.legend(loc='best')
 
-                print(f"FET turns on at {V_turn_on} V.")
-                print(f"FET saturates at {V_sat} V.")
+                self.logger.info(f"FET turns on at {V_turn_on} V")
+                self.logger.info(f"FET saturates at {V_sat} V")
 
                 # Store in device information for later
                 self.device_info['properties']['turn_on']['voltage'] = float(V_turn_on)
@@ -806,7 +818,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 self.deviceTurnsOn = True
 
             except RuntimeError:
-                print(f"Error - fitting to \"{self.global_turn_on_info['fit_function']}\" failed. Manually adjust device info.")
+                self.logger.error(f"fitting to \"{self.global_turn_on_info['fit_function']}\" failed")
                 
                 self.deviceTurnsOn = self._query_yes_no("Did the device actually turn-on?")
                 
@@ -828,7 +840,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                     maxV: float = None, 
                     dV: float = None,
                     delay: float = 0.01,
-                    voltage_configuration: dict = {}) -> pd.DataFrame:
+                    voltage_configuration: dict = {}) -> Dict[str, pd.DataFrame]:
         """Attempts to pinch off gates from maxV to minV in steps of dV. If gates
         is not provided, defaults to barriers and leads in the FET channel. If minV is not 
         provided, defaults to saturation voltage minus allowed gate differential. If maxV
@@ -843,7 +855,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             voltage_configuration (dict, optional): Desired voltage configuration. Defaults to None.
 
         Returns:
-            df (pd.DataFrame): Return measurement data. 
+            df (pd.DataFrame): Return measurement data as a dict of data frames. 
 
         **Example**
 
@@ -855,9 +867,8 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         # Bring device to voltage configuration
         if voltage_configuration is not None:
-            print("Setting voltage configuration ... ", end = " ")
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
             self._smoothly_set_voltage_configuration(voltage_configuration)
-            print("Done!")
 
         if dV is None:
             dV = self.voltage_resolution
@@ -870,15 +881,13 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         if maxV is None:
             maxV = self.device_info['properties']['turn_on']['saturation_voltage']
         else:
-            assert np.sign(maxV) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for your given device."
+            assert np.sign(maxV) == self.voltage_sign, self.logger.error("Double check the sign of the gate voltage (maxV) for your given device.")
         
         if minV is None:
             if self.voltage_sign == 1:
-                # minV = max(0, round(self.device_info['properties']['turn_on']['saturation_voltage'] - self.abs_max_gate_differential, 3))
                 min_allowed = 0
                 max_allowed = None
             elif self.voltage_sign == -1:
-                # minV = min(0, round(self.device_info['properties']['turn_on']['saturation_voltage'] - self.abs_max_gate_differential, 3))
                 min_allowed = None
                 max_allowed = 0
             minV = np.clip(
@@ -887,11 +896,10 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                     a_max=max_allowed
                 )
         else:
-            assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, "Double check the sign of the gate voltage (minV) for your given device."
+            assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, self.logger.error("Double check the sign of the gate voltage (minV) for your given device.")
 
-        print(f"Settings gates involved ({gates}) to {maxV} V ... ", end = " ")
+        self.logger.info(f"settings {gates} to {maxV} V")
         self._smoothly_set_gates_to_voltage(gates, maxV)
-        print("done!")
 
         num_steps = self._calculate_num_of_steps(minV, maxV, dV)
         sweep_list = []
@@ -903,9 +911,10 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         def adjusted_break_condition():
             return np.abs(self._get_drain_current()) < self.pinch_off_info['abs_min_current']
 
+        results_dict = {}
         for sweep in sweep_list:
 
-            print(f"Attempting to pinch off gate {str(sweep._param).split('_')[-1]} from {maxV} V to {minV} V ... ", end=" ")
+            self.logger.attempt(f"pinching off {str(sweep._param).split('_')[-1]} from {maxV} V to {minV} V")
             result = qc.dataset.dond(
                 sweep,
                 self.drain_volt,
@@ -914,15 +923,17 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 exp=self.initialization_exp,
                 show_progress=True
             )   
-            print(f"done!")
+            self.logger.complete("\n")
 
-            print(f"Returning gate {str(sweep._param).split('_')[-1]} back to {maxV} V ... ", end=" ")
+            self.logger.info(f"returning {str(sweep._param).split('_')[-1]} to {maxV} V")
             self._smoothly_set_gates_to_voltage([str(sweep._param).split('_')[-1]], maxV)
-            print(f"done!")
 
             # Get last dataset recorded, convert to current units
             dataset = qc.load_last_experiment().last_data_set()
             df = dataset.to_pandas_dataframe().reset_index()
+
+            results_dict[str(sweep._param).split('_')[-1]] = df
+
             df_current = df.copy()
             df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
             df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
@@ -939,6 +950,8 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[0])*self.pinch_off_info['abs_min_current'], alpha=0.5,c='g', linestyle=':', label=r'$I_{\min}$')
             axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[0])*self.abs_max_current, alpha=0.5,c='g', linestyle='--', label=r'$I_{\max}$')
                 
+            mask_belowthreshold = df_current[f'{self.multimeter_device}_current'].abs() < self.pinch_off_info['abs_min_current'] 
+
             # Keep any data that is above the minimum turn-on current
             if str(sweep._param).split('_')[-1] in self.leads:
                 mask = df_current[f'{self.multimeter_device}_current'].abs() > self.pinch_off_info['abs_min_current'] 
@@ -946,16 +959,18 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 Y = df_current[f'{self.multimeter_device}_current']
                 X_masked = X[mask]
                 Y_masked = Y[mask]
+                X_belowthreshold = X[mask_belowthreshold]
             else:
                 X = df_current[f'{str(sweep._param)}']
                 Y = df_current[f'{self.multimeter_device}_current']
                 X_masked = X
                 Y_masked = Y
+                X_belowthreshold = X[mask_belowthreshold]
 
             # Do the fit if possible
-            if len(X_masked) <= 4:
-                print("Insufficient points above turn-on to do any fitting. Decrease dV or increase Vmax.")
-                print("Trying to fit to linear fit to see if barrier is broken.")
+            if len(X_masked) <= 4 or len(X_belowthreshold) == 0:
+                self.logger.error(f"{str(sweep._param).split('_')[-1]}, insufficient points below minimum current threshold to do any fitting")
+                self.logger.attempt(f"{str(sweep._param).split('_')[-1]}, fitting data to linear fit to see if barrier is broken.")
 
                 try:
                     # Guess a line fit with zero slope.
@@ -963,10 +978,11 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                     fit_params, fit_cov = sp.optimize.curve_fit(getattr(self, 'linear'), X, Y, guess)
                     m, b = fit_params
                     plt.plot(X, self.linear(X,m,b), 'r-')
-                    print("Fits well to line, most likely barrier is shorted somewhere.")
+                    self.logger.warning(f"{str(sweep._param).split('_')[-1]}, data fits well to line, most likely barrier is shorted somewhere.")
+                    continue 
 
                 except RuntimeError:
-                    print("Error - fitting to \"linear\" failed.")
+                    self.logger.error(f"{str(sweep._param).split('_')[-1]}, linear fit failed.")
 
             else:
                 # Try and fit and get fit params
@@ -976,6 +992,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                         fit_function = getattr(self, 'logarithmic')
                         guess = [Y_masked.iloc[0], self.voltage_sign, X_masked.iloc[-1] - self.voltage_sign, 0]
                     
+                        self.logger.info(f"{str(sweep._param).split('_')[-1]}, fitting data to logarithmic function")
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
                         a, b, x0, y0 = fit_params
                         
@@ -987,6 +1004,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                         fit_function = getattr(self, self.pinch_off_info['fit_function'])
                         guess = (Y.iloc[0], -1 * self.voltage_sign * 100, self.device_info['properties']['turn_on']['voltage'], 0)
 
+                        self.logger.info(f"{str(sweep._param).split('_')[-1]}, fitting data to {self.pinch_off_info['fit_function']}")
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
                         a, b, x0, y0 = fit_params
 
@@ -1000,15 +1018,15 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
                     plt.plot(X_masked, fit_function(X_masked, a, b, x0, y0), 'r-')
                     axes.axvline(x=V_pinchoff, alpha=0.5, linestyle=':', c='b', label=r'$V_{\min}$')
+                    self.logger.info(f"{str(sweep._param).split('_')[-1]}, pinch off at {V_pinchoff}")
                     if str(sweep._param).split('_')[-1] not in self.leads:
                         axes.axvline(x=V_pinchoff + self.voltage_sign * V_pinchoff_width, alpha=0.5, linestyle='--', c='b', label=r'$V_{\max}$')
-
-                    axes.legend(loc='best')
+                        self.logger.info(f"{str(sweep._param).split('_')[-1]}, pinch off width of {V_pinchoff_width}")
+                    axes.legend(loc='best')                
                 
                 except RuntimeError:
-
-                    print("Error - curve_fit to sigmoid failed. Manually adjust device info.")
-                    print("Trying to fit to linear fit to see if barrier is broken.")
+                    self.logger.error(f"{str(sweep._param).split('_')[-1]}, insufficient points below minimum current threshold to do any fitting")
+                    self.logger.attempt(f"{str(sweep._param).split('_')[-1]}, fitting to linear fit to see if barrier is broken.")
 
                     try:
                         # Guess a line fit with zero slope.
@@ -1016,14 +1034,16 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                         fit_params, fit_cov = sp.optimize.curve_fit(getattr(self, 'linear'), X, Y, guess)
                         m, b = fit_params
                         plt.plot(X, self.linear(X,m,b), 'r-')
-                        print("Fits well to line, most likely barrier is shorted somewhere.")
+                        self.logger.warning(f"{str(sweep._param).split('_')[-1]}, data fits well to line, most likely barrier is shorted somewhere.")
 
                     except RuntimeError:
-                        print("Error - fitting to \"linear\" failed.")
+                        self.logger.error(f"{str(sweep._param).split('_')[-1]}, linear fit failed.")         
 
             config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
             self._save_figure(plot_info=f"{str(sweep._param).split('_')[-1]}_pinch_{config_str}")
             self._update_device_config_yaml()
+
+        return results_dict
 
     def sweep_barriers(self, 
                         B1: str = None, 
@@ -1059,9 +1079,11 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         # Bring device to voltage configuration
         if voltage_configuration is not None:
-            print("Setting voltage configuration ... ", end = " ")
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
             self._smoothly_set_voltage_configuration(voltage_configuration)
-            print("Done!")
+        else:
+            self.logger.info(f"setting {self.leads} to {self.device_info['properties']['turn_on']['saturation_voltage']} V")
+            self._smoothly_set_gates_to_voltage(self.leads, self.device_info['properties']['turn_on']['saturation_voltage'])
 
         # Parse dV from user
         if dV is None:
@@ -1073,12 +1095,13 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         elif type(dV) is tuple:
             dV_B1, dV_B2 = dV
         else:
-            print("Invalid dV.")
+            self.logger.error("invalid dV")
             return
 
         # Double check barrier validity
         if B1 is None or B2 is None and len(self.barriers) == 2:
             B1, B2 = self.barriers
+            self.logger.warning(f"no barriers provided, assuming {B1} and {B2} from device configuration")
         
         # Double check device bounds
         minV_B1, maxV_B1 = B1_bounds
@@ -1087,12 +1110,12 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         if minV_B1 is None:
             minV_B1 = self.device_info['properties'][B1]['pinch_off']['voltage']
         else:
-            assert np.sign(minV_B1) == self.voltage_sign, "Double check the sign of the gate voltage (minV) for B1."
+            assert np.sign(minV_B1) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (minV) for B1.")
 
         if minV_B2 is None:
             minV_B2 = self.device_info['properties'][B2]['pinch_off']['voltage']
         else:
-            assert np.sign(minV_B2) == self.voltage_sign, "Double check the sign of the gate voltage (minV) for B2."
+            assert np.sign(minV_B2) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (minV) for B2.")
 
         if maxV_B1 is None:
             if self.voltage_sign == 1:
@@ -1100,7 +1123,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             elif self.voltage_sign == -1:
                 maxV_B1 = max(self.device_info['properties'][B1]['pinch_off']['voltage']+self.voltage_sign*self.device_info['properties'][B1]['pinch_off']['width'], self.device_info['properties']['turn_on']['saturation_voltage'])
         else:
-            assert np.sign(maxV_B1) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for B1."
+            assert np.sign(maxV_B1) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (maxV) for B1.")
 
         if maxV_B2 is None:
             if self.voltage_sign == 1:
@@ -1108,28 +1131,22 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             elif self.voltage_sign == -1:
                 maxV_B2 = max(self.device_info['properties'][B2]['pinch_off']['voltage']+self.voltage_sign*self.device_info['properties'][B2]['pinch_off']['width'], self.device_info['properties']['turn_on']['saturation_voltage'])
         else:
-            assert np.sign(maxV_B2) == self.voltage_sign, "Double check the sign of the gate voltage (maxV) for B2."
+            assert np.sign(maxV_B2) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (maxV) for B2.")
 
-        print(f"Setting lead gates ({self.leads}) to saturation gate voltage ({self.device_info['properties']['turn_on']['saturation_voltage']}) ... ", end = " ")
-        self._smoothly_set_gates_to_voltage(self.leads, self.device_info['properties']['turn_on']['saturation_voltage'])
-        print("done!")
-
-        print(f"Setting {B1} to {maxV_B1} V ... ", end = " ")
-        print(f"Setting {B2} to {maxV_B2} V ...", end = " ")
+        self.logger.info(f"setting {B1} to {maxV_B1} V")
+        self.logger.info(f"setting {B2} to {maxV_B2} V")
         self._smoothly_set_voltage_configuration({B1: maxV_B1, B2: maxV_B2})
-        print(f"done!")
 
         def smooth_reset():
             """Resets the inner loop variable smoothly back to the starting value
             """
             self._smoothly_set_gates_to_voltage([B2], maxV_B2)
 
-        print("Beginning 2D sweep ... ")
-        print(f"Stepping {B1} from {maxV_B1} V to {minV_B1} V ...")
-        print(f"Sweeping {B2} from {maxV_B2} V to {minV_B2} V ...")
-
         num_steps_B1 = self._calculate_num_of_steps(minV_B1, maxV_B1, dV_B1)
         num_steps_B2 = self._calculate_num_of_steps(minV_B2, maxV_B2, dV_B2)
+        self.logger.attempt("barrier barrier scan")
+        self.logger.info(f"stepping {B1} from {maxV_B1} V to {minV_B1} V")
+        self.logger.info(f"sweeping {B2} from {maxV_B2} V to {minV_B2} V")
         result = qc.dataset.do2d(
             getattr(self.voltage_source, f'{B1}'), # outer loop
             maxV_B1,
@@ -1148,12 +1165,11 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             measurement_name='Barrier Barrier Sweep',
             exp=self.initialization_exp
         )
-        print("done!")
+        self.logger.complete("\n")
 
-        print(f"Returning gates {B1}, {B2} to {maxV_B1} V, {maxV_B2} V respectively ... ", end = " ")
+        self.logger.info(f"returning gates {B1}, {B2} to {maxV_B1} V, {maxV_B2} V respectively")
         self._smoothly_set_gates_to_voltage([B1], maxV_B1)
         self._smoothly_set_gates_to_voltage([B2], maxV_B2)
-        print("done!")
 
         # Get last dataset recorded, convert to current units
         dataset = qc.load_last_experiment().last_data_set()
@@ -1225,8 +1241,8 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         return (df,ax1)
 
     def coulomb_blockade(self, 
-                         P: str = None, 
-                         P_bounds: tuple = (None, None), 
+                         gate: str = None, 
+                         gate_bounds: tuple = (None, None), 
                          dV: float = None, 
                          delay: float = 0.01,
                          voltage_configuration: dict = None) -> tuple[pd.DataFrame, plt.Axes]:
@@ -1235,8 +1251,8 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         central dot between the two barriers.
 
         Args:
-            P (str, optional): Plunger gate. Defaults to None.
-            P_bounds (tuple, optional): Voltage bounds (V). Defaults to (None, None).
+            gate (str, optional): Plunger gate. Defaults to None.
+            gate_bounds (tuple, optional): Voltage bounds (V). Defaults to (None, None).
             dV (float, optional): Step size (V). Defaults to None.
             delay (float, optional): Delay between each step in the sweep (s). Defaults to 0.01.
             voltage_configuration (dict, optional): Device gate voltages. Defaults to None.
@@ -1254,34 +1270,32 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             dV=0.005
         )
         """
-        assert voltage_configuration is not None, "Please provide a voltage configuration!"
+        assert voltage_configuration is not None, self.logger.error("no voltage configuration provided")
 
-        print("Setting voltage configuration ... ", end = " ")
+        self.logger.info(f"setting voltage configuration: {voltage_configuration}")
         self._smoothly_set_voltage_configuration(voltage_configuration)
-        print("Done!")
 
-        if P is None:
-            P = self.plungers[0]
+        if gate is None:
+            gate = self.plungers[0]
 
         if dV is None:
             dV = self.voltage_resolution
 
-        minV_P, maxV_P = P_bounds
-        if minV_P is None:
-            minV_P = 0
-        assert maxV_P is not None, "Please specify maximum gate voltage."
+        minV_gate, maxV_gate = gate_bounds
+        if minV_gate is None:
+            minV_gate = 0
+        assert maxV_gate is not None, self.logger.error(f"{gate}, maximum voltage not provided")
   
-        num_steps_P = self._calculate_num_of_steps(minV_P, maxV_P, dV)
-        P_sweep = LinSweep_SIM928(getattr(self.voltage_source, f'{P}'), minV_P, maxV_P, num_steps_P, delay, get_after_set=False)
+        num_steps_P = self._calculate_num_of_steps(minV_gate, maxV_gate, dV)
+        gate_sweep = LinSweep_SIM928(getattr(self.voltage_source, f'{gate}'), minV_gate, maxV_gate, num_steps_P, delay, get_after_set=False)
 
-        print(f"Setting gate {P} to {minV_P} V ...", end = " ")
-        self._smoothly_set_gates_to_voltage([P], minV_P)
-        print("done!")
+        self.logger.info(f"setting {gate} to {minV_gate} V")
+        self._smoothly_set_gates_to_voltage([gate], minV_gate)
 
-        print(f"Sweeping gate {P} from {minV_P} V to {maxV_P} V ...", end = " ")
+        self.logger.attempt(f"sweeping gate {gate} from {minV_gate} V to {maxV_gate} V")
         # Execute the measurement
         result = qc.dataset.dond(
-            P_sweep,
+            gate_sweep,
             self.drain_volt,
             write_period=0.1,
             # break_condition=self._check_break_conditions,
@@ -1289,7 +1303,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             exp=self.initialization_exp,
             show_progress=True
         )
-        print("done!")
+        self.logger.complete("\n")
 
         # Get last dataset recorded, convert to current units
         dataset = qc.load_last_experiment().last_data_set()
@@ -1299,15 +1313,15 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot current v.s. random gate (since they are swept together)
-        axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_{P}', marker= 'o',s=10)
-        df_current.plot.line(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_{P}', ax=axes, linewidth=1)
+        axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_{gate}', marker= 'o',s=10)
+        df_current.plot.line(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_{gate}', ax=axes, linewidth=1)
         axes.set_title('Coulomb Blockade')
         axes.set_ylabel(r'$I$ (A)')
-        axes.set_xlabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=P))
+        axes.set_xlabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=gate))
         axes.legend(loc='best')
 
         config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
-        self._save_figure(plot_info=f'{P}_sweep_{config_str}')
+        self._save_figure(plot_info=f'{gate}_sweep_{config_str}')
 
         return (df, axes)
 
@@ -1347,11 +1361,10 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         )
         """
 
-        assert voltage_configuration is not None, "Please provide a voltage configuration!"
+        assert voltage_configuration is not None, self.logger.error("no voltage configuration provided")
 
-        print("Setting voltage configuration ... ", end = " ")
+        self.logger.info(f"setting voltage configuration: {voltage_configuration}")
         self._smoothly_set_voltage_configuration(voltage_configuration)
-        print("Done!")
 
         if dV_ohmic is None:
             dV_ohmic = self.voltage_resolution
@@ -1362,28 +1375,20 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         minV_ohmic, maxV_ohmic = ohmic_bounds
         minV_gate, maxV_gate = gate_bounds
 
-        if minV_gate is None:
-            print(f"Please provide a maximum gate voltage for {gate}")
-            return
-
-        if maxV_gate is None:
-            print(f"Please provide a maximum gate voltage for {gate}")
-            return
+        assert minV_gate is not None, self.logger.error(f"no minimum voltage for {gate} provided")
+        assert maxV_gate is not None, self.logger.error(f"no maximum voltage for {gate} provided")
+        assert minV_ohmic is not None, self.logger.error(f"no minimum voltage for {ohmic} provided")
+        assert maxV_ohmic is not None, self.logger.error(f"no maximum voltage for {ohmic} provided")
         
-        if minV_ohmic is None:
-            minV_ohmic = -1 * float(getattr(self.voltage_source, f"{ohmic}")())
-
-        if maxV_ohmic is None:
-            maxV_ohmic = float(getattr(self.voltage_source, f"{ohmic}")())
-   
         def smooth_reset():
             self._smoothly_set_gates_to_voltage([ohmic], maxV_ohmic)
 
-        print("Beginning 2D sweep ... ")
-        print(f"Stepping {gate} from {maxV_gate} V to {minV_gate}...")
-        print(f"Sweeping {ohmic} from {maxV_ohmic} V to {minV_ohmic}...")
+        self.logger.info(f"stepping {gate} from {maxV_gate} V to {minV_gate} V")
+        self.logger.info(f"sweeping {ohmic} from {maxV_ohmic} V to {minV_ohmic} V")
         num_steps_ohmic = self._calculate_num_of_steps(minV_ohmic, maxV_ohmic, dV_ohmic)
         num_steps_gate = self._calculate_num_of_steps(minV_gate, maxV_gate, dV_gate)
+
+        self.logger.attempt("coulomb diamond scan")
         result = qc.dataset.do2d(
             getattr(self.voltage_source, f'{gate}'), # outer loop
             maxV_gate,
@@ -1403,22 +1408,22 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             measurement_name='Coulomb Diamonds',
             exp=self.initialization_exp
         )
-        print("done!")
+        self.logger.complete("\n")
 
-        print(f"Settings gates {gate}, {ohmic} to {maxV_gate} V, {maxV_ohmic} V respectively ... ", end = " ")
+        self.logger.info(f"settings gates {gate}, {ohmic} to {maxV_gate} V, {maxV_ohmic} V respectively")
         self._smoothly_set_gates_to_voltage([gate], maxV_gate)
         self._smoothly_set_gates_to_voltage([ohmic], maxV_ohmic)
-        print("done!")
-
+  
         # Get last dataset recorded, convert to current units
         dataset = qc.load_last_experiment().last_data_set()
         df = dataset.to_pandas_dataframe().reset_index()
         df_current = df.copy()
         df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
+        df_current.iloc[:,-2] = df_current.iloc[:,-2].mul(self.voltage_divider * 1e3) # sensitivity
 
         # Plot 2D colormap
-        df_pivoted = df_current.pivot_table(values=f'{self.multimeter_device}_current', index=[f'{self.voltage_device}_{gate}'], columns=[f'{self.voltage_device}_{ohmic}'])
+        df_pivoted = df_current.pivot_table(values=f'{self.multimeter_device}_current', index=[f'{self.voltage_device}_{ohmic}'], columns=[f'{self.voltage_device}_{gate}'])
         gate_data, ohmic_data = df_pivoted.columns, df_pivoted.index
         raw_current_data = df_pivoted.to_numpy()[:,:-1] / 1.0e-9 # convert to nA
         gate_grad = np.gradient(raw_current_data, axis=1)
@@ -1427,7 +1432,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         fig, (ax1, ax2) = plt.subplots(1,2, figsize=(10,10))
         fig.suptitle("Coulomb Diamonds")
 
-        im_aspect = np.abs((maxV_ohmic - minV_ohmic) * (maxV_gate - minV_gate))
+        im_aspect = 'auto'
 
         cbar_ax1 = plt.colorbar(ax1.imshow(
             raw_current_data,
@@ -1439,11 +1444,11 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         cbar_ax1.set_label(r'$I_{SD}$ (nA)')
         ax1.set_title(r'$I_{SD}$')
-        ax1.set_xlabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=ohmic))
-        ax1.set_ylabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=gate))
+        ax1.set_xlabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=gate))
+        ax1.set_ylabel(r"$V_{{{gate_name}}}$ (mV)".format(gate_name=ohmic))
 
         # V grad is actually horizontal
-        grad_vector = (0,1) # Takes the gradient along 45 degree axis
+        grad_vector = (1,0) 
 
         cbar_ax2 = plt.colorbar(ax2.imshow(
             np.sqrt(grad_vector[0] * gate_grad**2 +   grad_vector[1]* ohmic_grad**2),
@@ -1453,17 +1458,17 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             aspect=im_aspect
         ), ax=ax2,fraction=0.046, pad=0.04)
 
-        cbar_ax2.set_label(r'$\nabla_{\theta=45\circ} I_{SD}$ (nA/V)')
+        cbar_ax2.set_label(r'$\nabla I_{SD}$ (nA/V)')
         ax2.set_title(r'$\nabla I_{SD}$')
-        ax2.set_xlabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=ohmic))
-        ax2.set_ylabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=gate))
+        ax2.set_xlabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=gate))
+        ax2.set_ylabel(r"$V_{{{gate_name}}}$ (mV)".format(gate_name=ohmic))
 
         fig.tight_layout()
 
         config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
         self._save_figure(plot_info=f'{ohmic}_{gate}_sweep_{config_str}')
         
-        return (pd.DataFrame, ax1)
+        return (df, ax1)
 
     def current_trace(self, 
                       f_sampling: int, 
@@ -1527,6 +1532,47 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             plt.show()
 
         return df
+
+    def _load_config_files(self):
+                # Read in tuner config information
+        self.tuner_info = yaml.safe_load(Path(self.tuner_config).read_text())
+        self.global_turn_on_info = self.tuner_info['global_turn_on']
+        self.pinch_off_info = self.tuner_info['pinch_off']
+
+        # Read in station config information
+        self.station_info = yaml.safe_load(Path(self.setup_config).read_text())
+        self.general_info = self.station_info['general_info']
+        self.multimeter_device = self.general_info['multimeter_device']
+        self.voltage_device = self.general_info['voltage_device']
+        self.preamp_sensitivity = self.general_info['preamp_sensitivity']
+        self.preamp_bias = self.general_info['preamp_bias']
+        self.voltage_divider = self.general_info['voltage_divider']
+        self.voltage_resolution = self.general_info['voltage_resolution']
+
+        # Read in device config information
+        self.device_info = yaml.safe_load(Path(self.device_config).read_text())
+        self.charge_carrier = self.device_info['characteristics']['charge_carrier']
+        self.operation_mode = self.device_info['characteristics']['operation_mode']
+
+        if (self.charge_carrier, self.operation_mode) == ('e', 'acc'):
+            self.voltage_sign = +1
+        if (self.charge_carrier, self.operation_mode) == ('e', 'dep'):
+            self.voltage_sign = -1
+        if (self.charge_carrier, self.operation_mode) == ('h', 'acc'):
+            self.voltage_sign = -1
+        if (self.charge_carrier, self.operation_mode) == ('h', 'dep'):
+            self.voltage_sign = +1
+
+        self.ohmics = self.device_info['characteristics']['ohmics']
+        self.barriers = self.device_info['characteristics']['barriers']
+        self.leads = self.device_info['characteristics']['leads']
+        self.plungers = self.device_info['characteristics']['plungers']
+        self.all_gates = self.barriers + self.leads + self.plungers
+
+        self.abs_max_current = self.device_info['properties']['constraints']['abs_max_current']
+        self.abs_max_ohmic_bias = self.device_info['properties']['constraints']['abs_max_ohmic_bias']
+        self.abs_max_gate_voltage = self.device_info['properties']['constraints']['abs_max_gate_voltage']
+        self.abs_max_gate_differential = self.device_info['properties']['constraints']['abs_max_gate_differential']
 
     def _check_break_conditions(self):
         # Go through device break conditions to see if anything is flagged,
@@ -1738,13 +1784,15 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         with open(self.device_config, 'w') as outfile:
             yaml.dump(self.device_info, outfile, default_flow_style=True)
 
-    def _save_figure(self, plot_info: str, plot_dpi: int = 300):
+    def _save_figure(self, plot_info: str, plot_dpi: int = 300, plot_format: str = 'svg'):
         """Saves plot generated from one of the stages.
 
         Args:
             plot_info (str): Plot information for the filename.
             plot_dpi (int, optional): Dots Per Inch (DPI) for the plot. Defaults to 300.
+            plot_format (str, optional): Picture format file type. Defaults to 'svg'.
         """
+
         completition_time = str(datetime.datetime.now().hour) + "_" + str(datetime.datetime.now().minute) # the current minute
-        plot_name = os.path.join(self.db_folder, f"{plot_info}_{completition_time}.png")
-        plt.savefig(fname=plot_name, dpi=plot_dpi)
+        plot_name = os.path.join(self.db_folder, f"{plot_info}_{completition_time}.{plot_format}")
+        plt.savefig(fname=plot_name, dpi=plot_dpi, format=plot_format)

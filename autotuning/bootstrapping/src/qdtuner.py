@@ -1,23 +1,32 @@
-import pandas as pd
-import qcodes as qc
-import numpy as np
-import scipy as sp
-import matplotlib.pyplot as plt
+# Import modules
+
 import yaml, datetime, sys, time, os, shutil, json
 from pathlib import Path
+
+import pandas as pd
+
+import numpy as np
+
+import scipy as sp
+from scipy.ndimage import convolve
+
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
+
 from typing import List, Dict
 
+import qcodes as qc
 from qcodes.dataset import AbstractSweep
 from qcodes.dataset.dond.do_nd_utils import ActionsT
 from qcodes.parameters import ParameterBase
 import numpy.typing as npt
 
 import skimage
-from skimage.transform import hough_line, hough_line_peaks, probabilistic_hough_line
+from skimage.transform import probabilistic_hough_line
 from skimage.feature import canny
-from skimage.draw import line as draw_line
-from skimage import data
-import matplotlib.cm as cm
+from skimage.filters import threshold_otsu
+from skimage.morphology import diamond, rectangle  # noqa
+
 
 original_sys_path = sys.path.copy()
 
@@ -30,6 +39,10 @@ try:
     )
 
     from inference import *
+
+except ModuleNotFoundError: 
+
+    print("Detectron2 not found on the system cannot run any segmentation models.")
 
 finally:
 
@@ -116,7 +129,29 @@ class DataFit:
     def linear(self, x, m, b):
         return m * x + b         
     
-class FET_DataAnalyzer:
+class DataAcquisition:
+    def __init__(self):
+        pass
+
+    def set_voltage(self):
+        pass
+
+    def measure_current(self):
+        pass
+
+    def one_dimension_sweep(self):
+        pass
+
+    def two_dimension_sweep(self):
+        pass
+
+    def N_dimension_sweep(self):
+        pass
+
+    def time_trace(self):
+        pass
+
+class DataAnalysis:
     def __init__(self, tuner_config) -> None:
         self.tuner_info = yaml.safe_load(Path(tuner_config).read_text())
 
@@ -127,7 +162,19 @@ class FET_DataAnalyzer:
         self.confidence_threshold = self.tuner_info['barrier_barrier']['segmentation_confidence_threshold']
         self.polygon_threshold = self.tuner_info['barrier_barrier']['segmentation_polygon_threshold']
         self.segmentation_class = self.tuner_info['barrier_barrier']['segmentation_class']
-        
+  
+    def logarithmic(self, x, a, b, x0, y0):
+        return a * np.log(b*(x-x0)) + y0
+
+    def exponential(self, x, a, b, x0, y0):
+        return a * np.exp(b * (x-x0)) + y0
+
+    def sigmoid(self, x, a, b, x0, y0):
+        return a/(1+np.exp(b * (x-x0))) + y0
+    
+    def linear(self, x, m, b):
+        return m * x + b         
+    
     def extract_bias_point(self,
                            data: pd.DataFrame,
                            plot_process: bool,
@@ -247,15 +294,14 @@ class FET_DataAnalyzer:
     def extract_max_conductance_point(self,
                                       data: pd.DataFrame,
                                       plot_process: bool = False,
-                                      sigma: float = 0.5) -> tuple:
+                                      sigma: float = 0.5) -> dict:
 
         V_name, I_name = data.columns
 
         data = data.rename(
             columns={I_name: '{}_current'.format(I_name.split('_')[0])}
             )
-        data.iloc[:,-1] = data.iloc[:,-1].subtract(0).mul(1) # sensitivity
-        data.iloc[:,0] = data.iloc[:,0].subtract(0).mul(1e-3) # sensitivity 
+        data.iloc[:,-1] = data.iloc[:,-1].subtract(0).mul(1e-7) # sensitivity
         
         V_name, I_name = data.columns
 
@@ -328,40 +374,172 @@ class FET_DataAnalyzer:
                     ax1.legend(loc='best')
                     legend_without_duplicate_labels(ax1)
 
-        return list(results_sorted.items())[-1]
+        V_P_high, G_high = list(results_sorted.items())[-1]
+        V_P_med, G_med = list(results_sorted.items())[int(len(results_sorted.items())//2)]
+        V_P_low, G_low = list(results_sorted.items())[0]
+
+        return {'high': {'VP': V_P_high, 'G': G_high},
+                'medium': {'VP': V_P_med, 'G': G_med},
+                'low': {'VP': V_P_low, 'G': G_low}}
 
     def extract_lever_arms(self,
-                           data: pd.DataFrame):
-        pass
+                           data: pd.DataFrame,
+                           plot_process: bool = False) -> dict:
+        
+        # Load in data and seperate 
+        X_name, Y_name, Z_name = data.columns
+        Xdata, Ydata = np.unique(data[X_name]), np.unique(data[Y_name])
 
-class DataAcquisition:
-    def __init__(self,
-                 station_config_yaml: str = None,
-                 setup_config_yaml: str = None) -> None:
-        pass
+        df_pivoted = data.pivot_table(values=Z_name, index=Y_name, columns=X_name).fillna(0)
+        Zdata = df_pivoted.to_numpy()
 
-    def one_dimensional_sweep(self):
-        pass
+        # Calculate conductance where G = dI / dVp 
+        G = np.gradient(Zdata)[1]
 
-    def two_dimensional_sweep(self): 
-        pass
+        if plot_process:
+            plt.imshow(G, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
+            plt.title("Transconductance")
+            plt.colorbar()
+            plt.show()
+            
+        # Apply filter to bring out edges better
+        def U(x,y):
+            sigX, sigY = 5,5
+            return (1/(2 * np.pi * sigX * sigY)) * np.exp(- 0.5* ((x/sigX)**2 + (y/sigY)**2))
+        def adjusted(G,G0):
+            return np.sign(G) * np.log((np.abs(G)/G0) + 1)
+        def F(U, G, G0):
+            # G = adjusted(G,G0)
+            return (G - convolve(G,U)) / np.sqrt((convolve(G,U))**2 + G0**2)
 
-    def n_dimensional_sweep(self):
-        pass
+        N=2
+        U_kernal = np.array([[U(x, y) for y in range(-(N-1)//2,(N-1)//2 + 1)] for x in range(-(N-1)//2,(N-1)//2 + 1)])
+        cond_quant = 3.25 * 1e-5
+        filtered_G = np.abs(F(U_kernal, G, G0=10**-7 * cond_quant))
 
-    def time_trace(self):
-        pass
+        if plot_process:
+            plt.imshow(filtered_G, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
+            plt.title("Filtered Transconductance")
+            plt.colorbar()
+            plt.show()
 
-    def set_voltage(self):
-        pass
+        # Apply binary threshold to bring out diamonds better
+        thresh = threshold_otsu(filtered_G)
+        binary_image = filtered_G < thresh
 
-    def read_voltage(self):
-        pass
+        if plot_process:
+            plt.imshow(binary_image, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
+            plt.title("Filtered Transconductance Binary")
+            plt.colorbar()
+            plt.show()
 
-    def read_current(self):
-        pass
+        # Erode any artifacts and keep just the diamond shapes
+        footprint = rectangle(13, 6)
+        erode = skimage.morphology.erosion(binary_image,footprint)
 
-class QuantumDotFET:
+        footprint = diamond(1)
+        erode = skimage.morphology.erosion(erode,footprint)
+        
+        if plot_process:
+            plt.imshow(erode, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
+            plt.title("Filtered Transconductance Binary Eroded")
+            plt.show()
+
+        # Attempt to find contours
+        contours = skimage.measure.find_contours(erode, 0.8)
+
+        if len(contours) == 0:
+            return 
+        
+        # Display the image and plot all contours found
+        fig, ax = plt.subplots()
+
+        ax.imshow(Zdata, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
+        ax.set_title(r'$I_{SD}$')
+        ax.set_ylabel(r'$V_{SD}\ (mV)$')
+        ax.set_xlabel(r'$V_{P}\ (V)$')
+        ax.set_aspect('auto')
+
+        addition_voltages = []
+        charging_voltages = []
+        results = {}
+
+        for i, contour in enumerate(contours):
+            if len(contour) < 350: 
+                continue
+
+            # Convert to proper units for calculations
+            image_units = []
+            for coordinate in contour:
+                image_units.append([Ydata[int(coordinate[0])], Xdata[int(coordinate[1])]])
+            image_units = np.array(image_units)
+            
+            Y = image_units[:,0]
+            X = image_units[:,1]
+
+            Xmax = max(X)
+            Xmin = min(X)
+            Ymax = max(Y)
+            Ymin = min(Y)
+
+            # Get centroid
+            centroidX, centroidY = 0.5*(Xmax + Xmin), 0.5 * (Ymax + Ymin)
+
+            dX = Xmax - Xmin
+            dY = Ymax - Ymin
+
+            divider = 1e-3
+            alpha= (Ymax * divider /2) / dX
+
+            e = 1.60217663e-19 # C
+
+            eps0 = 8.8541878128e-12 # F/m
+            epsR = 11.7 # Silicon
+
+            Vadd = Xmax - Xmin # V
+            Vc = dY * divider /2 # V
+            addition_voltages += [Vadd]
+            charging_voltages += [Vc] 
+            C_P = e / Vadd # F
+            C_sigma = e / Vc # F
+            dot_size = C_sigma / (8 * eps0 * epsR) # m
+            alpha = (dY * divider /2) / dX # eV/V
+
+            results[i]= {
+                'centroid': (centroidX, centroidY), 
+                'Vadd': Vadd, 
+                'Vcharge': Vc, 
+                'Cp': C_P,
+                'CSigma': C_sigma,
+                'lever arm': alpha,
+                'dot size': dot_size
+                }
+
+            ax.plot(image_units[:, 1], image_units[:, 0], linewidth=1, linestyle='-', c='k')
+            label_text = r'$\alpha$ =' + str(round(alpha,3))
+            ax.text(0.98*centroidX, 1.2 * Ymax, label_text, color='k', fontsize=8, verticalalignment='bottom')
+
+            label_text = r'$V_{add}$ =' + str(round(Vadd*1e3,1)) + 'mV'
+            ax.text(0.95*centroidX, 1.3 * Ymin, label_text, color='k', fontsize=8, verticalalignment='bottom')
+
+            label_text = r'$V_{charge}$ =' + str(round(Vc * 1e3,1)) + 'mV'
+            ax.text(0.95*centroidX, 1.5 * Ymin, label_text, color='k', fontsize=8, verticalalignment='bottom')
+
+            label_text = r'$C_{P}$ =' + str(round((e / Vadd) * 1e18,2)) + 'aF'
+            ax.text(0.95*centroidX, 1.7 * Ymin, label_text, color='k', fontsize=8, verticalalignment='bottom')
+
+            label_text = r'$C_{\Sigma}$ =' + str(round((e / Vc) * 1e18,2)) + 'aF'
+            ax.text(0.95*centroidX, 1.9 * Ymin, label_text, color='k', fontsize=8, verticalalignment='bottom')
+            ax.scatter([centroidX], [centroidY], marker='*', s=30, c='k')
+
+            label_text = r'$R_{dot}$ =' + str(round(dot_size * 1e9,2)) + 'nm'
+            ax.text(0.95*centroidX, 2.1 * Ymin, label_text, color='k', fontsize=8, verticalalignment='bottom')
+            ax.scatter([centroidX], [centroidY], marker='*', s=30, c='k')
+
+        plt.show()
+        return results
+
+class QuantumDotFET(DataAnalysis, DataAcquisition):
     """Dedicated class to tune simple FET devices.
     """
 
@@ -380,8 +558,9 @@ class QuantumDotFET:
             station_config (str): Path to .yaml file containing QCoDeS station information
             save_dir (str): Directory to save data and plots generated.
         """
-        self.DataFit = DataFit()
-        self.DataAnalyzer = FET_DataAnalyzer(tuner_config)
+
+        DataAnalysis.__init__(self, tuner_config=tuner_config)
+        DataAcquisition.__init__(self)
 
         # Save file names
         self.device_config = device_config
@@ -598,7 +777,7 @@ class QuantumDotFET:
             try:
                 guess = [Y_masked.iloc[0], self.voltage_sign, X_masked.iloc[-1] - self.voltage_sign, 0]
 
-                fit_params, fit_cov = sp.optimize.curve_fit(getattr(self.DataFit, self.global_turn_on_info['fit_function']), X_masked, Y_masked, guess)
+                fit_params, fit_cov = sp.optimize.curve_fit(getattr(self, self.global_turn_on_info['fit_function']), X_masked, Y_masked, guess)
                 
                 # Extract turn on voltage and saturation voltage
                 a, b, x0, y0 = fit_params
@@ -609,7 +788,7 @@ class QuantumDotFET:
                 V_sat = df_current[f'{self.voltage_device}_{gates_involved[0]}'].iloc[-2] 
 
                 # Plot / print results to user
-                axes.plot(X_masked, getattr(self.DataFit, self.global_turn_on_info['fit_function'])(X_masked, a, b, x0, y0), 'r-')
+                axes.plot(X_masked, getattr(self, self.global_turn_on_info['fit_function'])(X_masked, a, b, x0, y0), 'r-')
                 axes.axvline(x=V_turn_on, alpha=0.5, linestyle=':',c='b',label=r'$V_{\min}$')
                 axes.axvline(x=V_sat,alpha=0.5, linestyle='--',c='b',label=r'$V_{\max}$')
                 axes.legend(loc='best')
@@ -781,9 +960,9 @@ class QuantumDotFET:
                 try:
                     # Guess a line fit with zero slope.
                     guess = (0,np.sign(df_current[f'{self.multimeter_device}_current'].iloc[-1])*self.abs_max_current)
-                    fit_params, fit_cov = sp.optimize.curve_fit(getattr(self.DataFit, 'linear'), X, Y, guess)
+                    fit_params, fit_cov = sp.optimize.curve_fit(getattr(self, 'linear'), X, Y, guess)
                     m, b = fit_params
-                    plt.plot(X, self.DataFit.linear(X,m,b), 'r-')
+                    plt.plot(X, self.linear(X,m,b), 'r-')
                     print("Fits well to line, most likely barrier is shorted somewhere.")
 
                 except RuntimeError:
@@ -794,7 +973,7 @@ class QuantumDotFET:
                 try: 
                     if str(sweep._param).split('_')[-1] in self.leads:
 
-                        fit_function = getattr(self.DataFit, 'logarithmic')
+                        fit_function = getattr(self, 'logarithmic')
                         guess = [Y_masked.iloc[0], self.voltage_sign, X_masked.iloc[-1] - self.voltage_sign, 0]
                     
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
@@ -805,7 +984,7 @@ class QuantumDotFET:
                    
                     else:
 
-                        fit_function = getattr(self.DataFit, self.pinch_off_info['fit_function'])
+                        fit_function = getattr(self, self.pinch_off_info['fit_function'])
                         guess = (Y.iloc[0], -1 * self.voltage_sign * 100, self.device_info['properties']['turn_on']['voltage'], 0)
 
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
@@ -834,9 +1013,9 @@ class QuantumDotFET:
                     try:
                         # Guess a line fit with zero slope.
                         guess = (0,np.sign(df_current[f'{self.multimeter_device}_current'].iloc[-1])*self.abs_max_current)
-                        fit_params, fit_cov = sp.optimize.curve_fit(getattr(self.DataFit, 'linear'), X, Y, guess)
+                        fit_params, fit_cov = sp.optimize.curve_fit(getattr(self, 'linear'), X, Y, guess)
                         m, b = fit_params
-                        plt.plot(X, self.DataFit.linear(X,m,b), 'r-')
+                        plt.plot(X, self.linear(X,m,b), 'r-')
                         print("Fits well to line, most likely barrier is shorted somewhere.")
 
                     except RuntimeError:
@@ -1032,7 +1211,7 @@ class QuantumDotFET:
         if extract_bias_point:
 
             # Inference data
-            bias_point, voltage_window = self.DataAnalyzer.extract_bias_point(
+            bias_point, voltage_window = self.extract_bias_point(
                 df,
                 plot_process=True,
                 axes=ax1

@@ -1,6 +1,6 @@
 # Import modules
 
-import yaml, datetime, sys, time, os, shutil, json
+import yaml, datetime, sys, time, os, shutil, json,re
 from pathlib import Path
 
 import pandas as pd
@@ -468,6 +468,7 @@ class DataAnalysis:
         charging_voltages = []
         results = {}
 
+
         for i, contour in enumerate(contours):
             if len(contour) < 350: 
                 continue
@@ -548,15 +549,14 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
     """
 
     def __init__(self, 
-                 device_config: str, 
-                 setup_config: str,
+                 config: str, 
                  tuner_config: str,
                  station_config: str,
                  save_dir: str) -> None:
         """Initializes the tuner.
 
         Args:
-            device_config (str): Path to .yaml file containing device information.
+            config (str): Path to .yaml file containing device information.
             setup_config (str): Path to .yaml file containing experimental setup information.
             tuner_config (str): Path to .yaml file containing tuner information.
             station_config (str): Path to .yaml file containing QCoDeS station information
@@ -567,16 +567,16 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         DataAcquisition.__init__(self)
     
         # Save file names
-        self.device_config = device_config
-        self.setup_config = setup_config
-        self.tuner_config = tuner_config
-        self.station_config = station_config
+        self.config_file = config
+        self.tuner_config_file = tuner_config
+        self.station_config_file = station_config
         self.save_dir = save_dir
 
         self._load_config_files()
         
         todays_date = datetime.date.today().strftime("%Y-%m-%d")
-        self.db_folder = os.path.join(save_dir, f"{self.device_info['characteristics']['sample_name']}_{todays_date}")
+        self.db_folder = os.path.join(save_dir, f"{self.config['device']['characteristics']['name']}_{todays_date}")
+        os.makedirs(self.db_folder, exist_ok=True)
 
         ATTEMPT, COMPLETE = logging.INFO - 2, logging.INFO - 1
 
@@ -628,18 +628,40 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         self.logger.setLevel(min(self.logger.getEffectiveLevel(), ATTEMPT))
 
         self.logger.attempt("connecting to station")
-        self.station = qc.Station(config_file=self.station_config)
-        self.station.load_instrument(self.voltage_device)
-        self.station.load_instrument(self.multimeter_device)
-        self.voltage_source = getattr(self.station, self.voltage_device)
-        self.drain_mm_device = getattr(self.station, self.multimeter_device)
-        self.drain_volt = getattr(self.station, self.multimeter_device).volt
+        self.station = qc.Station(config_file=self.station_config_file)
+        self.station.load_instrument(self.voltage_source_name)
+        self.station.load_instrument(self.multimeter_name)
+        self.voltage_source = getattr(self.station, self.voltage_source_name)
+        self.drain_mm_device = getattr(self.station, self.multimeter_name)
+        self.drain_volt = getattr(self.station, self.multimeter_name).volt
         self.logger.complete("\n")
 
+        channel_prefix = ""
+        for parameter, details in self.voltage_source.parameters.items():
+            if details.unit == 'V':
+                pattern = r'(.*).*\d+.*'
+                matches = re.findall(pattern,parameter)
+                extractions = [match.strip() for match in matches]
+                channel_prefix = extractions[0]
+        if channel_prefix == "":
+            self.logger.error('unable to find prefix for channels')  
+            
+        self.logger.info("changing parameters to match names in config.yaml file")
+        self.voltage_source.timeout(5 * 60)
+        for gate, details in self.device_gates.items():
+            self.voltage_source.add_parameter(
+                name=gate,
+                parameter_class=qc.parameters.DelegateParameter,
+                source=getattr(self.voltage_source, channel_prefix+str(details['channel'])),
+                label=details['label'],
+                unit = details['unit'],
+                step=details['step'],
+            )
+            self.logger.info(f"changed {channel_prefix+str(details['channel'])} to {gate}")
+
+
         # Creates the qcodes database and sets-up the experiment
-        
-        os.makedirs(self.db_folder, exist_ok=True)
-        db_filepath =  os.path.join(self.db_folder, f"experiments_{self.device_info['characteristics']['sample_name']}_{todays_date}.db")
+        db_filepath =  os.path.join(self.db_folder, f"experiments_{self.config['device']['characteristics']['name']}_{todays_date}.db")
         qc.dataset.initialise_or_create_database_at(
             db_filepath
         )
@@ -648,17 +670,34 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         self.logger.info(f"experiment created/loaded in database")
         self.initialization_exp = qc.dataset.load_or_create_experiment(
             'Initialization',
-            sample_name=self.device_info['characteristics']['sample_name']
+            sample_name=self.config['device']['characteristics']['name']
         )
 
         # Copy all of the configs for safekeeping
         self.logger.info(f"copying all of the config.yml files")
-        shutil.copy(self.station_config, self.db_folder)
-        shutil.copy(self.device_config, self.db_folder)
-        shutil.copy(self.tuner_config, self.db_folder)
-        shutil.copy(self.setup_config, self.db_folder)
+        shutil.copy(self.station_config_file, self.db_folder)
+        shutil.copy(self.tuner_config_file, self.db_folder)
+        shutil.copy(self.config_file, self.db_folder)
 
+        # Setup results dictionary
+        self.results = {}
+
+        self.results['turn_on'] = {
+            'voltage': None,
+            'current': None,
+            'resistance': None,
+            'saturation': None,
+        }
+
+        for gate in self.barriers + self.leads:
+            self.results[gate] = {
+                'pinch_off': {'voltage': None, 'width': None}
+            }
         
+        for gate in self.barriers:
+            self.results[gate]['bias_voltage'] = None
+
+        # Ground device
         self.ground_device()
 
     def ground_device(self):
@@ -720,7 +759,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         >>> QD_FET_Tuner.turn_on_device(minV = 0., maxV = None, dV = 0.05)
         """
 
-        # Default dV and maxV based on setup_config and device_config
+        # Default dV and maxV based on setup_config and config
         if dV is None:
             dV = self.voltage_resolution
 
@@ -762,23 +801,23 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         dataset = qc.load_last_experiment().last_data_set()
         df = dataset.to_pandas_dataframe().reset_index()
         df_current = df.copy()
-        df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
+        df_current = df_current.rename(columns={f'{self.multimeter_name}_volt': f'{self.multimeter_name}_current'})
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot current v.s. gates involved (since they are swept together)
-        axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_{gates_involved[0]}', marker= 'o',s=10)
+        axes = df_current.plot.scatter(y=f'{self.multimeter_name}_current', x=f'{self.voltage_source_name}_{gates_involved[0]}', marker= 'o',s=10)
         axes.set_title('Global Device Turn-On')
-        df_current.plot.line(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_{gates_involved[0]}', ax=axes, linewidth=1)
-        axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[-1])*self.global_turn_on_info['abs_min_current'], alpha=0.5, c='g', linestyle=':', label=r'$I_{\min}$')
-        axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[-1])*self.abs_max_current, alpha=0.5, c='g', linestyle='--', label=r'$I_{\max}$')
+        df_current.plot.line(y=f'{self.multimeter_name}_current', x=f'{self.voltage_source_name}_{gates_involved[0]}', ax=axes, linewidth=1)
+        axes.axhline(y=np.sign(df_current[f'{self.multimeter_name}_current'].iloc[-1])*self.global_turn_on_info['abs_min_current'], alpha=0.5, c='g', linestyle=':', label=r'$I_{\min}$')
+        axes.axhline(y=np.sign(df_current[f'{self.multimeter_name}_current'].iloc[-1])*self.abs_max_current, alpha=0.5, c='g', linestyle='--', label=r'$I_{\max}$')
         axes.set_ylabel(r'$I$ (A)')
         axes.set_xlabel(r'$V_{GATES}$ (V)')
         axes.legend(loc='best')
 
         # Keep any data above the minimum current threshold
-        mask = df_current[f'{self.multimeter_device}_current'].abs() > self.global_turn_on_info['abs_min_current'] 
-        X = df_current[f'{self.voltage_device}_{gates_involved[0]}']
-        Y = df_current[f'{self.multimeter_device}_current']
+        mask = df_current[f'{self.multimeter_name}_current'].abs() > self.global_turn_on_info['abs_min_current'] 
+        X = df_current[f'{self.voltage_source_name}_{gates_involved[0]}']
+        Y = df_current[f'{self.multimeter_name}_current']
         X_masked = X[mask]
         Y_masked = Y[mask]
 
@@ -797,7 +836,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                     V_turn_on =  np.round(np.log(-y0/a)/b + x0, 3)
                 elif self.global_turn_on_info['fit_function'] == 'logarithmic':
                     V_turn_on = np.round(np.exp(-y0/a)/b + x0, 3)
-                V_sat = df_current[f'{self.voltage_device}_{gates_involved[0]}'].iloc[-2] 
+                V_sat = df_current[f'{self.voltage_source_name}_{gates_involved[0]}'].iloc[-2] 
 
                 # Plot / print results to user
                 axes.plot(X_masked, getattr(self, self.global_turn_on_info['fit_function'])(X_masked, a, b, x0, y0), 'r-')
@@ -805,17 +844,20 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 axes.axvline(x=V_sat,alpha=0.5, linestyle='--',c='b',label=r'$V_{\max}$')
                 axes.legend(loc='best')
 
-                self.logger.info(f"FET turns on at {V_turn_on} V")
-                self.logger.info(f"FET saturates at {V_sat} V")
+                
 
                 # Store in device information for later
-                self.device_info['properties']['turn_on']['voltage'] = float(V_turn_on)
-                self.device_info['properties']['turn_on']['saturation_voltage'] = float(V_sat)
+                self.results['turn_on']['voltage'] = float(V_turn_on)
+                self.results['turn_on']['saturation'] = float(V_sat)
                 I_measured = np.abs(self._get_drain_current())
                 R_measured = round(self.ohmic_bias / I_measured,3)
-                self.device_info['properties']['turn_on']['measured_current'] = float(I_measured)
-                self.device_info['properties']['turn_on']['measured_resistance'] = float(R_measured)
+                self.results['turn_on']['current'] = float(I_measured)
+                self.results['turn_on']['resistance'] = float(R_measured)
                 self.deviceTurnsOn = True
+                self.logger.info(f"device turns on at {V_turn_on} V")
+                self.logger.info(f"maximum allowed voltage is {V_sat} V")
+                self.logger.info(f"measured current is {I_measured} A")
+                self.logger.info(f"calculated resistance is {R_measured} Ohms")
 
             except RuntimeError:
                 self.logger.error(f"fitting to \"{self.global_turn_on_info['fit_function']}\" failed")
@@ -826,11 +868,11 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                     V_turn_on = input("What was the turn on voltage (V)?")
                     V_sat = input("What was the saturation voltage (V)?")
                     # Store in device dictionary for later
-                    self.device_info['properties']['turn_on']['voltage'] = V_turn_on
-                    self.device_info['properties']['turn_on']['saturation_voltage'] = V_sat
+                    self.results['turn_on']['voltage'] = V_turn_on
+                    self.results['turn_on']['saturation'] = V_sat
 
         self._save_figure(plot_info='device_turn_on')
-        self._update_device_config_yaml()
+
 
         return df
 
@@ -879,7 +921,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             gates = [gates]
 
         if maxV is None:
-            maxV = self.device_info['properties']['turn_on']['saturation_voltage']
+            maxV = self.results['turn_on']['saturation']
         else:
             assert np.sign(maxV) == self.voltage_sign, self.logger.error("Double check the sign of the gate voltage (maxV) for your given device.")
         
@@ -891,7 +933,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 min_allowed = None
                 max_allowed = 0
             minV = np.clip(
-                    a=round(self.device_info['properties']['turn_on']['saturation_voltage'] - self.voltage_sign * self.abs_max_gate_differential, 3),
+                    a=round(self.results['turn_on']['saturation'] - self.voltage_sign * self.abs_max_gate_differential, 3),
                     a_min=min_allowed,
                     a_max=max_allowed
                 )
@@ -935,34 +977,34 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             results_dict[str(sweep._param).split('_')[-1]] = df
 
             df_current = df.copy()
-            df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
+            df_current = df_current.rename(columns={f'{self.multimeter_name}_volt': f'{self.multimeter_name}_current'})
             df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
             # Plot current v.s. param being swept
-            axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x=f'{str(sweep._param)}', marker= 'o',s=10)
-            df_current.plot.line(y=f'{self.multimeter_device}_current', x=f'{str(sweep._param)}',  ax=axes, linewidth=1)
+            axes = df_current.plot.scatter(y=f'{self.multimeter_name}_current', x=f'{str(sweep._param)}', marker= 'o',s=10)
+            df_current.plot.line(y=f'{self.multimeter_name}_current', x=f'{str(sweep._param)}',  ax=axes, linewidth=1)
             axes.axhline(y=0,  alpha=.5, linewidth=0.5, c='k', linestyle='-')
             axes.axvline(x=0, alpha=.5, linewidth=0.5, c='k', linestyle='-')
             axes.set_ylabel(r'$I$ (A)')
             axes.set_xlabel(r'$V_{{{gate}}}$ (V)'.format(gate=str(sweep._param).split('_')[-1]))
             axes.set_title('{} Pinch Off'.format(str(sweep._param).split('_')[-1]))
-            axes.set_xlim(0, self.device_info['properties']['turn_on']['saturation_voltage'])
-            axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[0])*self.pinch_off_info['abs_min_current'], alpha=0.5,c='g', linestyle=':', label=r'$I_{\min}$')
-            axes.axhline(y=np.sign(df_current[f'{self.multimeter_device}_current'].iloc[0])*self.abs_max_current, alpha=0.5,c='g', linestyle='--', label=r'$I_{\max}$')
+            axes.set_xlim(0, self.results['turn_on']['saturation'])
+            axes.axhline(y=np.sign(df_current[f'{self.multimeter_name}_current'].iloc[0])*self.pinch_off_info['abs_min_current'], alpha=0.5,c='g', linestyle=':', label=r'$I_{\min}$')
+            axes.axhline(y=np.sign(df_current[f'{self.multimeter_name}_current'].iloc[0])*self.abs_max_current, alpha=0.5,c='g', linestyle='--', label=r'$I_{\max}$')
                 
-            mask_belowthreshold = df_current[f'{self.multimeter_device}_current'].abs() < self.pinch_off_info['abs_min_current'] 
+            mask_belowthreshold = df_current[f'{self.multimeter_name}_current'].abs() < self.pinch_off_info['abs_min_current'] 
 
             # Keep any data that is above the minimum turn-on current
             if str(sweep._param).split('_')[-1] in self.leads:
-                mask = df_current[f'{self.multimeter_device}_current'].abs() > self.pinch_off_info['abs_min_current'] 
+                mask = df_current[f'{self.multimeter_name}_current'].abs() > self.pinch_off_info['abs_min_current'] 
                 X = df_current[f'{str(sweep._param)}']
-                Y = df_current[f'{self.multimeter_device}_current']
+                Y = df_current[f'{self.multimeter_name}_current']
                 X_masked = X[mask]
                 Y_masked = Y[mask]
                 X_belowthreshold = X[mask_belowthreshold]
             else:
                 X = df_current[f'{str(sweep._param)}']
-                Y = df_current[f'{self.multimeter_device}_current']
+                Y = df_current[f'{self.multimeter_name}_current']
                 X_masked = X
                 Y_masked = Y
                 X_belowthreshold = X[mask_belowthreshold]
@@ -974,7 +1016,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
                 try:
                     # Guess a line fit with zero slope.
-                    guess = (0,np.sign(df_current[f'{self.multimeter_device}_current'].iloc[-1])*self.abs_max_current)
+                    guess = (0,np.sign(df_current[f'{self.multimeter_name}_current'].iloc[-1])*self.abs_max_current)
                     fit_params, fit_cov = sp.optimize.curve_fit(getattr(self, 'linear'), X, Y, guess)
                     m, b = fit_params
                     plt.plot(X, self.linear(X,m,b), 'r-')
@@ -997,12 +1039,12 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                         a, b, x0, y0 = fit_params
                         
                         V_pinchoff = float(round(np.exp(-y0/a)/b + x0,3))
-                        self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['voltage'] = V_pinchoff
+                        self.results[str(sweep._param).split('_')[-1]]['pinch_off']['voltage'] = V_pinchoff
                    
                     else:
 
                         fit_function = getattr(self, self.pinch_off_info['fit_function'])
-                        guess = (Y.iloc[0], -1 * self.voltage_sign * 100, self.device_info['properties']['turn_on']['voltage'], 0)
+                        guess = (Y.iloc[0], -1 * self.voltage_sign * 100, self.results['turn_on']['voltage'], 0)
 
                         self.logger.info(f"{str(sweep._param).split('_')[-1]}, fitting data to {self.pinch_off_info['fit_function']}")
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
@@ -1013,8 +1055,8 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                             np.abs(x0 + np.sqrt(8) / b)
                         ),3))
                         V_pinchoff_width = float(abs(round(2 * np.sqrt(8) / b,2)))
-                        self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['voltage'] = V_pinchoff
-                        self.device_info['properties'][str(sweep._param).split('_')[-1]]['pinch_off']['width'] = V_pinchoff_width #V
+                        self.results[str(sweep._param).split('_')[-1]]['pinch_off']['voltage'] = V_pinchoff
+                        self.results[str(sweep._param).split('_')[-1]]['pinch_off']['width'] = V_pinchoff_width #V
 
                     plt.plot(X_masked, fit_function(X_masked, a, b, x0, y0), 'r-')
                     axes.axvline(x=V_pinchoff, alpha=0.5, linestyle=':', c='b', label=r'$V_{\min}$')
@@ -1030,7 +1072,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
                     try:
                         # Guess a line fit with zero slope.
-                        guess = (0,np.sign(df_current[f'{self.multimeter_device}_current'].iloc[-1])*self.abs_max_current)
+                        guess = (0,np.sign(df_current[f'{self.multimeter_name}_current'].iloc[-1])*self.abs_max_current)
                         fit_params, fit_cov = sp.optimize.curve_fit(getattr(self, 'linear'), X, Y, guess)
                         m, b = fit_params
                         plt.plot(X, self.linear(X,m,b), 'r-')
@@ -1041,7 +1083,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
             config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
             self._save_figure(plot_info=f"{str(sweep._param).split('_')[-1]}_pinch_{config_str}")
-            self._update_device_config_yaml()
+
 
         return results_dict
 
@@ -1082,8 +1124,8 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             self.logger.info(f"setting voltage configuration: {voltage_configuration}")
             self._smoothly_set_voltage_configuration(voltage_configuration)
         else:
-            self.logger.info(f"setting {self.leads} to {self.device_info['properties']['turn_on']['saturation_voltage']} V")
-            self._smoothly_set_gates_to_voltage(self.leads, self.device_info['properties']['turn_on']['saturation_voltage'])
+            self.logger.info(f"setting {self.leads} to {self.results['turn_on']['saturation']} V")
+            self._smoothly_set_gates_to_voltage(self.leads, self.results['turn_on']['saturation'])
 
         # Parse dV from user
         if dV is None:
@@ -1108,28 +1150,28 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         minV_B2, maxV_B2 = B2_bounds
 
         if minV_B1 is None:
-            minV_B1 = self.device_info['properties'][B1]['pinch_off']['voltage']
+            minV_B1 = self.results[B1]['pinch_off']['voltage']
         else:
             assert np.sign(minV_B1) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (minV) for B1.")
 
         if minV_B2 is None:
-            minV_B2 = self.device_info['properties'][B2]['pinch_off']['voltage']
+            minV_B2 = self.results[B2]['pinch_off']['voltage']
         else:
             assert np.sign(minV_B2) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (minV) for B2.")
 
         if maxV_B1 is None:
             if self.voltage_sign == 1:
-                maxV_B1 = min(self.device_info['properties'][B1]['pinch_off']['voltage']+self.voltage_sign*self.device_info['properties'][B1]['pinch_off']['width'], self.device_info['properties']['turn_on']['saturation_voltage'])
+                maxV_B1 = min(self.results[B1]['pinch_off']['voltage']+self.voltage_sign*self.results[B1]['pinch_off']['width'], self.results['turn_on']['saturation'])
             elif self.voltage_sign == -1:
-                maxV_B1 = max(self.device_info['properties'][B1]['pinch_off']['voltage']+self.voltage_sign*self.device_info['properties'][B1]['pinch_off']['width'], self.device_info['properties']['turn_on']['saturation_voltage'])
+                maxV_B1 = max(self.results[B1]['pinch_off']['voltage']+self.voltage_sign*self.results[B1]['pinch_off']['width'], self.results['turn_on']['saturation'])
         else:
             assert np.sign(maxV_B1) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (maxV) for B1.")
 
         if maxV_B2 is None:
             if self.voltage_sign == 1:
-                maxV_B2 = min(self.device_info['properties'][B2]['pinch_off']['voltage']+self.voltage_sign*self.device_info['properties'][B2]['pinch_off']['width'], self.device_info['properties']['turn_on']['saturation_voltage'])
+                maxV_B2 = min(self.results[B2]['pinch_off']['voltage']+self.voltage_sign*self.results[B2]['pinch_off']['width'], self.results['turn_on']['saturation'])
             elif self.voltage_sign == -1:
-                maxV_B2 = max(self.device_info['properties'][B2]['pinch_off']['voltage']+self.voltage_sign*self.device_info['properties'][B2]['pinch_off']['width'], self.device_info['properties']['turn_on']['saturation_voltage'])
+                maxV_B2 = max(self.results[B2]['pinch_off']['voltage']+self.voltage_sign*self.results[B2]['pinch_off']['width'], self.results['turn_on']['saturation'])
         else:
             assert np.sign(maxV_B2) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (maxV) for B2.")
 
@@ -1175,11 +1217,11 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         dataset = qc.load_last_experiment().last_data_set()
         df = dataset.to_pandas_dataframe().reset_index()
         df_current = df.copy()
-        df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
+        df_current = df_current.rename(columns={f'{self.multimeter_name}_volt': f'{self.multimeter_name}_current'})
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot 2D colormap
-        df_pivoted = df_current.pivot_table(values=f'{self.multimeter_device}_current', index=[f'{self.voltage_device}_{B1}'], columns=[f'{self.voltage_device}_{B2}'])
+        df_pivoted = df_current.pivot_table(values=f'{self.multimeter_name}_current', index=[f'{self.voltage_source_name}_{B1}'], columns=[f'{self.voltage_source_name}_{B2}'])
         B1_data, B2_data = df_pivoted.columns, df_pivoted.index
         raw_current_data = df_pivoted.to_numpy()[:,:-1] / 1.0e-9 # convert to nA
         B1_grad = np.gradient(raw_current_data, axis=1)
@@ -1234,9 +1276,9 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             )
 
             for barrier_gate_name, voltage in bias_point.items():
-                self.device_info['properties'][barrier_gate_name]['bias_point'] = voltage
+                self.results[barrier_gate_name]['bias_voltage'] = voltage
 
-            self._update_device_config_yaml()
+
 
         return (df,ax1)
 
@@ -1309,12 +1351,12 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         dataset = qc.load_last_experiment().last_data_set()
         df = dataset.to_pandas_dataframe().reset_index()
         df_current = df.copy()
-        df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
+        df_current = df_current.rename(columns={f'{self.multimeter_name}_volt': f'{self.multimeter_name}_current'})
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot current v.s. random gate (since they are swept together)
-        axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_{gate}', marker= 'o',s=10)
-        df_current.plot.line(y=f'{self.multimeter_device}_current', x=f'{self.voltage_device}_{gate}', ax=axes, linewidth=1)
+        axes = df_current.plot.scatter(y=f'{self.multimeter_name}_current', x=f'{self.voltage_source_name}_{gate}', marker= 'o',s=10)
+        df_current.plot.line(y=f'{self.multimeter_name}_current', x=f'{self.voltage_source_name}_{gate}', ax=axes, linewidth=1)
         axes.set_title('Coulomb Blockade')
         axes.set_ylabel(r'$I$ (A)')
         axes.set_xlabel(r"$V_{{{gate_name}}}$ (V)".format(gate_name=gate))
@@ -1418,12 +1460,12 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         dataset = qc.load_last_experiment().last_data_set()
         df = dataset.to_pandas_dataframe().reset_index()
         df_current = df.copy()
-        df_current = df_current.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
+        df_current = df_current.rename(columns={f'{self.multimeter_name}_volt': f'{self.multimeter_name}_current'})
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
         df_current.iloc[:,-2] = df_current.iloc[:,-2].mul(self.voltage_divider * 1e3) # sensitivity
 
         # Plot 2D colormap
-        df_pivoted = df_current.pivot_table(values=f'{self.multimeter_device}_current', index=[f'{self.voltage_device}_{ohmic}'], columns=[f'{self.voltage_device}_{gate}'])
+        df_pivoted = df_current.pivot_table(values=f'{self.multimeter_name}_current', index=[f'{self.voltage_source_name}_{ohmic}'], columns=[f'{self.voltage_source_name}_{gate}'])
         gate_data, ohmic_data = df_pivoted.columns, df_pivoted.index
         raw_current_data = df_pivoted.to_numpy()[:,:-1] / 1.0e-9 # convert to nA
         gate_grad = np.gradient(raw_current_data, axis=1)
@@ -1508,12 +1550,12 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 elapsed_time = time_param.get()
       
         df = datasaver.dataset.to_pandas_dataframe().reset_index()
-        df_current = df.rename(columns={f'{self.multimeter_device}_volt': f'{self.multimeter_device}_current'})
+        df_current = df.rename(columns={f'{self.multimeter_name}_volt': f'{self.multimeter_name}_current'})
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot current v.s. random gate (since they are swept together)
-        axes = df_current.plot.scatter(y=f'{self.multimeter_device}_current', x='time', marker= 'o',s=5)
-        df_current.plot.line(y=f'{self.multimeter_device}_current', x=f'time', ax=axes, linewidth=1)
+        axes = df_current.plot.scatter(y=f'{self.multimeter_name}_current', x='time', marker= 'o',s=5)
+        df_current.plot.line(y=f'{self.multimeter_name}_current', x=f'time', ax=axes, linewidth=1)
         axes.set_ylabel(r'$I$ (A)')
         axes.set_xlabel(r'$t$ (s)')
         axes.set_title(rf'Current noise, $f_s={f_sampling}$ Hz, $t_\max={t_capture}$ s')
@@ -1522,7 +1564,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         if plot_psd:
             # Plot noise spectrum
             t = df_current[f'time']
-            I = df_current[f'{self.multimeter_device}_current']
+            I = df_current[f'{self.multimeter_name}_current']
             f, Pxx = sp.signal.periodogram(I, fs=f_sampling, scaling='density')
 
             plt.loglog(f, Pxx)
@@ -1534,25 +1576,15 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         return df
 
     def _load_config_files(self):
-                # Read in tuner config information
-        self.tuner_info = yaml.safe_load(Path(self.tuner_config).read_text())
+        # Read in tuner config information
+        self.tuner_info = yaml.safe_load(Path(self.tuner_config_file).read_text())
         self.global_turn_on_info = self.tuner_info['global_turn_on']
         self.pinch_off_info = self.tuner_info['pinch_off']
 
-        # Read in station config information
-        self.station_info = yaml.safe_load(Path(self.setup_config).read_text())
-        self.general_info = self.station_info['general_info']
-        self.multimeter_device = self.general_info['multimeter_device']
-        self.voltage_device = self.general_info['voltage_device']
-        self.preamp_sensitivity = self.general_info['preamp_sensitivity']
-        self.preamp_bias = self.general_info['preamp_bias']
-        self.voltage_divider = self.general_info['voltage_divider']
-        self.voltage_resolution = self.general_info['voltage_resolution']
-
-        # Read in device config information
-        self.device_info = yaml.safe_load(Path(self.device_config).read_text())
-        self.charge_carrier = self.device_info['characteristics']['charge_carrier']
-        self.operation_mode = self.device_info['characteristics']['operation_mode']
+        # Read in config information
+        self.config = yaml.safe_load(Path(self.config_file).read_text())
+        self.charge_carrier = self.config['device']['characteristics']['charge_carrier']
+        self.operation_mode = self.config['device']['characteristics']['operation_mode']
 
         if (self.charge_carrier, self.operation_mode) == ('e', 'acc'):
             self.voltage_sign = +1
@@ -1563,16 +1595,32 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         if (self.charge_carrier, self.operation_mode) == ('h', 'dep'):
             self.voltage_sign = +1
 
-        self.ohmics = self.device_info['characteristics']['ohmics']
-        self.barriers = self.device_info['characteristics']['barriers']
-        self.leads = self.device_info['characteristics']['leads']
-        self.plungers = self.device_info['characteristics']['plungers']
-        self.all_gates = self.barriers + self.leads + self.plungers
+        self.device_gates = self.config['device']['gates']
+        
+        self.ohmics = []
+        self.barriers = []
+        self.leads = []
+        self.plungers = []
+        for gate, details in self.device_gates.items():
+            if details['type'] == 'ohmic':
+                self.ohmics.append(gate)
+            if details['type'] == 'barrier':
+                self.barriers.append(gate)
+            if details['type'] == 'lead':
+                self.leads.append(gate)
+            if details['type'] == 'plunger':
+                self.plungers.append(gate)
+        self.all_gates = list(self.device_gates.keys())
 
-        self.abs_max_current = self.device_info['properties']['constraints']['abs_max_current']
-        self.abs_max_ohmic_bias = self.device_info['properties']['constraints']['abs_max_ohmic_bias']
-        self.abs_max_gate_voltage = self.device_info['properties']['constraints']['abs_max_gate_voltage']
-        self.abs_max_gate_differential = self.device_info['properties']['constraints']['abs_max_gate_differential']
+        self.abs_max_current = self.config['device']['constraints']['abs_max_current']
+        self.abs_max_gate_voltage = self.config['device']['constraints']['abs_max_gate_voltage']
+        self.abs_max_gate_differential = self.config['device']['constraints']['abs_max_gate_differential']
+
+        self.voltage_source_name = self.config['setup']['voltage_source']
+        self.multimeter_name = self.config['setup']['multimeter']
+        self.voltage_divider = self.config['setup']['voltage_gain']
+        self.preamp_bias = self.config['setup']['preamp_bias']
+        self.preamp_sensitivity = self.config['setup']['preamp_sensitivity']
 
     def _check_break_conditions(self):
         # Go through device break conditions to see if anything is flagged,
@@ -1777,12 +1825,6 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         """
    
         return round(np.abs(maxV-minV) / dV) + 1
-    
-    def _update_device_config_yaml(self):
-        """Updates the device_config.yaml file based on findings.
-        """
-        with open(self.device_config, 'w') as outfile:
-            yaml.dump(self.device_info, outfile, default_flow_style=True)
 
     def _save_figure(self, plot_info: str, plot_dpi: int = 300, plot_format: str = 'svg'):
         """Saves plot generated from one of the stages.

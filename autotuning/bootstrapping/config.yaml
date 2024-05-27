@@ -48,5 +48,6 @@ setup:
   preamp_bias: 0.0
   preamp_sensitivity: 1.0e-7
   voltage_gain: 1.0e-2
+  voltage_resolution: 1.0e-3
 
 

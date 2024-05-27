@@ -1621,6 +1621,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         self.voltage_divider = self.config['setup']['voltage_gain']
         self.preamp_bias = self.config['setup']['preamp_bias']
         self.preamp_sensitivity = self.config['setup']['preamp_sensitivity']
+        self.voltage_resolution = self.config['setup']['voltage_resolution']
 
     def _check_break_conditions(self):
         # Go through device break conditions to see if anything is flagged,

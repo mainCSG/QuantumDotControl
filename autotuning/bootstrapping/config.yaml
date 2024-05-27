@@ -1,0 +1,57 @@
+device:
+
+  characteristics:
+
+    name: test
+    charge_carrier: h
+    operation_mode: acc
+
+  constraints:
+
+    abs_max_current: 1.5e-9
+    abs_max_gate_differential: 2.5
+    abs_max_gate_voltage: 3
+
+  gates:
+
+    LB:
+      name: Left Barrier Gate
+      type: barrier
+      channel: 3
+      unit: V
+    
+    RB:
+      name: Right Barrier Gate
+      type: barrier
+      channel: 5
+      unit: V
+
+    L:
+      name: Lead Barrier Gate
+      type: lead
+      channel: 2
+      unit: V
+
+    S:
+      name: Source Ohmic Gate
+      type: ohmic
+      channel: 8
+      gain: 1.0e-2
+      unit: V
+
+    P:
+      name: Plunger Gate
+      type: plunger
+      channel: 4
+      unit: V
+
+
+setup:
+  voltage_source: sim900
+  mulimeter: agilent
+
+  preamp_bias: 0.0
+  preamp_sensitivity: 1.0e-7
+
+
+

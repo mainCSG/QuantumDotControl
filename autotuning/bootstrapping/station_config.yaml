@@ -24,7 +24,6 @@ instruments:
             
             STR: {source: dac9, label: Lead Gate (R), unit: V,scale: 1,step: 1.0e-3,initial_value: 0.}
                   
-
     keithley2000:
         type: qcodes.instrument_drivers.Keithley.Keithley_2000.Keithley2000
         address: GPIB0::17::INSTR

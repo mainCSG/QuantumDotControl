@@ -658,7 +658,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 step=details['step'],
             )
             self.logger.info(f"changed {channel_prefix+str(details['channel'])} to {gate}")
-
+        # self.voltage_source.timeout(10)
 
         # Creates the qcodes database and sets-up the experiment
         db_filepath =  os.path.join(self.db_folder, f"experiments_{self.config['device']['characteristics']['name']}_{todays_date}.db")
@@ -826,12 +826,14 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             self.logger.error("insufficient points above minimum current threshold")
         else:
             try:
-                guess = [Y_masked.iloc[0], self.voltage_sign, X_masked.iloc[-1] - self.voltage_sign, 0]
+                guess = [Y_masked.iloc[-1], self.voltage_sign, X_masked.iloc[0] - self.voltage_sign, 0]
 
                 fit_params, fit_cov = sp.optimize.curve_fit(getattr(self, self.global_turn_on_info['fit_function']), X_masked, Y_masked, guess)
                 
                 # Extract turn on voltage and saturation voltage
                 a, b, x0, y0 = fit_params
+                self.logger.info(f"Fit params: a = {a}, b = {b}, x0 = {x0}, y0 = {y0}")
+
                 if self.global_turn_on_info['fit_function'] == 'exponential':
                     V_turn_on =  np.round(np.log(-y0/a)/b + x0, 3)
                 elif self.global_turn_on_info['fit_function'] == 'logarithmic':
@@ -940,7 +942,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         else:
             assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, self.logger.error("Double check the sign of the gate voltage (minV) for your given device.")
 
-        self.logger.info(f"settings {gates} to {maxV} V")
+        self.logger.info(f"setting {gates} to {maxV} V")
         self._smoothly_set_gates_to_voltage(gates, maxV)
 
         num_steps = self._calculate_num_of_steps(minV, maxV, dV)
@@ -1032,12 +1034,13 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                     if str(sweep._param).split('_')[-1] in self.leads:
 
                         fit_function = getattr(self, 'logarithmic')
-                        guess = [Y_masked.iloc[0], self.voltage_sign, X_masked.iloc[-1] - self.voltage_sign, 0]
+                        guess = [Y_masked.iloc[0], self.voltage_sign, X_masked.iloc[0] - self.voltage_sign, 0]
                     
                         self.logger.info(f"{str(sweep._param).split('_')[-1]}, fitting data to logarithmic function")
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
                         a, b, x0, y0 = fit_params
-                        
+                        self.logger.info(f"Fit params: a = {a}, b = {b}, x0 = {x0}, y0 = {y0}")
+
                         V_pinchoff = float(round(np.exp(-y0/a)/b + x0,3))
                         self.results[str(sweep._param).split('_')[-1]]['pinch_off']['voltage'] = V_pinchoff
                    
@@ -1049,8 +1052,9 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                         self.logger.info(f"{str(sweep._param).split('_')[-1]}, fitting data to {self.pinch_off_info['fit_function']}")
                         fit_params, fit_cov = sp.optimize.curve_fit(fit_function, X_masked, Y_masked, guess)
                         a, b, x0, y0 = fit_params
+                        self.logger.info(f"Fit params: a = {a}, b = {b}, x0 = {x0}, y0 = {y0}")
 
-                        V_pinchoff = float(round(min(
+                        V_pinchoff = self.voltage_sign * float(round(min(
                             np.abs(x0 - np.sqrt(8) / b),
                             np.abs(x0 + np.sqrt(8) / b)
                         ),3))
@@ -1365,7 +1369,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         config_str = json.dumps(voltage_configuration).replace(' ', '').replace('.', 'p').replace(',', '__').replace("\"", '').replace(":", '_').replace("{", "").replace("}", "")
         self._save_figure(plot_info=f'{gate}_sweep_{config_str}')
 
-        return (df, axes)
+        return (df, axes,)
 
     def coulomb_diamonds(self, 
                          ohmic: str = None, 
@@ -1417,6 +1421,10 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         minV_ohmic, maxV_ohmic = ohmic_bounds
         minV_gate, maxV_gate = gate_bounds
 
+        self.logger.info(f"setting {ohmic} to {maxV_ohmic} V")
+        self.logger.info(f"setting {gate} to {maxV_gate} V")
+        self._smoothly_set_voltage_configuration({ohmic: maxV_ohmic, gate: maxV_gate})
+
         assert minV_gate is not None, self.logger.error(f"no minimum voltage for {gate} provided")
         assert maxV_gate is not None, self.logger.error(f"no maximum voltage for {gate} provided")
         assert minV_ohmic is not None, self.logger.error(f"no minimum voltage for {ohmic} provided")
@@ -1430,7 +1438,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         num_steps_ohmic = self._calculate_num_of_steps(minV_ohmic, maxV_ohmic, dV_ohmic)
         num_steps_gate = self._calculate_num_of_steps(minV_gate, maxV_gate, dV_gate)
 
-        self.logger.attempt("coulomb diamond scan")
+        self.logger.attempt("Coulomb diamond scan")
         result = qc.dataset.do2d(
             getattr(self.voltage_source, f'{gate}'), # outer loop
             maxV_gate,
@@ -1452,9 +1460,9 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         )
         self.logger.complete("\n")
 
-        self.logger.info(f"settings gates {gate}, {ohmic} to {maxV_gate} V, {maxV_ohmic} V respectively")
-        self._smoothly_set_gates_to_voltage([gate], maxV_gate)
-        self._smoothly_set_gates_to_voltage([ohmic], maxV_ohmic)
+        self.logger.info(f"setting gates {gate}, {ohmic} to {maxV_gate} V, {maxV_ohmic} V respectively")
+        self._smoothly_set_voltage_configuration({ohmic: maxV_ohmic, gate: maxV_gate})
+
   
         # Get last dataset recorded, convert to current units
         dataset = qc.load_last_experiment().last_data_set()
@@ -1513,8 +1521,10 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         return (df, ax1)
 
     def current_trace(self, 
-                      f_sampling: int, 
+                      f_sampling: int,
                       t_capture: int, 
+                      voltage_configuration: dict = None,
+                      meas_name: str = "Current Trace",
                       plot_psd: bool = False) -> pd.DataFrame:
         """Records current data from multimeter device at a given sampling rate
         for a given amount of time. 
@@ -1535,16 +1545,20 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         )
         """
 
+        if voltage_configuration is not None:
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
+            self._smoothly_set_voltage_configuration(voltage_configuration)
+
         time_param = qc.parameters.ElapsedTimeParameter('time')
-        meas = qc.dataset.Measurement(exp=self.initialization_exp)
+        meas = qc.dataset.Measurement(exp=self.initialization_exp, name=meas_name)
         meas.register_parameter(time_param)
         meas.register_parameter(self.drain_mm_device.volt, setpoints=[time_param])
 
+        self.logger.info(f"Running current trace for {t_capture} seconds")
         with meas.run() as datasaver:
             time_param.reset_clock()
             elapsed_time = 0
             while elapsed_time < t_capture:
-                time.sleep(1/f_sampling)
                 datasaver.add_result((self.drain_mm_device.volt, self.drain_mm_device.volt()),
                                 (time_param, time_param()))
                 elapsed_time = time_param.get()
@@ -1743,7 +1757,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 intermediate.append({})
                 for gate_name, voltage in voltage_configuration.items():
                     intermediate[-1][gate_name] = voltage - \
-                                          deltav[i]*(maxsteps-s-1)/maxsteps
+                                          deltav[gate_name]*(maxsteps-s-1)/maxsteps
         else:
             done = []
             prevvals = {}

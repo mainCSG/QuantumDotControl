@@ -1,0 +1,33 @@
+instruments: 
+    ivvi:
+        type: qcodes_contrib_drivers.drivers.QuTech.IVVI
+        address: COM6
+
+        init:
+            numdacs: 16
+            polarity: ['BIP', 'BIP', 'BIP', 'NEG']
+            use_locks: false
+            dac_step: 1
+            dac_delay: 0.1
+
+    keithley2000:
+        type: qcodes.instrument_drivers.Keithley.Keithley_2000.Keithley2000
+        address: GPIB0::17::INSTR
+
+        parameters:
+
+            mode: {initial_value: 'dc voltage'}
+        
+        add_parameters:
+
+            volt: {source: amplitude}
+
+    sim900:
+        type: qcodes_contrib_drivers.drivers.StanfordResearchSystems.SIM928.SIM928
+        address: GPIB0::3::INSTR
+
+    agilent:
+        type: qcodes.instrument_drivers.agilent.Agilent_34401A.Agilent34401A
+        address: GPIB0::21::INSTR
+
+    

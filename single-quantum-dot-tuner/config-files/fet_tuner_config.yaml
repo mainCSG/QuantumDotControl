@@ -1,5 +1,5 @@
 global_turn_on:
-  abs_min_current: 0.05e-9 # A
+  abs_min_current: 0.1e-9 # A
   fit_function: logarithmic
 
 pinch_off:

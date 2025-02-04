@@ -1,14 +1,14 @@
 device:
 
   characteristics:
-    name: test
-    charge_carrier: h
+    name: n45_d13
+    charge_carrier: e
     operation_mode: acc
 
   constraints:
     abs_max_current: 1.5e-9
-    abs_max_gate_differential: 2.5
-    abs_max_gate_voltage: 3
+    abs_max_gate_differential: 2
+    abs_max_gate_voltage: 2.5
 
   gates:
     LB:
@@ -26,13 +26,13 @@ device:
     L:
       label: Lead Barrier Gate
       type: lead
-      channel: 2
+      channel: 6
       step: 0.01
       unit: V
     S:
       label: Source Ohmic Gate
       type: ohmic
-      channel: 1
+      channel: 8
       step: 0.01
       unit: V
     P:
@@ -46,7 +46,7 @@ setup:
   voltage_source: sim900
   multimeter: agilent
   preamp_bias: 0.0
-  preamp_sensitivity: 1.0e-7
+  preamp_sensitivity: 1.0e-8
   voltage_gain: 1.0e-2
   voltage_resolution: 1.0e-3
 

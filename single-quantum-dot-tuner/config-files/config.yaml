@@ -2,7 +2,7 @@ device:
 
   characteristics:
     name: n45_d13
-    charge_carrier: e
+    charge_carrier: h
     operation_mode: acc
 
   constraints:
@@ -32,7 +32,7 @@ device:
     S:
       label: Source Ohmic Gate
       type: ohmic
-      channel: 8
+      channel: 3
       step: 0.01
       unit: V
     P:
@@ -43,11 +43,11 @@ device:
       unit: V
 
 setup:
-  voltage_source: sim900
+  voltage_source: ivvi
   multimeter: agilent
   preamp_bias: 0.0
   preamp_sensitivity: 1.0e-8
-  voltage_gain: 1.0e-2
+  voltage_gain: 1.0e3
   voltage_resolution: 1.0e-3
 
 

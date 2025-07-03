@@ -47,7 +47,7 @@ setup:
   multimeter: agilent
   preamp_bias: 0.0
   preamp_sensitivity: 1.0e-8
-  voltage_gain: 1.0e3
+  voltage_divider: 1.0e-3
   voltage_resolution: 1.0e-3
 
 

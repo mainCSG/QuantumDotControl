@@ -133,6 +133,7 @@ class DataFit:
         return m * x + b         
     
 class DataAcquisition:
+    
     def __init__(self):
         pass
 
@@ -155,7 +156,9 @@ class DataAcquisition:
         pass
 
 class DataAnalysis:
+    
     def __init__(self, tuner_config) -> None:
+        
         self.tuner_info = yaml.safe_load(Path(tuner_config).read_text())
 
         self.model_path = self.tuner_info['barrier_barrier']['segmentation_model_path']
@@ -210,7 +213,9 @@ class DataAnalysis:
         y1,y2 = y
 
         if plot_process:
+            
             # Plot the bounding box
+            
             axes.plot([x1, x2], [y1, y1], linewidth=3, alpha=0.5, linestyle='--', color='k')  # Top line
             axes.plot([x1, x2], [y2, y2], linewidth=3, alpha=0.5,  linestyle='--', color='k')  # Bottom line
             axes.plot([x1, x1], [y1, y2], linewidth=3, alpha=0.5,  linestyle='--', color='k')  # Left line
@@ -545,6 +550,7 @@ class DataAnalysis:
         return results
 
 class QuantumDotFET(DataAnalysis, DataAcquisition):
+    
     """Dedicated class to tune simple FET devices.
     """
 
@@ -553,7 +559,9 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                  tuner_config: str,
                  station_config: str,
                  save_dir: str) -> None:
-        """Initializes the tuner.
+        
+        """
+        Initializes the tuner.
 
         Args:
             config (str): Path to .yaml file containing device information.
@@ -566,7 +574,8 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         DataAnalysis.__init__(self, tuner_config=tuner_config)
         DataAcquisition.__init__(self)
     
-        # Save file names
+        # First, we save the config file data and the data directory, as well as loading the config files
+
         self.config_file = config
         self.tuner_config_file = tuner_config
         self.station_config_file = station_config
@@ -574,14 +583,19 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         self._load_config_files()
         
+        # Then, we set up the date and file where data is stored
+
         todays_date = datetime.date.today().strftime("%Y-%m-%d")
         self.db_folder = os.path.join(save_dir, f"{self.config['device']['characteristics']['name']}_{todays_date}")
         os.makedirs(self.db_folder, exist_ok=True)
 
-        ATTEMPT, COMPLETE = logging.INFO - 2, logging.INFO - 1
+        # This code creates new logging categories for the user to see while the code runs
+
+        ATTEMPT, COMPLETE, IN_PROGRESS = logging.INFO - 2, logging.INFO - 1, logging.INFO
 
         logging.addLevelName(ATTEMPT, 'ATTEMPT')
         logging.addLevelName(COMPLETE, 'COMPLETE')
+        logging.addLevelName(IN_PROGRESS, 'IN PROGRESS')
 
         def attempt(self, message, *args, **kwargs):
             if self.isEnabledFor(ATTEMPT):
@@ -591,8 +605,13 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             if self.isEnabledFor(COMPLETE):
                 self._log(COMPLETE, message, args, **kwargs)
 
+        def in_progress(self, message, *args, **kwargs):
+            if self.isEnabledFor(IN_PROGRESS):
+                self._log(IN_PROGRESS, message, args, **kwargs)
+
         logging.Logger.attempt = attempt
         logging.Logger.complete = complete
+        logging.Logger.in_progress = in_progress
 
         console_formatter = ColoredFormatter(
                 "%(log_color)s%(asctime)s - %(name)s - %(levelname)s %(message)s",
@@ -603,23 +622,33 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                     'COMPLETE': 'green',
                     'DEBUG': 'white',
                     'INFO': 'white',
+                    'IN PROGRESS': 'white',
                     'WARNING': 'red',
                     'ERROR': 'bold_red',
                     'CRITICAL': 'bold_red'
                 }
         )
 
+        # This code sets the format of the messages displayed to the user
+
         file_formatter = logging.Formatter(
             "%(asctime)s - %(name)s - %(levelname)s %(message)s"
         )
 
+        # This code defines a handler, which writes the messages from the Logger
+
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setFormatter(console_formatter)
+
+        # This line creates an info log for the Logger
 
         file_handler = logging.FileHandler(
             os.path.join(self.db_folder, 'run_info.log')
         )
+
         file_handler.setFormatter(file_formatter)
+
+        # This defines the Logger
 
         self.logger = logging.getLogger(__name__)
         self.logger.addHandler(console_handler)
@@ -627,13 +656,20 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         self.logger.setLevel(min(self.logger.getEffectiveLevel(), ATTEMPT))
 
+        # This code connects to the instruments and then defines the voltage source and multimeter
+
         self.logger.attempt("connecting to station")
+
+        # We use the Station class from qcodes, which represents the physical setup of our experiment
+
         self.station = qc.Station(config_file=self.station_config_file)
         self.station.load_instrument(self.voltage_source_name)
         self.station.load_instrument(self.multimeter_name)
         self.voltage_source = getattr(self.station, self.voltage_source_name)
         self.drain_mm_device = getattr(self.station, self.multimeter_name)
+        
         self.drain_volt = getattr(self.station, self.multimeter_name).volt
+        
         self.logger.complete("\n")
 
         channel_prefix = ""
@@ -701,8 +737,9 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         self.ground_device()
 
     def ground_device(self):
-        """Grounds all of the gates in the device.
-        """
+        
+        # Grounds all of the gates in the device
+        
         device_gates = self.ohmics + self.all_gates
         self.logger.attempt("grounding device")
         self._smoothly_set_gates_to_voltage(device_gates, 0.)
@@ -711,7 +748,9 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
     def bias_ohmic(self, 
                    ohmic: str = None, 
                    V: float = 0):
-        """Biases the ohmic to desired voltage. Reports back to the user what the
+        
+        """
+        Biases the ohmic to desired voltage. Reports back to the user what the
         device will "see" based on the voltage divider in setup_config.yaml.
 
         Args:
@@ -728,8 +767,9 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         >>> QD_FET_Tuner.bias_ohmic(ohmic='S', V=0.005)
         Setting ohmic 'S' to 0.005 V (which is 0.05 mV) ... done!
         """  
+        
         self.logger.attempt(f"setting ohmic ({ohmic}) to {V} V")
-        self.logger.info(f'device receives {round(V*self.voltage_divider*1e3,3)} mV based on divider')
+        self.logger.info(f'device receives {round(V*self.voltage_divider,3)} V based on divider')
         self._smoothly_set_gates_to_voltage(ohmic, V)
         self.ohmic_bias = V*self.voltage_divider
         self.logger.complete("\n")
@@ -739,7 +779,9 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 maxV: float = None, 
                 dV: float = None, 
                 delay: float = 0.01) -> pd.DataFrame:
-        """Attempts to 'turn-on' the FET by sweeping barriers and leads
+        
+        """
+        Attempts to 'turn-on' the FET by sweeping barriers and leads
         in the FET channel until either,
          (1) Maximum allowed current is reached 
          (2) Maximum allowed gate voltage is hit.
@@ -771,6 +813,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, self.logger.error("Double check the sign of the gate voltage (minV) for your given device.")
 
         # Set up gate sweeps
+        
         num_steps = self._calculate_num_of_steps(minV, maxV, dV)
         gates_involved = self.barriers + self.leads
 
@@ -1568,6 +1611,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot current v.s. random gate (since they are swept together)
+
         axes = df_current.plot.scatter(y=f'{self.multimeter_name}_current', x='time', marker= 'o',s=5)
         df_current.plot.line(y=f'{self.multimeter_name}_current', x=f'time', ax=axes, linewidth=1)
         axes.set_ylabel(r'$I$ (A)')
@@ -1576,7 +1620,9 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         plt.show()
         
         if plot_psd:
+
             # Plot noise spectrum
+            
             t = df_current[f'time']
             I = df_current[f'{self.multimeter_name}_current']
             f, Pxx = sp.signal.periodogram(I, fs=f_sampling, scaling='density')
@@ -1590,41 +1636,70 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         return df
 
     def _load_config_files(self):
-        # Read in tuner config information
+        
+        # Read the tuner config information
+
         self.tuner_info = yaml.safe_load(Path(self.tuner_config_file).read_text())
         self.global_turn_on_info = self.tuner_info['global_turn_on']
         self.pinch_off_info = self.tuner_info['pinch_off']
 
-        # Read in config information
+        # Read the config information
+
         self.config = yaml.safe_load(Path(self.config_file).read_text())
         self.charge_carrier = self.config['device']['characteristics']['charge_carrier']
         self.operation_mode = self.config['device']['characteristics']['operation_mode']
 
+        # Set the voltage sign for the gates, based on the charge carrier and mode of the device
+
         if (self.charge_carrier, self.operation_mode) == ('e', 'acc'):
             self.voltage_sign = +1
+        
         if (self.charge_carrier, self.operation_mode) == ('e', 'dep'):
             self.voltage_sign = -1
+        
         if (self.charge_carrier, self.operation_mode) == ('h', 'acc'):
             self.voltage_sign = -1
+        
         if (self.charge_carrier, self.operation_mode) == ('h', 'dep'):
             self.voltage_sign = +1
 
+
+        # Get the device gates
+
         self.device_gates = self.config['device']['gates']
+        
+        # Re-label all the gates as ohmics, barriers, leads, plungers, accumulation gates and screening gates 
         
         self.ohmics = []
         self.barriers = []
         self.leads = []
         self.plungers = []
+        self.accumulation = []
+        self.screening = []
+        
         for gate, details in self.device_gates.items():
+            
             if details['type'] == 'ohmic':
                 self.ohmics.append(gate)
+            
             if details['type'] == 'barrier':
                 self.barriers.append(gate)
+            
             if details['type'] == 'lead':
                 self.leads.append(gate)
+            
             if details['type'] == 'plunger':
                 self.plungers.append(gate)
+            
+            if details['type'] == 'accumulation':
+                self.accumulation.append(gate)
+
+            if details['type'] == 'screening':
+                self.screening.append(gate)
+        
         self.all_gates = list(self.device_gates.keys())
+
+
 
         self.abs_max_current = self.config['device']['constraints']['abs_max_current']
         self.abs_max_gate_voltage = self.config['device']['constraints']['abs_max_gate_voltage']
@@ -1632,12 +1707,13 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         self.voltage_source_name = self.config['setup']['voltage_source']
         self.multimeter_name = self.config['setup']['multimeter']
-        self.voltage_divider = self.config['setup']['voltage_gain']
+        self.voltage_divider = self.config['setup']['voltage_divider']
         self.preamp_bias = self.config['setup']['preamp_bias']
         self.preamp_sensitivity = self.config['setup']['preamp_sensitivity']
         self.voltage_resolution = self.config['setup']['voltage_resolution']
 
     def _check_break_conditions(self):
+        
         # Go through device break conditions to see if anything is flagged,
         # should return a Boolean.
         
@@ -1649,10 +1725,12 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         # }
 
         # MAX CURRENT
+        
         isExceedingMaxCurrent = np.abs(self._get_drain_current()) > self.abs_max_current
         # time.sleep(0.1)
 
         # MAX BIAS
+        
         # flag = []
         # for gate_name in self.ohmics:
         #     gate_voltage = getattr(self.voltage_source, f'{gate_name}')() 
@@ -1664,6 +1742,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         # time.sleep(0.1)
 
         # MAX GATE VOLTAGE
+        
         # flag = []
         # for gate_name in self.all_gates:
         #     gate_voltage = getattr(self.voltage_source, f'{gate_name}')()
@@ -1675,6 +1754,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         # time.sleep(0.1)
 
         # # MAX GATE DIFFERENTIAL
+        
         # flag = []
         # gates_to_check = self.barriers + self.leads
         # for i in range(len(gates_to_check)):
@@ -1696,6 +1776,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             # isExceedingMaxGateDifferential,
         ]
         isExceeded = np.array(listOfBreakConditions).any()
+        
         # breakConditions = np.where(np.any(listOfBreakConditions == True))[0]
         # if len(breakConditions) != 0:
         #     for index in breakConditions.tolist():
@@ -1704,6 +1785,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         return isExceeded
 
     def _get_drain_current(self):
+        
         """Reads the multimeter and gets the current reading.
 
         Returns:
@@ -1711,6 +1793,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         """
         raw_voltage = self.drain_volt()
         current = float(self.preamp_sensitivity * (raw_voltage - self.preamp_bias))
+        
         return current
 
     def _smoothly_set_gates_to_voltage(self, 
@@ -1732,8 +1815,10 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                                     voltage_configuration: Dict[str, float] = {},
                                     equitime: bool = False):
 
+        # First, we determine which gates to are being swept and ensure the correct sign is maintained
 
-        gates_to_check = self.barriers + self.leads
+        gates_to_check = self.all_gates
+
         for gate_name in gates_to_check:
             if gate_name in voltage_configuration.keys():
                 assert np.sign(voltage_configuration[gate_name]) == np.sign(self.voltage_sign) or np.sign(voltage_configuration[gate_name]) == 0, f"Check voltage sign on {gate_name}"
@@ -1759,36 +1844,63 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                     intermediate[-1][gate_name] = voltage - \
                                           deltav[gate_name]*(maxsteps-s-1)/maxsteps
         else:
+            
+            # First, we set up the values of the sweeps and save them
+
             done = []
             prevvals = {}
+            
             for gate_name, voltage in voltage_configuration.items():
+                
                 prevvals[gate_name] = getattr(self.voltage_source, gate_name).get()
                 
             while len(done) != len(voltage_configuration):
+                
                 intermediate.append({})
+                
                 for gate_name, voltage in voltage_configuration.items():
+                    
                     if gate_name in done:
                         continue
+                   
                     gate_step_param = getattr(self.voltage_source, f'{gate_name}_step', None)
+                    
                     if gate_step_param is None:
+                        
                         # work around for IVVI
                         stepsize = getattr(self.voltage_source, f'{gate_name}', None).step
+                    
                     else:
+                        
                         stepsize = gate_step_param()
+                    
                     deltav = voltage-prevvals[gate_name]
+                    
                     if abs(deltav) <= stepsize:
+                        
                         intermediate[-1][gate_name] = voltage
                         done.append(gate_name)
+                   
                     elif deltav > 0:
+                        
                         intermediate[-1][gate_name] = prevvals[gate_name] + stepsize
+                    
                     else:
+                        
                         intermediate[-1][gate_name] = prevvals[gate_name] - stepsize
+                    
                     prevvals[gate_name] = intermediate[-1][gate_name]
 
+        # Now, we loop over intermediate to set the voltages
+
         for voltages in intermediate:
+            
             for gate_name in voltages:
+                
                 getattr(self.voltage_source, gate_name).set(voltages[gate_name])
+            
             delay_param = getattr(self.voltage_source, 'smooth_timestep', None)
+            
             if delay_param is None:
                 time.sleep(getattr(self.voltage_source, 'dac_set_sleep', None)())
             else:

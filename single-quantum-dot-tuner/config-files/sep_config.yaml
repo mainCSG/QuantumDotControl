@@ -61,6 +61,17 @@ device:
       step: 0.01
       unit: V 
 
+  ohmic_gates:
+    
+    contact:
+      label: ohmic_contact
+      type: source_ohmic
+      channel: ch1
+      frequency: 17.37
+      amplitude: 0.0
+      step: 0.01
+      unit: V
+
 setup:
   voltage_source: sim900
   voltage_source2: srs830
@@ -69,5 +80,4 @@ setup:
   preamp_sensitivity: 1.0e-7
   voltage_divider: 1.0e-2
   voltage_resolution: 1.0e-3
-
 

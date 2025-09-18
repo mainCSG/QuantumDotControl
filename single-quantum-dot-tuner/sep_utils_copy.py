@@ -664,39 +664,60 @@ class QuantumDotSEP(DataAnalysis, DataAcquisition):
 
         self.station = qc.Station(config_file=self.station_config_file)
         self.station.load_instrument(self.voltage_source_name)
-        self.station.load_instrument(self.voltage_source_name2)
+        # self.station.load_instrument(self.voltage_source_name2)
+
+        import qcodes
+        from qcodes import instrument_drivers
+        from qcodes.dataset import do0d, load_or_create_experiment
+        from qcodes.instrument import Instrument
+        from qcodes.instrument_drivers.stanford_research import SR830
+        from qcodes.validators import Numbers
+        from qcodes import Parameter
+
+        sr = SR830("lockin", "GPIB0::8::INSTR")
         self.station.load_instrument(self.multimeter_name)
         self.voltage_source = getattr(self.station, self.voltage_source_name)
-        self.voltage_source2 = getattr(self.station, self.voltage_source_name2)
+        #self.voltage_source2 = getattr(self.station, self.voltage_source_name2)
         self.drain_mm_device = getattr(self.station, self.multimeter_name)
         
         self.drain_volt = getattr(self.station, self.multimeter_name).volt
-        
-        self.logger.complete("\n")
 
-        
-        channel_prefix2 = ""
-        for parameter, details in self.voltage_source2.parameters.items():
-            if details.unit == 'V':
-                pattern = r'(.*).*\d+.*'
-                matches = re.findall(pattern,parameter)
-                extractions = [match.strip() for match in matches]
-                channel_prefix2 = extractions[0]
-        if channel_prefix2 == "":
-            self.logger.error('unable to find prefix for channels')  
+        from qcodes.instrument.base import Instrument
 
-        self.logger.info("changing parameters to match names in config.yaml file")
-        self.voltage_source2.timeout(5 * 60)
-        for gate, details in self.device_gates.items():
-            self.voltage_source2.add_parameter(
-                name=gate,
+        if 'sim900' in Instrument._all_instruments:
+            sim900 = Instrument.find_instrument('sim900')
+        else:
+            sim900 = station.load_instrument('sim900')
+        
+        self.logger.complete("\n")   
+     
+            # Assume sr = SR830("lockin", "GPIB0::8::INSTR")
+            # Assume self.device_gates is a dict like:
+            # {
+            #     'sig_x': {'parameter': 'X', 'label': 'Lock-in X', 'unit': 'V'},
+            #     'sig_y': {'parameter': 'Y', 'label': 'Lock-in Y', 'unit': 'V'},
+            # }
+
+        self.logger.info("Remapping SR830 parameters to match config.yaml")
+
+        for alias, details in self.device_gates.items():
+            param_name = details['contact']
+
+            if not hasattr(sr, param_name):
+                self.logger.error(f"Parameter {param_name} not found in SR830")
+                continue
+
+            # Add DelegateParameter
+            sr.add_parameter(
+                name=alias,
                 parameter_class=qc.parameters.DelegateParameter,
-                source=getattr(self.voltage_source2, channel_prefix2+str(details['channel'])),
-                label=details['label'],
-                unit = details['unit'],
-                step=details['step'],
-            )
-            self.logger.info(f"changed {channel_prefix2+str(details['channel'])} to {gate}")   
+                source=getattr(sr, param_name),
+                label=details.get('label', alias),
+                unit=details.get('unit', ''),
+                step=details.get('step', None)
+        )
+
+        self.logger.info(f"Mapped SR830.{param_name} to {alias}")
 
         channel_prefix = ""
         for parameter, details in self.voltage_source.parameters.items():
@@ -1672,7 +1693,7 @@ class QuantumDotSEP(DataAnalysis, DataAcquisition):
 
         return df
 
-   # def _load_config_files(self):
+    def _load_config_files(self):
         
         # Read the tuner config information
 
@@ -2011,9 +2032,11 @@ class QuantumDotSEP(DataAnalysis, DataAcquisition):
         completition_time = str(datetime.datetime.now().hour) + "_" + str(datetime.datetime.now().minute) # the current minute
         plot_name = os.path.join(self.db_folder, f"{plot_info}_{completition_time}.{plot_format}")
         plt.savefig(fname=plot_name, dpi=plot_dpi, format=plot_format)
+
 class QuantumDotFET(DataAnalysis, DataAcquisition):
-  """Dedicated class to tune simple FET devices.
-  """
+  
+    """Dedicated class to tune simple FET devices.
+    """
 
     def __init__(self, 
                  config: str, 

@@ -1,0 +1,144 @@
+device:
+
+  characteristics:
+    name: 3D1S_4
+    charge_carrier: e
+    operation_mode: acc
+
+  constraints:
+    abs_max_current: 10e-9
+    abs_max_gate_differential: 2
+    abs_max_gate_voltage: 2.0
+
+  gates:
+    S0:
+      label: Left Dot Ohmic
+      type: Ohmic
+      channel: 1
+      step: 0.01
+      unit: V
+    S2:
+      label: Right Sensor Ohmic
+      type: Ohmic
+      channel: 2
+      step: 0.01
+      unit: V
+    SG1:
+      label: Horizontal Screening Gate
+      type: Screening
+      channel: 3
+      step: 0.01
+      unit: V
+    CG0a:
+      label: Dot Screening Gate
+      type: Screening
+      channel: 4
+      step: 0.01
+      unit: V
+    CG0b:
+      label: Sensor Screening Gate
+      type: Screening
+      channel: 5
+      step: 0.01
+      unit: V
+    AC0:
+      label: Left Dot Accumulation Gate
+      type: Accumulation
+      channel: 6
+      step: 0.01
+      unit: V
+    AC1:
+      label: Right Dot Accumulation Gate
+      type: Accumulation
+      channel: 7
+      step: 0.01
+      unit: V
+    AC2:
+      label: Right Sensor Accumulation Gate
+      type: Accumulation
+      channel: 8
+      step: 0.01
+      unit: V
+    AC3:
+      label: Left Sensor Accumulation Gate
+      type: Accumulation
+      channel: 9
+      step: 0.01
+      unit: V
+    F1:
+      label: Flanking Gates
+      type: Accumulation
+      channel: 10
+      step: 0.01
+      unit: V
+    B0:
+      label: Left Barrier Gate
+      type: Barrier
+      channel: 11
+      step: 0.01
+      unit: V
+    B1:
+      label: Dot 1-2 Barrier Gate
+      type: Barrier
+      channel: 12
+      step: 0.01
+      unit: V
+    B2:
+      label: Dot 2-3 Barrier Gate
+      type: Barrier
+      channel: 13
+      step: 0.01
+      unit: V
+    B3:
+      label: Right Barrier Gate
+      type: Barrier
+      channel: 14
+      step: 0.01
+      unit: V
+    B20:
+      label: Left Sensor Barrier Gate
+      type: Barrier
+      channel: 15
+      step: 0.01
+      unit: V
+    B21:
+      label: Right Sensor Barrier Gate
+      type: Barrier
+      channel: 16
+      step: 0.01
+      unit: V
+    P0:
+      label: Left Dot Plunger
+      type: Plunger
+      channel: 17
+      step: 0.01
+      unit: V
+    P1:
+      label: Middle Dot Plunger
+      type: Plunger
+      channel: 18
+      step: 0.01
+      unit: V
+    P2:
+      label: Right Dot Plunger
+      type: Plunger
+      channel: 19
+      step: 0.01
+      unit: V
+    P20:
+      label: Sensor Plunger
+      type: Plunger
+      channel: 20
+      step: 0.01
+      unit: V
+setup:
+  voltage_sources:
+    voltage_source_1: SIM928
+    voltage_source_2: keithley2000
+  multimeter: agilent
+  preamp_bias: 0.0
+  preamp_sensitivity: 1.0e-8
+  voltage_divider: 1.0e-3
+  voltage_resolution: 1.0e-3
+
+

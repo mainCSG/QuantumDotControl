@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 
 import scipy as sp
-from scipy.ndimage import convolve
+#from scipy.ndimage import convolve
 
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
@@ -155,7 +155,7 @@ class DataAcquisition:
     def time_trace(self):
         pass
 
-class DataAnalysis:
+class DataAnalysis: 
     
     def __init__(self, tuner_config) -> None:
         
@@ -419,7 +419,8 @@ class DataAnalysis:
             return np.sign(G) * np.log((np.abs(G)/G0) + 1)
         def F(U, G, G0):
             # G = adjusted(G,G0)
-            return (G - convolve(G,U)) / np.sqrt((convolve(G,U))**2 + G0**2)
+            #return (G - convolve(G,U)) / np.sqrt((convolve(G,U))**2 + G0**2)
+            return None
 
         N=2
         U_kernal = np.array([[U(x, y) for y in range(-(N-1)//2,(N-1)//2 + 1)] for x in range(-(N-1)//2,(N-1)//2 + 1)])
@@ -1672,7 +1673,7 @@ class QuantumDotSEP(DataAnalysis, DataAcquisition):
 
         return df
 
-   # def _load_config_files(self):
+    def _load_config_files(self):
         
         # Read the tuner config information
 
@@ -2013,7 +2014,7 @@ class QuantumDotSEP(DataAnalysis, DataAcquisition):
         plt.savefig(fname=plot_name, dpi=plot_dpi, format=plot_format)
 class QuantumDotFET(DataAnalysis, DataAcquisition):
   """Dedicated class to tune simple FET devices.
-  """
+    """
 
     def __init__(self, 
                  config: str, 

@@ -1,0 +1,16 @@
+global_turn_on:
+  abs_min_current: 0.1e-9 # A
+  fit_function: logarithmic
+
+pinch_off:
+  abs_min_current: 0.025e-9 # A
+  fit_function: sigmoid # come from the function fit class in qdtuner.py
+
+barrier_barrier:
+  segmentation_model_name: dot_num
+  segmentation_model_path: /Users/andrijapaurevic/Documents/uWaterloo/research/mainCSG/QuantumDotControl/autotuning/models/dot_num/model_dot_num_final.pth
+  segmentation_model_processor: cpu
+  segmentation_model_config_path: /Users/andrijapaurevic/Documents/uWaterloo/research/mainCSG/QuantumDotControl/autotuning/coarse_tuning/src/config.yaml
+  segmentation_class: CD
+  segmentation_confidence_threshold: 0.8
+  segmentation_polygon_threshold: 3

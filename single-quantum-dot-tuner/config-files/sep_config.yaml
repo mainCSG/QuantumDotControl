@@ -62,9 +62,8 @@ device:
       unit: V 
 
 setup:
-  voltage_sources:
-    voltage_source_1: ivvi
-    voltage_source_2: SIM928
+  voltage_source: sim900
+  voltage_source2: srs830
   multimeter: agilent
   preamp_bias: 0.0
   preamp_sensitivity: 1.0e-7

@@ -115,6 +115,10 @@ class LinSweep_SIM928(AbstractSweep[np.float64]):
     @property
     def get_after_set(self) -> bool:
         return self._get_after_set
+    
+    @property
+    def setpoints(self) -> npt.NDArray[np.float64]:
+        return self.get_setpoints()
 
 class InstrumentControl:
         
@@ -482,8 +486,7 @@ class InstrumentControl:
 
             # Now, we get all of the starting voltage values for each gate
 
-            if 
-
+            
 
 
         return None
@@ -926,9 +929,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         """
 
         DataAnalysis.__init__(self,
-                              config = config, 
-                              tuner_config = tuner_config,
-                              station_config = station_config,
+                              tuner_config = tuner_config
                               )
         
         DataAcquisition.__init__(self)
@@ -1020,39 +1021,116 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         self.logger.attempt("connecting to station")
 
         # We use the Station class from qcodes, which represents the physical setup of our experiment
-
+        
         self.station = qc.Station(config_file=self.station_config_file)
-        self.station.load_instrument(self.voltage_source_name)
+
+        self.voltage_sources = {}
+
+        for voltage_source in self.voltage_source_names:
+            instrument = self.station.load_instrument(voltage_source)
+            self.voltage_sources[voltage_source] = instrument
+
         self.station.load_instrument(self.multimeter_name)
-        self.voltage_source = getattr(self.station, self.voltage_source_name)
         self.drain_mm_device = getattr(self.station, self.multimeter_name)
         
         self.drain_volt = getattr(self.station, self.multimeter_name).volt
         
         self.logger.complete("\n")
 
-        channel_prefix = ""
-        for parameter, details in self.voltage_source.parameters.items():
-            if details.unit == 'V':
-                pattern = r'(.*).*\d+.*'
-                matches = re.findall(pattern,parameter)
-                extractions = [match.strip() for match in matches]
-                channel_prefix = extractions[0]
-        if channel_prefix == "":
-            self.logger.error('unable to find prefix for channels')  
-            
+        # Now, we associate the gates to the physical DC connections
+
         self.logger.info("changing parameters to match names in config.yaml file")
-        self.voltage_source.timeout(5 * 60)
+
+        
+        # Setting up this variable for later
+        self.voltage_source_names_check = {}
+        for voltage_source_name in self.voltage_source_names:
+            self.voltage_source_names_check[voltage_source_name] = {}
+
         for gate, details in self.device_gates.items():
-            self.voltage_source.add_parameter(
+            vs_name = details['voltage_source']
+            vs = self.voltage_sources[vs_name]
+            channel_num = str(details['channel'])
+
+            voltage_param_candidates = {
+                name: param for name, param in vs.parameters.items()
+                if getattr(param, 'unit', None) == 'V' and getattr(param, 'settable', False)
+            }
+
+            matching_params = {
+                name: param for name, param in voltage_param_candidates.items()
+                if name.endswith(channel_num)
+            }
+
+            if vs_name.lower().startswith('keithley2401'):
+                param_name = 'volt'
+                matching_params = voltage_param_candidates
+
+            if not matching_params:
+                self.logger.error(
+                    f"No voltage output parameter matching channel '{channel_num}' found in {vs_name}."
+                )
+
+            if len(matching_params) > 1:
+                self.logger.warning(
+                    f"Multiple matching parameters found for channel '{channel_num}' found in {vs_name}, using the first one."
+                )
+
+            if vs_name.lower().startswith('sim900'):
+                param_name = next(iter(matching_params.keys()))
+
+            vs.add_parameter(
                 name=gate,
                 parameter_class=qc.parameters.DelegateParameter,
-                source=getattr(self.voltage_source, channel_prefix+str(details['channel'])),
+                source=getattr(vs, param_name),
                 label=details['label'],
                 unit = details['unit'],
                 step=details['step'],
             )
-            self.logger.info(f"changed {channel_prefix+str(details['channel'])} to {gate}")
+
+            self.logger.info(f"changed {param_name} to {gate}")
+
+            self.voltage_source_names_check[vs_name][gate] = param_name
+
+        """ channel_prefix = ""
+        for parameter, details in vs.parameters.items():
+            if details.unit == 'V':
+                pattern = r'(.*).*\d+.*'
+                matches = re.findall(pattern,parameter)
+                extractions = [match.strip() for match in matches]
+                if extractions:
+                    channel_prefix = extractions[0]
+                    break
+            
+            param_name = channel_prefix + str(details['channel'])    
+
+            print(param_name)
+
+            vs.add_parameter(
+                name=gate,
+                parameter_class=qc.parameters.DelegateParameter,
+                source=getattr(vs, param_name),
+                label=details['label'],
+                unit = details['unit'],
+                step=details['step'],
+            )
+            
+            if channel_prefix == "":
+                self.logger.error('unable to find prefix for channels')
+            else:
+                self.logger.info(f"changed {param_name} to {gate}") """
+            
+        """ self.voltage_source_1.timeout(5 * 60)
+        for gate, details in self.device_gates.items():
+            self.voltage_source_1.add_parameter(
+                name=gate,
+                parameter_class=qc.parameters.DelegateParameter,
+                source=getattr(self.voltage_source_1, channel_prefix+str(details['channel'])),
+                label=details['label'],
+                unit = details['unit'],
+                step=details['step'],
+            )
+             """
         # self.voltage_source.timeout(10)
 
         # Creates the qcodes database and sets-up the experiment
@@ -1093,7 +1171,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             self.results[gate]['bias_voltage'] = None
 
         # Ground device
-        self.ground_device()
+        # self.ground_device()
 
     def ground_device(self):
         
@@ -1128,16 +1206,17 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         """  
         
         self.logger.attempt(f"setting ohmic ({ohmic}) to {V} V")
-        self.logger.info(f'device receives {round(V*self.voltage_divider,3)} V based on divider')
+        self.logger.info(f'device receives {round(V * self.voltage_divider, 5)} V based on divider')
         self._smoothly_set_gates_to_voltage(ohmic, V)
-        self.ohmic_bias = V*self.voltage_divider
+        self.ohmic_bias = V * self.voltage_divider
         self.logger.complete("\n")
 
     def turn_on(self, 
                 minV: float = 0.0, 
                 maxV: float = None, 
                 dV: float = None, 
-                delay: float = 0.01) -> pd.DataFrame:
+                delay: float = 0.01,
+                voltage_configuration: dict = {}) -> pd.DataFrame:
         
         """
         Attempts to 'turn-on' the FET by sweeping barriers and leads
@@ -1160,6 +1239,11 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         >>> QD_FET_Tuner.turn_on_device(minV = 0., maxV = None, dV = 0.05)
         """
 
+        # Bring device to voltage configuration
+        if voltage_configuration is not None:
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
+            self._smoothly_set_voltage_configuration(voltage_configuration)
+
         # Default dV and maxV based on setup_config and config
         if dV is None:
             dV = self.voltage_resolution
@@ -1174,19 +1258,33 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         # Set up gate sweeps
         
         num_steps = self._calculate_num_of_steps(minV, maxV, dV)
-        gates_involved = self.barriers + self.leads
+        gates_involved = self.barriers + self.leads + self.accumulation + self.plungers
+
+        print(gates_involved)
 
         self.logger.info(f"setting {gates_involved} to {minV} V")
+        
         self._smoothly_set_gates_to_voltage(gates_involved, minV)
 
         sweep_list = []
-        for gate_name in gates_involved:
-            sweep_list.append(
-                LinSweep_SIM928(getattr(self.voltage_source, f'{gate_name}'), minV, maxV, num_steps, delay, get_after_set=False)
-            )
+
+        for voltage_source in self.voltage_sources.items():
+
+            for gate_name in gates_involved:
+               
+               if gate_name in self.voltage_source_names_check[voltage_source[0]]:
+                    
+                    print(self.voltage_source_names_check[voltage_source[0]][gate_name])
+
+                    param = voltage_source[1][gate_name]
+
+                    sweep_list.append(
+                        LinSweep_SIM928(param, minV, maxV, num_steps, delay, get_after_set=False)
+                    )
 
         # Execute the measurement
         self.logger.attempt(f"sweeping {gates_involved} together from {minV} V to {maxV} V")
+        
         result = qc.dataset.dond(
             qc.dataset.TogetherSweep(
                 *sweep_list
@@ -1197,6 +1295,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             exp=self.initialization_exp,
             show_progress=True
         )
+
         self.logger.complete('\n')
 
         # Get last dataset recorded, convert to units of current (A)
@@ -1207,18 +1306,19 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
         # Plot current v.s. gates involved (since they are swept together)
-        axes = df_current.plot.scatter(y=f'{self.multimeter_name}_current', x=f'{self.voltage_source_name}_{gates_involved[0]}', marker= 'o',s=10)
+        
+        axes = df_current.plot.scatter(y=f'{self.multimeter_name}_current', x=f'{df_current.columns[0]}', marker= 'o',s=10)
         axes.set_title('Global Device Turn-On')
-        df_current.plot.line(y=f'{self.multimeter_name}_current', x=f'{self.voltage_source_name}_{gates_involved[0]}', ax=axes, linewidth=1)
+        df_current.plot.line(y=f'{self.multimeter_name}_current', x=f'{df_current.columns[0]}', ax=axes, linewidth=1)
         axes.axhline(y=np.sign(df_current[f'{self.multimeter_name}_current'].iloc[-1])*self.global_turn_on_info['abs_min_current'], alpha=0.5, c='g', linestyle=':', label=r'$I_{\min}$')
-        axes.axhline(y=np.sign(df_current[f'{self.multimeter_name}_current'].iloc[-1])*self.abs_max_current, alpha=0.5, c='g', linestyle='--', label=r'$I_{\max}$')
+        axes.axhline(y=np.sign(df_current[f'{self.multimeter_name}_current'].iloc[-1])*float(self.abs_max_current), alpha=0.5, c='g', linestyle='--', label=r'$I_{\max}$')
         axes.set_ylabel(r'$I$ (A)')
         axes.set_xlabel(r'$V_{GATES}$ (V)')
         axes.legend(loc='best')
 
         # Keep any data above the minimum current threshold
         mask = df_current[f'{self.multimeter_name}_current'].abs() > self.global_turn_on_info['abs_min_current'] 
-        X = df_current[f'{self.voltage_source_name}_{gates_involved[0]}']
+        X = df_current[f'{df_current.columns[0]}']
         Y = df_current[f'{self.multimeter_name}_current']
         X_masked = X[mask]
         Y_masked = Y[mask]
@@ -1240,7 +1340,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                     V_turn_on =  np.round(np.log(-y0/a)/b + x0, 3)
                 elif self.global_turn_on_info['fit_function'] == 'logarithmic':
                     V_turn_on = np.round(np.exp(-y0/a)/b + x0, 3)
-                V_sat = df_current[f'{self.voltage_source_name}_{gates_involved[0]}'].iloc[-2] 
+                V_sat = df_current[f'{df_current.columns[0]}'].iloc[-2] 
 
                 # Plot / print results to user
                 axes.plot(X_masked, getattr(self, self.global_turn_on_info['fit_function'])(X_masked, a, b, x0, y0), 'r-')
@@ -1277,7 +1377,6 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         self._save_figure(plot_info='device_turn_on')
 
-
         return df
 
     def pinch_off(self, 
@@ -1287,6 +1386,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                     dV: float = None,
                     delay: float = 0.01,
                     voltage_configuration: dict = {}) -> Dict[str, pd.DataFrame]:
+        
         """Attempts to pinch off gates from maxV to minV in steps of dV. If gates
         is not provided, defaults to barriers and leads in the FET channel. If minV is not 
         provided, defaults to saturation voltage minus allowed gate differential. If maxV
@@ -1320,7 +1420,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             dV = self.voltage_resolution
 
         if gates is None:
-            gates = self.barriers + self.leads
+            gates = self.barriers + self.accumulation + self.plungers + self.flanking
         if type(gates) is str:
             gates = [gates]
 
@@ -1336,6 +1436,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             elif self.voltage_sign == -1:
                 min_allowed = None
                 max_allowed = 0
+            
             minV = np.clip(
                     a=round(self.results['turn_on']['saturation'] - self.voltage_sign * self.abs_max_gate_differential, 3),
                     a_min=min_allowed,
@@ -1345,22 +1446,38 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, self.logger.error("Double check the sign of the gate voltage (minV) for your given device.")
 
         self.logger.info(f"setting {gates} to {maxV} V")
+        
         self._smoothly_set_gates_to_voltage(gates, maxV)
 
         num_steps = self._calculate_num_of_steps(minV, maxV, dV)
+        
         sweep_list = []
-        for gate_name in gates:
-            sweep_list.append(
-                LinSweep_SIM928(getattr(self.voltage_source, f'{gate_name}'), maxV, minV, num_steps, delay, get_after_set=False)
-            )
+        
+        for voltage_source in self.voltage_sources.items():
+
+            for gate_name in gates:
+                
+                if gate_name in self.voltage_source_names_check[voltage_source[0]]:
+                        
+                        print(self.voltage_source_names_check[voltage_source[0]][gate_name])
+
+                        param = voltage_source[1][gate_name]
+
+                        print(param)
+
+                        sweep_list.append(
+                            LinSweep_SIM928(param, start = maxV, stop = minV, num_points = num_steps, delay = delay, get_after_set=False)
+                        )
 
         def adjusted_break_condition():
             return np.abs(self._get_drain_current()) < self.pinch_off_info['abs_min_current']
 
         results_dict = {}
+        
         for sweep in sweep_list:
 
             self.logger.attempt(f"pinching off {str(sweep._param).split('_')[-1]} from {maxV} V to {minV} V")
+            
             result = qc.dataset.dond(
                 sweep,
                 self.drain_volt,
@@ -1369,9 +1486,11 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                 exp=self.initialization_exp,
                 show_progress=True
             )   
+
             self.logger.complete("\n")
 
             self.logger.info(f"returning {str(sweep._param).split('_')[-1]} to {maxV} V")
+            
             self._smoothly_set_gates_to_voltage([str(sweep._param).split('_')[-1]], maxV)
 
             # Get last dataset recorded, convert to current units
@@ -1461,14 +1580,22 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                             np.abs(x0 + np.sqrt(8) / b)
                         ),3))
                         V_pinchoff_width = float(abs(round(2 * np.sqrt(8) / b,2)))
-                        self.results[str(sweep._param).split('_')[-1]]['pinch_off']['voltage'] = V_pinchoff
-                        self.results[str(sweep._param).split('_')[-1]]['pinch_off']['width'] = V_pinchoff_width #V
+
+                        gate_name = str(sweep._param).split('_')[-1]
+
+                        # Ensure nested dicts exist
+                        self.results.setdefault(gate_name, {})
+                        self.results[gate_name].setdefault('pinch_off', {})
+
+                        # Now safely assign
+                        self.results[gate_name]['pinch_off']['voltage'] = V_pinchoff
+                        self.results[gate_name]['pinch_off']['width'] = V_pinchoff_width
 
                     plt.plot(X_masked, fit_function(X_masked, a, b, x0, y0), 'r-')
                     axes.axvline(x=V_pinchoff, alpha=0.5, linestyle=':', c='b', label=r'$V_{\min}$')
                     self.logger.info(f"{str(sweep._param).split('_')[-1]}, pinch off at {V_pinchoff}")
                     if str(sweep._param).split('_')[-1] not in self.leads:
-                        axes.axvline(x=V_pinchoff + self.voltage_sign * V_pinchoff_width, alpha=0.5, linestyle='--', c='b', label=r'$V_{\max}$')
+                        axes.axvline(x=x0, alpha=0.5, linestyle='--', c='b', label=r'$V_{\mid}$')
                         self.logger.info(f"{str(sweep._param).split('_')[-1]}, pinch off width of {V_pinchoff_width}")
                     axes.legend(loc='best')                
                 
@@ -1502,6 +1629,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
                         delay: float = 0.01, 
                         voltage_configuration: dict = None,
                         extract_bias_point: bool = False) -> tuple[pd.DataFrame, plt.Axes]:
+        
         """Performs a 2D sweep of the barriers in the FET channel. If user doesn't
         provide bounds, it will perform a 2D sweep based on the voltage pinch off window
         determined earlier.
@@ -1545,11 +1673,6 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         else:
             self.logger.error("invalid dV")
             return
-
-        # Double check barrier validity
-        if B1 is None or B2 is None and len(self.barriers) == 2:
-            B1, B2 = self.barriers
-            self.logger.warning(f"no barriers provided, assuming {B1} and {B2} from device configuration")
         
         # Double check device bounds
         minV_B1, maxV_B1 = B1_bounds
@@ -1583,6 +1706,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         self.logger.info(f"setting {B1} to {maxV_B1} V")
         self.logger.info(f"setting {B2} to {maxV_B2} V")
+        
         self._smoothly_set_voltage_configuration({B1: maxV_B1, B2: maxV_B2})
 
         def smooth_reset():
@@ -1592,16 +1716,34 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         num_steps_B1 = self._calculate_num_of_steps(minV_B1, maxV_B1, dV_B1)
         num_steps_B2 = self._calculate_num_of_steps(minV_B2, maxV_B2, dV_B2)
+        
         self.logger.attempt("barrier barrier scan")
+        
         self.logger.info(f"stepping {B1} from {maxV_B1} V to {minV_B1} V")
         self.logger.info(f"sweeping {B2} from {maxV_B2} V to {minV_B2} V")
+        
+        gates = self.barriers
+        param_check = []
+
+        for voltage_source in self.voltage_sources.items():
+
+            for gate_name in gates:
+                
+                if gate_name in self.voltage_source_names_check[voltage_source[0]]:
+                        
+                        print(self.voltage_source_names_check[voltage_source[0]][gate_name])
+
+                        param = voltage_source[1][gate_name]
+
+                        param_check.append(param)
+
         result = qc.dataset.do2d(
-            getattr(self.voltage_source, f'{B1}'), # outer loop
+            param_check[0], # outer loop
             maxV_B1,
             minV_B1,
             num_steps_B1,
             delay,
-            getattr(self.voltage_source, f'{B2}'), # inner loop
+            param_check[1], # inner loop
             maxV_B2,
             minV_B2,
             num_steps_B2,
@@ -1626,8 +1768,10 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         df_current = df_current.rename(columns={f'{self.multimeter_name}_volt': f'{self.multimeter_name}_current'})
         df_current.iloc[:,-1] = df_current.iloc[:,-1].subtract(self.preamp_bias).mul(self.preamp_sensitivity) # sensitivity
 
+        print(df_current)
+
         # Plot 2D colormap
-        df_pivoted = df_current.pivot_table(values=f'{self.multimeter_name}_current', index=[f'{self.voltage_source_name}_{B1}'], columns=[f'{self.voltage_source_name}_{B2}'])
+        df_pivoted = df_current.pivot_table(values=f'{self.multimeter_name}_current', index=[f'{df_current.columns[0]}'], columns=[f'{df_current.columns[1]}'])
         B1_data, B2_data = df_pivoted.columns, df_pivoted.index
         raw_current_data = df_pivoted.to_numpy()[:,:-1] / 1.0e-9 # convert to nA
         B1_grad = np.gradient(raw_current_data, axis=1)
@@ -1683,8 +1827,6 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
             for barrier_gate_name, voltage in bias_point.items():
                 self.results[barrier_gate_name]['bias_voltage'] = voltage
-
-
 
         return (df,ax1)
 
@@ -2035,6 +2177,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         self.plungers = []
         self.accumulation = []
         self.screening = []
+        self.flanking = []
         
         for gate, details in self.device_gates.items():
             
@@ -2056,15 +2199,18 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             if details['type'] == 'screening':
                 self.screening.append(gate)
         
+            if details['type'] == 'flanking':
+                self.screening.append(gate)
+
         self.all_gates = list(self.device_gates.keys())
 
 
 
-        self.abs_max_current = self.config['device']['constraints']['abs_max_current']
-        self.abs_max_gate_voltage = self.config['device']['constraints']['abs_max_gate_voltage']
-        self.abs_max_gate_differential = self.config['device']['constraints']['abs_max_gate_differential']
+        self.abs_max_current = float(self.config['device']['constraints']['abs_max_current'])
+        self.abs_max_gate_voltage = float(self.config['device']['constraints']['abs_max_gate_voltage'])
+        self.abs_max_gate_differential = float(self.config['device']['constraints']['abs_max_gate_differential'])
 
-        self.voltage_source_name = self.config['setup']['voltage_source']
+        self.voltage_source_names = self.config['setup']['voltage_sources'].values()
         self.multimeter_name = self.config['setup']['multimeter']
         self.voltage_divider = self.config['setup']['voltage_divider']
         self.preamp_bias = self.config['setup']['preamp_bias']
@@ -2084,7 +2230,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         # }
 
         # MAX CURRENT
-        
+
         isExceedingMaxCurrent = np.abs(self._get_drain_current()) > self.abs_max_current
         # time.sleep(0.1)
 
@@ -2180,7 +2326,8 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         for gate_name in gates_to_check:
             if gate_name in voltage_configuration.keys():
-                assert np.sign(voltage_configuration[gate_name]) == np.sign(self.voltage_sign) or np.sign(voltage_configuration[gate_name]) == 0, f"Check voltage sign on {gate_name}"
+                if gate_name not in self.ohmics:
+                    assert np.sign(voltage_configuration[gate_name]) == np.sign(self.voltage_sign) or np.sign(voltage_configuration[gate_name]) == 0, f"Check voltage sign on {gate_name}"
 
         intermediate = []
         
@@ -2188,21 +2335,22 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             maxsteps = 0
             deltav = {}
             for gate_name, voltage in voltage_configuration.items():
-                deltav[gate_name] = voltage-getattr(self.voltage_source, gate_name).get()
-                gate_step_param = getattr(self.voltage_source, f'{gate_name}_step', None)
-                if gate_step_param is None:
-                    # work around for IVVI
-                    stepsize = getattr(self.voltage_source, f'{gate_name}', None).step
-                else:
-                    stepsize = gate_step_param()
-                steps = abs(int(np.ceil(deltav[gate_name]/stepsize)))
-                if steps > maxsteps:
-                    maxsteps = steps
-            for s in range(maxsteps):
-                intermediate.append({})
-                for gate_name, voltage in voltage_configuration.items():
-                    intermediate[-1][gate_name] = voltage - \
-                                          deltav[gate_name]*(maxsteps-s-1)/maxsteps
+                for voltage_source in self.voltage_source_names:
+                    deltav[gate_name] = voltage-getattr(voltage_source, gate_name).get()
+                    gate_step_param = getattr(voltage_source, f'{gate_name}_step', None)
+                    if gate_step_param is None:
+                        # work around for IVVI
+                        stepsize = getattr(voltage_source, f'{gate_name}', None).step
+                    else:
+                        stepsize = gate_step_param()
+                    steps = abs(int(np.ceil(deltav[gate_name]/stepsize)))
+                    if steps > maxsteps:
+                        maxsteps = steps
+                for s in range(maxsteps):
+                    intermediate.append({})
+                    for gate_name, voltage in voltage_configuration.items():
+                        intermediate[-1][gate_name] = voltage - \
+                                            deltav[gate_name]*(maxsteps-s-1)/maxsteps
         else:
             
             # First, we set up the values of the sweeps and save them
@@ -2210,61 +2358,91 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             done = []
             prevvals = {}
             
-            for gate_name, voltage in voltage_configuration.items():
-                
-                prevvals[gate_name] = getattr(self.voltage_source, gate_name).get()
-                
+            for voltage_source in self.voltage_sources.items():
+
+                for gate_name, voltage in voltage_configuration.items():
+
+                    #print(self.voltage_source_names_check[voltage_source[0]])
+                    #print(gate_name, voltage)
+
+                    if gate_name in self.voltage_source_names_check[voltage_source[0]]: 
+
+                        prevvals[gate_name] = float(getattr(voltage_source[1], gate_name).get())
+                        
+                        #print(prevvals[gate_name])
+
             while len(done) != len(voltage_configuration):
                 
                 intermediate.append({})
                 
-                for gate_name, voltage in voltage_configuration.items():
-                    
-                    if gate_name in done:
-                        continue
+                for voltage_source in self.voltage_sources.items():
+
+                    for gate_name, voltage in voltage_configuration.items():
+
+                        if gate_name in self.voltage_source_names_check[voltage_source[0]]:
+
+                            if gate_name in done:
+                                continue
                    
-                    gate_step_param = getattr(self.voltage_source, f'{gate_name}_step', None)
+                            #print(voltage_source[0])
+                            #print(self.voltage_source_names_check[voltage_source[0]])
+                            #print(self.voltage_source_names_check[voltage_source[0]][gate_name])
+
+                            gate_step_param = getattr(voltage_source[1], 
+                                                      f'{self.voltage_source_names_check[voltage_source[0]][gate_name]}_step', 
+                                                      None)
                     
-                    if gate_step_param is None:
+                            #print(gate_step_param)
                         
-                        # work around for IVVI
-                        stepsize = getattr(self.voltage_source, f'{gate_name}', None).step
-                    
-                    else:
+
+                            if gate_step_param is None:
                         
-                        stepsize = gate_step_param()
+                                # work around for IVVI
+                                stepsize = getattr(voltage_source[1], f'{gate_name}', None).step
                     
-                    deltav = voltage-prevvals[gate_name]
-                    
-                    if abs(deltav) <= stepsize:
+                            else:
                         
-                        intermediate[-1][gate_name] = voltage
-                        done.append(gate_name)
-                   
-                    elif deltav > 0:
-                        
-                        intermediate[-1][gate_name] = prevvals[gate_name] + stepsize
+                                stepsize = gate_step_param()
                     
-                    else:
-                        
-                        intermediate[-1][gate_name] = prevvals[gate_name] - stepsize
+                            #print("Device Gates:", self.ohmics + self.all_gates)
+                            #print("Available Prevvals Keys:", prevvals.keys())
+
+                            deltav = voltage - prevvals[gate_name]
+
+                            if abs(deltav) <= stepsize:
+                            
+                                intermediate[-1][gate_name] = voltage
+                                done.append(gate_name)
                     
-                    prevvals[gate_name] = intermediate[-1][gate_name]
+                            elif deltav > 0:
+                            
+                                intermediate[-1][gate_name] = prevvals[gate_name] + stepsize
+                        
+                            else:
+                            
+                                intermediate[-1][gate_name] = prevvals[gate_name] - stepsize
+                        
+                            prevvals[gate_name] = intermediate[-1][gate_name]
 
         # Now, we loop over intermediate to set the voltages
 
         for voltages in intermediate:
             
-            for gate_name in voltages:
+            for voltage_source in self.voltage_sources.items():
+
+                for gate_name in voltages:
                 
-                getattr(self.voltage_source, gate_name).set(voltages[gate_name])
+                    if gate_name in self.voltage_source_names_check[voltage_source[0]]:
+
+                        getattr(voltage_source[1], gate_name).set(voltages[gate_name])
             
-            delay_param = getattr(self.voltage_source, 'smooth_timestep', None)
-            
-            if delay_param is None:
-                time.sleep(getattr(self.voltage_source, 'dac_set_sleep', None)())
-            else:
-                time.sleep(delay_param())
+                    delay_param = getattr(voltage_source[1], 'smooth_timestep', None)
+
+                    if delay_param is None:
+                        pass
+                        # time.sleep(getattr(voltage_source[1], 'dac_set_sleep', None)())
+                    else:
+                        time.sleep(delay_param())
 
     def _query_yes_no(self, question, default="no"):
         """Ask a yes/no question via raw_input() and return their answer.

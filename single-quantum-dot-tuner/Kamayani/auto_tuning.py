@@ -894,6 +894,46 @@ print(f"Absolute maximum peak at {peak_freq:.3f} 1/V with amplitude {peak_amp:.3
 # plt.savefig(path_to_save_2)
 # plt.close()
 
+# Outer loop: QPC gate voltages
+for v2_target, v3_target in qpc_targets_RF:
+
+    # Step: Set QPC gate voltages
+    simultaneous_set_voltage_sim(sim, 'ch2', v2_target, 'ch3', v3_target, step=0.01, delay=0.5)
+    print(f'Set QPC gates to V2 = {v2_target} V, V3 = {v3_target} V')
+
+    # Get corresponding Vent_avg from results
+    row_results = df_results[np.isclose(df_results['V2_target (V)'], v2_target, atol=1e-6)]
+    if row_results.empty:
+        print(f'No matching Vent_avg found for V2_target = {v2_target}')
+        continue
+
+    vent_avg_RF = row_results.iloc[0]['Vent_avg (V)']
+    vexit_avg_RF = row_results.iloc[0]['Vexit_avg (V)']
+
+    # Inner loop: user power values
+    for power in user_power_dBm:
+
+        rf.set_power(power)
+        print(f'The power of the rf source is set to {power}.')
+
+        row_vp = power_to_voltage[power_to_voltage['Power (dBm)'] == power]
+        if row_vp.empty:
+            print(f'Power {power} dBm not found in power_to_voltage dataset.')
+            continue
+
+        vp = row_vp['Voltage (Vp)'].values[0]
+
+        # Compute new vent ----this need to be changed
+        new_vent = vent_avg_RF - 0.100 - vp
+
+        # Set Vent on sim900 channel 4
+        set_voltage_sim(sim, slot='ch4', target=new_vent, step=0.001, delay=0.5)
+
+        print(f'For V2_target = {v2_target:.3f} V and Power = {power} dBm:')
+        print(f'  Vp = {vp:.3f} V')
+        print(f'  Original Vent_avg = {vent_avg_RF:.4f} V')
+        print(f'  Adjusted Vent = {new_vent:.4f} V (set on ch4)')
+
 
 
 

@@ -2016,7 +2016,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
   
     """Dedicated class to tune simple FET devices.
     """
-
+    
     def __init__(self, 
                  config: str, 
                  tuner_config: str,

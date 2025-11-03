@@ -10,9 +10,13 @@ instruments:
             dac_step: 1
             dac_delay: 0.1
 
+    keithley2401:
+        type: qcodes.instrument_drivers.Keithley.Keithley_2400.Keithley2400
+        address: GPIB0::25::INSTR
+
     keithley2000:
         type: qcodes.instrument_drivers.Keithley.Keithley_2000.Keithley2000
-        address: GPIB0::17::INSTR
+        address: GPIB0::25::INSTR
 
         parameters:
 

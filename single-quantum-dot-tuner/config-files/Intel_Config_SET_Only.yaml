@@ -1,0 +1,87 @@
+device:
+
+  characteristics:
+    name: 3D1S_3
+    charge_carrier: e
+    operation_mode: acc
+
+  constraints:
+    abs_max_current: 13e-9
+    abs_max_gate_differential: 2
+    abs_max_gate_voltage: 2.0
+
+  gates:
+    S2:
+      label: Right Sensor Ohmic
+      type: ohmic
+      channel: 3
+      voltage_source: sim900
+      step: 0.005
+      unit: V
+    SG1:
+      label: Horizontal Screening Gate
+      type: screening
+      channel: 1
+      voltage_source: keithley2401
+      step: 0.005
+      unit: V
+    CG0b:
+      label: Sensor Screening Gate
+      type: screening
+      channel: 2
+      voltage_source: sim900
+      step: 0.005
+      unit: V
+    AC2:
+      label: Right Sensor Accumulation Gate
+      type: accumulation
+      channel: 5
+      voltage_source: sim900
+      step: 0.005
+      unit: V
+    AC3:
+      label: Left Sensor Accumulation Gate
+      type: accumulation
+      channel: 6
+      voltage_source: sim900
+      step: 0.005
+      unit: V
+    F1:
+      label: Flanking Gates
+      type: flanking
+      channel: 4
+      voltage_source: sim900
+      step: 0.005
+      unit: V
+    B20:
+      label: Left Sensor Barrier Gate
+      type: barrier
+      channel: 7
+      voltage_source: sim900
+      step: 0.005
+      unit: V
+    B21:
+      label: Right Sensor Barrier Gate
+      type: barrier
+      channel: 8
+      voltage_source: sim900
+      step: 0.005
+      unit: V
+    P20:
+      label: Sensor Plunger
+      type: plunger
+      channel: 1
+      voltage_source: sim900
+      step: 0.005
+      unit: V
+setup:
+  voltage_sources:
+    voltage_source_1: sim900
+    voltage_source_2: keithley2401
+  multimeter: agilent
+  preamp_bias: 0.0
+  preamp_sensitivity: 1.0e-7
+  voltage_divider: 1.0e-2
+  voltage_resolution: 1.0e-3
+
+

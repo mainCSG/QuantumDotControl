@@ -30,7 +30,7 @@ limiting_voltage = 1.1
 
 qpc_gate_voltages_RF = [0.100]
 
-user_power_dBm = [1,2]
+user_power_dBm = [0, 1]
 ######## I need to work starting from here.``
 # Enter the step_size
 step_size = 0.01
@@ -1082,25 +1082,6 @@ else:
 
 qpc_targets_RF = [(v, v) for v in qpc_gate_voltages_RF]
 
-# def cascade_model(x, a, v, d):
-#     e = 1.602176634e-19
-#     f = rf.get_frequency()
-#     z = -a * (x - v)
-#     # clip to avoid overflow:
-#     z1 = np.clip(z, -50, +50)
-#     z2 = np.clip(z + d, -50, +50)
-
-#     t1 = np.exp(-np.exp(z1))
-#     t2 = np.exp(-np.exp(z2))
-#     return e * f * (t1 + t2) * 1e9
-
-def cascade_model(x, a, v0, d):
-    e = 1.602176634e-19
-    f = rf.get_frequency()
-    t1 = np.exp(-np.exp(-a*(x - v0)))
-    t2 = np.exp(-np.exp(-a*(x - v0) + d))
-    return e * f * (t1 + t2)
-
 for v2_target, v3_target in qpc_targets_RF:
 
 # Step 3: Setting up the voltage of both of the QPC gates (channel 2 and channel 3 in sim900)
@@ -1108,8 +1089,20 @@ for v2_target, v3_target in qpc_targets_RF:
 
     print('Step 3: Setting up the voltage of the QPC gates (channels 2 and 3 of sim900): completed.')
 
+def cascade_model(x, a, v, d):
+    e = 1.602176634e-19
+    f = rf.get_frequency()
+    z = -a * (x - v)
+    # clip to avoid overflow:
+    z1 = np.clip(z, -50, +50)
+    z2 = np.clip(z + d, -50, +50)
+
+    t1 = np.exp(-np.exp(z1))
+    t2 = np.exp(-np.exp(z2))
+    return e * f * (t1 + t2) * 1e9
+
 # thresholds and steps
-safety_current_max = 150e-12     # stops individual sweep
+threshold_current              = 150e-12    # stops individual sweep
 minimum_threshold_current_RF   = 0.5e-12    # decides whether to plot
 
 summary_results = []
@@ -1125,7 +1118,6 @@ for v2_target, v3_target in qpc_targets_RF:
     if row.empty:
         continue
 
-    vent_max_RF = V_ent_max
     vent_avg_RF  = row.iloc[0]['Vent_avg (V)']
     vexit_avg_RF = row.iloc[0]['Vexit_avg (V)']
 
@@ -1169,14 +1161,16 @@ for v2_target, v3_target in qpc_targets_RF:
             continue
         vp = vp_row['Voltage (Vp)'].values[0]
 
-        vent_min = 0.2
-        vent_max = vent_max_RF - vp
+        vent_min = 0
+        vent_max = V_ent_max - vp
 
         cascade_found_for_power = False
 
-        vent_step           = 0.001   # 1 mV Vent increments
+
+        vent_step           = 0.003   # 1 mV Vent increments
         vent_sweep_interval = 0.05    # trigger Vexit sweep every 50 mV
-        vexit_step          = 0.001   # 1 mV exit increments j
+        vexit_step          = 0.003   # 1 mV exit increments
+        next_sweep_threshold = vent_min + vent_sweep_interval
 
         # How many Vent steps are in one sweep‐interval?
         steps_per_sweep = int(round(vent_sweep_interval / vent_step))
@@ -1188,25 +1182,24 @@ for v2_target, v3_target in qpc_targets_RF:
 
         for idx, vent in enumerate(vent_values):
             # 1) ramp Vent
-
-            set_voltage_sim(sim, slot='ch4', target=vexit_avg_RF - 0.4,
-                                    step=vexit_step, delay=0.1)
-            
             set_voltage_sim(sim, slot='ch5', target=vent,
                             step=vent_step, delay=0.1)
 
             # 2) every Nth step (i.e. every 50 mV), do a Vexit sweep:
             if idx % steps_per_sweep == 0:
-                vexit_vals, currents = [], []
-                hit_safety = False
-                for vexit in np.arange(vexit_avg_RF - 0.4, vexit_avg_RF + vexit_step/2, vexit_step):
-                    set_voltage_sim(sim, slot='ch4', target=vexit, step=vexit_step, delay=0.1)
+                vexit_vals = []
+                currents   = []
+                for vexit in np.arange(0.0,
+                                    vexit_avg_RF + vexit_step/2,
+                                    vexit_step):
+                    set_voltage_sim(sim, slot='ch4', target=vexit,
+                                    step=vexit_step, delay=0.1)
                     I = abs(agilent.volt()) * agilent_sensitivity_RF
                     vexit_vals.append(vexit)
                     currents.append(I)
-                    if I >= safety_current_max:
-                        hit_safety = True
+                    if I >= threshold_current:
                         break
+
                 # save / analyze here…
                 # e.g. df = pd.DataFrame({ … })
                 #      df.to_csv(…)
@@ -1219,9 +1212,29 @@ for v2_target, v3_target in qpc_targets_RF:
                     'Current (A)': currents
                 })
 
+                
                 fname = f'vent_{vent:.3f}_exit_sweep_{timestamp}.csv'
                 df.to_csv(os.path.join(base_dir, fname), index=False)
                 print(f'→ Performed exit sweep at Vent={vent:.3f} V, saved to {fname}')
+
+                # schedule next trigger
+                next_sweep_threshold += vent_sweep_interval
+
+                # require at least 20 consecutive points above threshold_current
+                window_required = 20
+                n = len(currents)
+                
+                # only if you have enough points, check for a run of 20 above threshold
+                has_run = False
+                if n >= window_required:
+                    for i in range(n - window_required + 1):
+                        if all(c > threshold_current for c in currents[i : i + window_required]):
+                            has_run = True
+                            break
+                
+                if not has_run:
+                    print(f'Skipping Vent={vent:.3f} V: no {window_required}‐point run above {threshold_current:.2e} A')
+                    continue  # go back to the outer Vent loop
                     
                 e         = 1.602176634e-19
                 freq      = rf.get_frequency()
@@ -1237,9 +1250,10 @@ for v2_target, v3_target in qpc_targets_RF:
                     print(f'n={n}: {counts[n]} pts within ±{tolerance:e} A of {I_target:e} A')
                 
                 # require both plateaus to have >10 points
-                if not (counts[1] > 5 and counts[2] > 5):
+                if not (counts[1] > 10 and counts[2] > 10):
                     print(f'Plateau requirements not met (n=1 has {counts[1]}, n=2 has {counts[2]}); skipping Vent={vent:.3f} V')
                     continue   # back to for‐vexit loop
+
 
                 # else: no sweep, so nothing to skip or analyze at this vent
                                 
@@ -1267,7 +1281,7 @@ for v2_target, v3_target in qpc_targets_RF:
                     ydata,
                     p0=p0,
                     bounds=bounds,
-                    maxfev=10000
+                    maxfev=10_000
                 )
                 
                 a_fit, v_fit, d_fit = popt
@@ -1283,11 +1297,7 @@ for v2_target, v3_target in qpc_targets_RF:
                 ax.set_ylabel('Current (A)')
                 ax.set_title(f'Cascade fit: Vent={vent:.3f} V, P={power} dBm')
                 ax.legend()
-
-                filename_fit = f'{power:.3f}_cascade_fitting_{timestamp}_scatter.png'
-                plot_fit_path = os.path.join(base_dir, filename_fit)
-                plt.savefig(plot_fit_path)
-                plt.close()
+                plt.show()
 
                 Vent_max = V_ent_max
                 Vexit_const = vexit_avg_RF
@@ -1298,81 +1308,84 @@ for v2_target, v3_target in qpc_targets_RF:
                 extra_count = 0
                 vent = Vent_max
 
-                # Fix exit first (ch4 = Vexit)
-                set_voltage_sim(sim, 'ch4', Vexit_const, step=vexit_step, delay=0.1)
-
                 while True:
-                    # Set Vent (ch5 = Vent)
-                    set_voltage_sim(sim, 'ch5', vent, step=vent_step, delay=0.1)
+                    # set Vent & constant Vexit
+                    set_voltage_sim(sim, 'ch4', vent, step=vent_step, delay=0.1)
+                    set_voltage_sim(sim, 'ch5', Vexit_const, step=vexit_step, delay=0.1)
 
                     voltage = abs(agilent.volt())
                     I = voltage * agilent_sensitivity_RF
                     horizontal_data.append({'Vent (V)': vent, 'I (A)': I})
 
-                    # Decrease Vent for next step, clamp at 0 V
-                    next_vent = max(vent - vent_step, 0.0)
-                    if next_vent == vent:  # reached floor
-                        break
-                    vent = next_vent
+                    if I < threshold_current:
+                        extra_count += 1
+                        if extra_count > n_extra:
+                            break
 
-                # ----------------------
-                # Vertical sweep: fix Vent = Vent_max, sweep Vexit DOWN from Vexit_const
-                # ----------------------
+                    vent += vent_step
+
+                # Vertical sweep: Vent fixed, sweep Vexit until I < threshold, +5 extra
                 vertical_data = []
                 extra_count = 0
                 vexit = Vexit_const
 
-                # Fix Vent first (ch5 = Vent)
-                set_voltage_sim(sim, 'ch5', Vent_max, step=vent_step, delay=0.1)
-
                 while True:
-                    # Set Vexit (ch4 = Vexit)
-                    set_voltage_sim(sim, 'ch4', vexit, step=vexit_step, delay=0.1)
+                    # set constant Vent & Vexit
+                    set_voltage_sim(sim, 'ch4', Vent_max, step=vent_step, delay=0.1)
+                    set_voltage_sim(sim, 'ch5', vexit,   step=vexit_step, delay=0.1)
 
                     voltage = abs(agilent.volt())
                     I = voltage * agilent_sensitivity_RF
                     vertical_data.append({'Vexit (V)': vexit, 'I (A)': I})
 
-                    next_vexit = max(vexit - vexit_step, 0.0)
-                    if next_vexit == vexit:  # reached floor
-                        break
-                    vexit = next_vexit
+                    if I < threshold_current:
+                        extra_count += 1
+                        if extra_count > n_extra:
+                            break
 
-                # ----------------------
-                # Save results and compute averages of last 5 points
-                # ----------------------
+                    vexit += vexit_step
+
+                # Save horizontal sweep
                 df_h = pd.DataFrame(horizontal_data)
-                hfile = (f'horz_sweep_V2_{v2_target:.3f}_P_{power}dBm_'
-                        f'Ventmax_{Vent_max:.3f}V_{timestamp}.csv')
+                hfile = (f'horz_sweep_V2_{v2_target:.3f}_'
+                        f'P_{power}dBm_'
+                        f'Ventmax_{Vent_max:.3f}V_'
+                        f'{timestamp}.csv')
                 df_h.to_csv(os.path.join(base_dir, hfile), index=False)
 
+                # Save vertical sweep
                 df_v = pd.DataFrame(vertical_data)
-                vfile = (f'vert_sweep_V2_{v2_target:.3f}_P_{power}dBm_'
-                        f'Ventmax_{Vent_max:.3f}V_{timestamp}.csv')
+                vfile = (f'vert_sweep_V2_{v2_target:.3f}_'
+                        f'P_{power}dBm_'
+                        f'Ventmax_{Vent_max:.3f}V_'
+                        f'{timestamp}.csv')
                 df_v.to_csv(os.path.join(base_dir, vfile), index=False)
 
                 print(f'→ Horizontal sweep saved to {hfile}')
                 print(f'→ Vertical   sweep saved to {vfile}')
 
-                last5_h = horizontal_data[-5:] if len(horizontal_data) >= 5 else horizontal_data
-                last5_v = vertical_data[-5:]   if len(vertical_data)   >= 5 else vertical_data
+                # Take the last five entries from each mini‐sweep
+                last5_h = horizontal_data[-5:]
+                last5_v = vertical_data[-5:]
 
-                Vent_min_RF  = float(np.mean([pt['Vent (V)']  for pt in last5_h])) if last5_h else np.nan
-                vexit_min_RF = float(np.mean([pt['Vexit (V)'] for pt in last5_v])) if last5_v else np.nan
+                # Compute their averages
+                Vent_min_RF  = np.mean([pt['Vent (V)']    for pt in last5_h])
+                vexit_min_RF = np.mean([pt['Vexit (V)']   for pt in last5_v])
 
-                print(f'Vent_min_RF  (avg of last 5) = {Vent_min_RF:.4f} V')
-                print(f'Vexit_min_RF (avg of last 5) = {vexit_min_RF:.4f} V')
+                print(f'Vent_min_RF  (avg of last 5 points) = {Vent_min_RF:.4f} V')
+                print(f'vexit_min_RF (avg of last 5 points) = {vexit_min_RF:.4f} V')
 
+                    # record this combination
                 summary_results.append({
-                    'V2_target (V)':   v2_target,
-                    'Power (dBm)':     power,
-                    'Vent_max (V)':    Vent_max,
-                    'Vexit_avg_RF (V)': Vexit_const,
-                    'Vent_min_RF (V)': Vent_min_RF,
+                    'V2_target (V)':    v2_target,
+                    'Power (dBm)':      power,
+                    'Vent_max (V)':       vent_max,
+                    'Vexit_avg_RF (V)':   vexit_avg_RF,
+                    'Vent_min_RF (V)':  Vent_min_RF,
                     'Vexit_min_RF (V)': vexit_min_RF,
-                    'd (fit)':         d_fit
+                    'd (fit)':          d_fit
                 })
-                        
+                
                 # signal to skip remaining Vent for this power
                 cascade_found_for_power = True
                 break
@@ -1426,3 +1439,804 @@ print(f'  • Vent ∈ [{Vent_min:.4f}, {Vent_max:.4f}] V')
 print(f'  • Vexit∈ [{Vexit_min:.4f}, {Vexit_max:.4f}] V')
 print(f'  • CSV → {csv_name}')
 print(f'  • Figure → {fig_name}')
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# # Threshold to stop the Vexit sweep early
+# threshold_current = 150e-12           # 150 pA
+
+# # Minimum current threshold to decide whether to plot/save
+# minimum_threshold_current_RF = 0.3e-12  # 0.3 pA
+
+# vexit_step = 0.001   # 1 mV steps for Vexit
+# vent_step  = 0.01    # 10 mV steps for Vent
+
+# for v2_target, v3_target in qpc_targets_RF:
+
+#     # 1) set QPC gates
+#     simultaneous_set_voltage_sim(sim,
+#                                 'ch2', v2_target,
+#                                 'ch3', v3_target,
+#                                 step=0.01, delay=0.5)
+
+#     row = df_results[np.isclose(df_results['V2_target (V)'],
+#                                 v2_target, atol=1e-6)]
+#     if row.empty:
+#         continue
+
+#     vent_avg_RF  = row.iloc[0]['Vent_avg (V)']
+#     vexit_avg_RF = row.iloc[0]['Vexit_avg (V)']
+
+#     for power in user_power_dBm:
+#         # set RF power
+#         rf.set_power(power)
+
+#         vp_row = power_to_voltage[
+#             power_to_voltage['Power (dBm)'] == power
+#         ]
+#         if vp_row.empty:
+#             continue
+#         vp = vp_row['Voltage (Vp)'].values[0]
+
+#         # Vent sweep range
+#         vent_min = V_ent_max - vp
+#         vent_max = V_ent_max
+
+#         for vent in np.arange(vent_min, vent_max + 1e-12, vent_step):
+#             # set Vent
+#             set_voltage_sim(sim,
+#                             slot='ch4',
+#                             target=vent,
+#                             step=0.001,
+#                             delay=0.5)
+
+#             # sweep Vexit
+#             vexit_vals = []
+#             currents   = []
+#             for vexit in np.arange(0.0,
+#                                    vexit_avg_RF + vexit_step/2,
+#                                    vexit_step):
+
+#                 set_voltage_sim(sim,
+#                                 slot='ch5',
+#                                 target=vexit,
+#                                 step=vexit_step,
+#                                 delay=0.1)
+
+#                 I = agilent.read_current()
+#                 vexit_vals.append(vexit)
+#                 currents.append(I)
+
+#                 # stop this sweep if current ≥ 150 pA
+#                 if I >= threshold_current:
+#                     break
+
+#             # if no point even exceeds 0.3 pA, skip
+#             if not any(I > minimum_threshold_current_RF for I in currents):
+#                 continue
+
+#             # save CSV
+#             df_sweep = pd.DataFrame({
+#                 'Vent (V)':    [vent] * len(vexit_vals),
+#                 'Vexit (V)':   vexit_vals,
+#                 'Current (A)': currents
+#             })
+#             fname = (f'QPC_V2_{v2_target:.3f}_'
+#                      f'P_{power}dBm_'
+#                      f'Vent_{vent:.3f}V_'
+#                      f'{timestamp}.csv')
+#             df_sweep.to_csv(os.path.join(base_dir, fname),
+#                             index=False)
+
+#             # plot Ipump vs Vexit
+#             fig, ax = plt.subplots()
+#             ax.plot(vexit_vals, currents, marker='o', linestyle='-')
+#             ax.set_xlabel('Vexit (V)')
+#             ax.set_ylabel('Ipump (A)')
+#             ax.set_title(f'QPC V2={v2_target:.3f} V, P={power} dBm, Vent={vent:.3f} V')
+#             plt.show()
+
+#             print(f'Plotted & saved sweep for Vent={vent:.3f} V, power={power} dBm')
+
+#             # Compute numerical derivative dI/dVexit
+#             derivative = np.gradient(currents, vexit_vals)
+
+#             # Find peaks in the derivative
+#             peaks, _ = find_peaks(derivative)
+#             num_peaks = len(peaks)
+#             print(f'Number of peaks in dI/dVexit: {num_peaks}')
+
+#             # Plot the derivative and mark peaks
+#             fig2, ax2 = plt.subplots()
+#             ax2.plot(vexit_vals, derivative, label='dI/dVexit')
+#             ax2.plot(np.array(vexit_vals)[peaks],
+#                     derivative[peaks],
+#                     'rx',
+#                     label='peaks')
+#             ax2.set_xlabel('Vexit (V)')
+#             ax2.set_ylabel('dI/dVexit (A/V)')
+#             ax2.set_title(f'dI/dVexit for Vent={vent:.3f} V, P={power} dBm')
+#             ax2.legend()
+#             plt.show()

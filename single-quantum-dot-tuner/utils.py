@@ -2608,6 +2608,305 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
 
         return results_dict
 
+    def pinch_off_updated(self, 
+                gates: List[str] | str = None, 
+                minV: float = None, 
+                maxV: float = None, 
+                dV: float = None,
+                delay: float = 0.01,
+                voltage_configuration: dict = {}) -> Dict[str, pd.DataFrame]:
+        """
+        Adaptive pinch-off measurement. If fit fails, sweep range is extended
+        by 200 mV toward 0 V until successful fit or limit reached.
+        """
+
+        assert self.deviceTurnsOn, \
+            "Device does not turn on. Why are you pinching anything off?"
+
+        # Apply voltage configuration
+        if voltage_configuration is not None:
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
+            self._smoothly_set_voltage_configuration(voltage_configuration)
+
+        if dV is None:
+            dV = self.voltage_resolution
+
+        # Resolve gates
+        if gates is None:
+            gates = self.barriers + self.leads + self.accumulation + self.plungers
+        if isinstance(gates, str):
+            gates = [gates]
+
+        # Resolve maxV
+        if maxV is None:
+            maxV = self.results['turn_on']['saturation']
+        else:
+            assert np.sign(maxV) == self.voltage_sign, \
+                self.logger.error("Double check sign of maxV")
+
+        # Resolve initial minV
+        if minV is None:
+
+            if self.voltage_sign == 1:
+                min_allowed = 0
+                max_allowed = None
+            else:
+                min_allowed = None
+                max_allowed = 0
+
+            minV = np.clip(
+                round(
+                    self.results['turn_on']['saturation']
+                    - self.voltage_sign * self.abs_max_gate_differential,
+                    3
+                ),
+                min_allowed,
+                max_allowed
+            )
+
+        else:
+            assert np.sign(minV) in [0, self.voltage_sign], \
+                self.logger.error("Double check sign of minV")
+
+        # Adaptive sweep parameters
+        minV_limit = 0.0
+        extension_step = 0.2
+        minV_step_extension = -extension_step * self.voltage_sign
+
+        results_dict = {}
+
+        # Set initial state
+        self.logger.info(f"setting {gates} to {maxV} V")
+        self._smoothly_set_gates_to_voltage(gates, maxV)
+
+        # ==========================================================
+        # MAIN LOOP OVER GATES
+        # ==========================================================
+
+        for gate_name in gates:
+
+            fit_success = False
+            minV_current = minV
+
+            while True:
+
+                num_steps = self._calculate_num_of_steps(
+                    minV_current, maxV, dV
+                )
+
+                sweep = LinSweep_SIM928(
+                    getattr(self.voltage_source, gate_name),
+                    maxV,
+                    minV_current,
+                    num_steps,
+                    delay,
+                    get_after_set=False
+                )
+
+                self.logger.attempt(
+                    f"pinching off {gate_name} "
+                    f"from {maxV} V to {minV_current} V"
+                )
+
+                qc.dataset.dond(
+                    sweep,
+                    self.drain_volt,
+                    measurement_name=f"{gate_name} Pinch Off",
+                    exp=self.initialization_exp,
+                    show_progress=True
+                )
+
+                self.logger.complete("\n")
+
+                self.logger.info(f"returning {gate_name} to {maxV} V")
+                self._smoothly_set_gates_to_voltage([gate_name], maxV)
+
+                # Load dataset
+                dataset = qc.load_last_experiment().last_data_set()
+                df = dataset.to_pandas_dataframe().reset_index()
+
+                results_dict[gate_name] = df
+
+                # ==================================================
+                # CURRENT CONVERSION
+                # ==================================================
+
+                df_current = df.copy()
+
+                df_current = df_current.rename(
+                    columns={
+                        f'{self.multimeter_name}_volt':
+                        f'{self.multimeter_name}_current'
+                    }
+                )
+
+                df_current.iloc[:, -1] = (
+                    df_current.iloc[:, -1]
+                    .subtract(self.preamp_bias)
+                    .mul(self.preamp_sensitivity)
+                )
+
+                X = pd.to_numeric(
+                    df_current[f'{str(sweep._param)}'],
+                    errors='coerce'
+                )
+
+                Y = pd.to_numeric(
+                    df_current[f'{self.multimeter_name}_current'],
+                    errors='coerce'
+                )
+
+                mask_belowthreshold = (
+                    Y.abs() < self.pinch_off_info['abs_min_current']
+                )
+
+                if gate_name in self.leads:
+
+                    mask = (
+                        Y.abs() > self.pinch_off_info['abs_min_current']
+                    )
+
+                    X_masked = X[mask]
+                    Y_masked = Y[mask]
+
+                else:
+
+                    X_masked = X
+                    Y_masked = Y
+
+                X_masked = X_masked.dropna()
+                Y_masked = Y_masked.dropna()
+
+                # ==================================================
+                # FITTING
+                # ==================================================
+
+                try:
+
+                    if len(X_masked) <= 4 or mask_belowthreshold.sum() == 0:
+                        raise RuntimeError("Insufficient threshold data")
+
+                    if gate_name in self.leads:
+
+                        fit_function = getattr(self, 'logarithmic')
+
+                        guess = [
+                            Y_masked.iloc[0],
+                            self.voltage_sign,
+                            X_masked.iloc[0] - self.voltage_sign,
+                            0
+                        ]
+
+                        fit_params, _ = sp.optimize.curve_fit(
+                            fit_function,
+                            X_masked,
+                            Y_masked,
+                            guess
+                        )
+
+                        a, b, x0, y0 = fit_params
+
+                        V_pinchoff = float(
+                            round(np.exp(-y0 / a) / b + x0, 3)
+                        )
+
+                        self.results[gate_name]['pinch_off']['voltage'] = V_pinchoff
+
+                    else:
+
+                        fit_function = getattr(
+                            self,
+                            self.pinch_off_info['fit_function']
+                        )
+
+                        guess = (
+                            Y.iloc[0],
+                            -self.voltage_sign * 100,
+                            float(self.results['turn_on']['voltage']),
+                            0
+                        )
+
+                        fit_params, _ = sp.optimize.curve_fit(
+                            fit_function,
+                            X_masked,
+                            Y_masked,
+                            guess
+                        )
+
+                        a, b, x0, y0 = fit_params
+
+                        V_pinchoff = self.voltage_sign * float(
+                            round(
+                                min(
+                                    abs(x0 - np.sqrt(8) / b),
+                                    abs(x0 + np.sqrt(8) / b)
+                                ),
+                                3
+                            )
+                        )
+
+                        V_width = float(abs(round(2 * np.sqrt(8) / b, 3)))
+
+                        self.results[gate_name]['pinch_off']['voltage'] = V_pinchoff
+                        self.results[gate_name]['pinch_off']['width'] = V_width
+
+                    self.logger.info(
+                        f"{gate_name} pinch off at {V_pinchoff} V"
+                    )
+
+                    fit_success = True
+
+                except Exception as e:
+
+                    self.logger.warning(
+                        f"{gate_name} fit failed at minV={minV_current} V"
+                    )
+
+                    # Extend sweep
+                    proposed_minV = minV_current + minV_step_extension
+
+                    if self.voltage_sign == 1:
+                        minV_current = max(proposed_minV, minV_limit)
+                    else:
+                        minV_current = min(proposed_minV, minV_limit)
+
+                    if minV_current == minV_limit:
+
+                        self.logger.error(
+                            f"{gate_name}: reached voltage limit "
+                            f"{minV_limit} V. Fit unsuccessful."
+                        )
+
+                        break
+
+                    else:
+
+                        self.logger.warning(
+                            f"{gate_name}: extending sweep to "
+                            f"{minV_current} V and retrying"
+                        )
+
+                        continue
+
+                # Success → exit adaptive loop
+                break
+
+            # Save figure
+            config_str = json.dumps(voltage_configuration)\
+                .replace(' ', '')\
+                .replace('.', 'p')\
+                .replace(',', '__')\
+                .replace('"', '')\
+                .replace(':', '_')\
+                .replace('{', '')\
+                .replace('}', '')
+
+            self._save_figure(
+                plot_info=f"{gate_name}_pinch_{config_str}"
+            )
+
+        return results_dict
+
     def sweep_barriers(self, 
                         B1: str = None, 
                         B2: str = None, 

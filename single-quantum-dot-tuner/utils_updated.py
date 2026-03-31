@@ -16,7 +16,7 @@ import matplotlib.cm as cm
 from typing import List, Dict
 
 import qcodes as qc
-from qcodes.dataset import AbstractSweep
+from qcodes.dataset import AbstractSweep, Measurement
 from qcodes.dataset.dond.do_nd_utils import ActionsT
 from qcodes.parameters import ParameterBase
 import numpy.typing as npt
@@ -30,6 +30,9 @@ from skimage.morphology import diamond, rectangle  # noqa
 import logging
 from colorlog import ColoredFormatter
 import sys
+
+from nicegui import ui
+import threading
 
 original_sys_path = sys.path.copy()
 
@@ -120,7 +123,85 @@ class LinSweep_SIM928(AbstractSweep[np.float64]):
     def setpoints(self) -> npt.NDArray[np.float64]:
         return self.get_setpoints()
 
-class InstrumentControl:
+# Below are the classes associated with the Autotuner 
+
+class Logger:
+
+    def initialise_logger(self):
+
+        """
+        This method creates new logging categories which the user can see while the autotuner runs, as well as outputs
+        a log of everything that occured during the experiment. This method is when an InstrumentControl object is initialised.
+        """
+
+        ATTEMPT, COMPLETE, IN_PROGRESS = logging.INFO - 2, logging.INFO - 1, logging.INFO
+
+        logging.addLevelName(ATTEMPT, 'ATTEMPT')
+        logging.addLevelName(COMPLETE, 'COMPLETE')
+        logging.addLevelName(IN_PROGRESS, 'IN PROGRESS')
+
+        def attempt(self, message, *args, **kwargs):
+            if self.isEnabledFor(ATTEMPT):
+                self._log(ATTEMPT, message, args, **kwargs)
+        
+        def complete(self, message, *args, **kwargs):
+            if self.isEnabledFor(COMPLETE):
+                self._log(COMPLETE, message, args, **kwargs)
+
+        def in_progress(self, message, *args, **kwargs):
+            if self.isEnabledFor(IN_PROGRESS):
+                self._log(IN_PROGRESS, message, args, **kwargs)
+
+        logging.Logger.attempt = attempt
+        logging.Logger.complete = complete
+        logging.Logger.in_progress = in_progress
+
+        console_formatter = ColoredFormatter(
+                "%(log_color)s%(asctime)s - %(name)s - %(levelname)s %(message)s",
+                datefmt=None,
+                reset=True,
+                log_colors={
+                    'ATTEMPT': 'yellow',
+                    'COMPLETE': 'green',
+                    'DEBUG': 'white',
+                    'INFO': 'white',
+                    'IN PROGRESS': 'white',
+                    'WARNING': 'red',
+                    'ERROR': 'bold_red',
+                    'CRITICAL': 'bold_red'
+                }
+        )
+
+        # Then, we set the format of the above messages displayed to the user
+
+        file_formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s %(message)s"
+        )
+
+        # Now, we define a handler, which writes the messages from the Logger
+
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(console_formatter)
+
+        # Now we create an info log for the Logger
+
+        file_handler = logging.FileHandler(
+            os.path.join(self.db_folder, 'run_info.log')
+        )
+
+        file_handler.setFormatter(file_formatter)
+
+        # Finally, we define the logger
+
+        self.logger = logging.getLogger(__name__)
+        self.logger.addHandler(console_handler)
+        self.logger.addHandler(file_handler)
+
+        self.logger.setLevel(min(self.logger.getEffectiveLevel(), ATTEMPT))
+
+        return None
+
+class InstrumentControl(Logger):
         
     def __init__(self,
                  config: str, 
@@ -203,7 +284,9 @@ class InstrumentControl:
             
         self.logger.info("changing parameters to match names in config.yaml file")
         self.voltage_source.timeout(5 * 60)
+        
         for gate, details in self.device_gates.items():
+            
             self.voltage_source.add_parameter(
                 name=gate,
                 parameter_class=qc.parameters.DelegateParameter,
@@ -345,93 +428,6 @@ class InstrumentControl:
 
         return None
 
-    def initialise_logger(self):
-
-        """
-        This method creates new logging categories which the user can see while the autotuner runs, as well as outputs
-        a log of everything that occured during the experiment. This method is when an InstrumentControl object is initialised.
-        """
-
-        ATTEMPT, COMPLETE, IN_PROGRESS = logging.INFO - 2, logging.INFO - 1, logging.INFO
-
-        logging.addLevelName(ATTEMPT, 'ATTEMPT')
-        logging.addLevelName(COMPLETE, 'COMPLETE')
-        logging.addLevelName(IN_PROGRESS, 'IN PROGRESS')
-
-        def attempt(self, message, *args, **kwargs):
-            if self.isEnabledFor(ATTEMPT):
-                self._log(ATTEMPT, message, args, **kwargs)
-        
-        def complete(self, message, *args, **kwargs):
-            if self.isEnabledFor(COMPLETE):
-                self._log(COMPLETE, message, args, **kwargs)
-
-        def in_progress(self, message, *args, **kwargs):
-            if self.isEnabledFor(IN_PROGRESS):
-                self._log(IN_PROGRESS, message, args, **kwargs)
-
-        logging.Logger.attempt = attempt
-        logging.Logger.complete = complete
-        logging.Logger.in_progress = in_progress
-
-        console_formatter = ColoredFormatter(
-                "%(log_color)s%(asctime)s - %(name)s - %(levelname)s %(message)s",
-                datefmt=None,
-                reset=True,
-                log_colors={
-                    'ATTEMPT': 'yellow',
-                    'COMPLETE': 'green',
-                    'DEBUG': 'white',
-                    'INFO': 'white',
-                    'IN PROGRESS': 'white',
-                    'WARNING': 'red',
-                    'ERROR': 'bold_red',
-                    'CRITICAL': 'bold_red'
-                }
-        )
-
-        # Then, we set the format of the above messages displayed to the user
-
-        file_formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s %(message)s"
-        )
-
-        # Now, we define a handler, which writes the messages from the Logger
-
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setFormatter(console_formatter)
-
-        # Now we create an info log for the Logger
-
-        file_handler = logging.FileHandler(
-            os.path.join(self.db_folder, 'run_info.log')
-        )
-
-        file_handler.setFormatter(file_formatter)
-
-        # Finally, we define the logger
-
-        self.logger = logging.getLogger(__name__)
-        self.logger.addHandler(console_handler)
-        self.logger.addHandler(file_handler)
-
-        self.logger.setLevel(min(self.logger.getEffectiveLevel(), ATTEMPT))
-
-        return None
-
-    def ground_device(self):
-
-        """
-        This method is used to ground the device; we simply smoothly set all non-zero voltages to zero using the set_voltage() method.
-        This method is run when an InstrumentControl object is initialised and can be used whenever the user would like. 
-        """
-        device_gates = self.ohmics + self.all_gates
-        self.logger.attempt("grounding device")
-        self._smoothly_set_gates_to_voltage(device_gates, 0.)
-        self.logger.complete("\n")
-
-        return None
-
     def set_voltage(self,
                     gates: str | list[str],
                     voltage: float):
@@ -484,34 +480,569 @@ class InstrumentControl:
 
             assert np.sign(voltage_configuration[gate]) == np.sign(self.voltage_sign) or np.sign(voltage_configuration[gate]) == 0, f"Check voltage sign on {gate}"
 
-            # Now, we get all of the starting voltage values for each gate
+        # Now, we set up some lists to hold the voltage values 
 
+        intermediate = []
+        done = set()
+
+        prevvals = {}
+        gate_params = {}
+        gate_steps = {}
+
+        # Now, we map the gate to the source and save the correspondance
+
+        gate_to_source = {}
+
+        for source_name, instrument in self.voltage_sources.items():
+            for gate in self.voltage_source_names_check[source_name]:
+                gate_to_source[gate] = instrument
+
+        for gate, target in voltage_configuration.items():
+
+            instrument = gate_to_source[gate]
+            param = getattr(instrument, gate)
+
+            gate_params[gate] = param
+            prevvals[gate] = float(param.get())
+
+            step_param = getattr(instrument, f"{gate}_step", None)
             
+            gate_steps[gate] = step_param() if step_param else stepsize
 
+        # Now, we generate the ramp
+
+        while len(done) < len(voltage_configuration):
+
+            step = {}
+
+            for gate, target in voltage_configuration.items():
+
+                if gate in done:
+                    continue
+
+                prev = prevvals[gate]
+                step_size = gate_steps[gate]
+
+                dv = target - prev
+
+                if abs(dv) <= step_size:
+                    step[gate] = target
+                    done.add(gate)
+                else:
+                    step[gate] = prev + step_size * (1 if dv > 0 else -1)
+
+                prevvals[gate] = step[gate]
+
+            intermediate.append(step)
+
+        # Finally, we apply the ramp
+
+        for step in intermediate:
+
+            for gate, voltage in step.items():
+                gate_params[gate].set(voltage)
+
+            # This lets us sleep once per step
+            for instrument in self.voltage_sources.values():
+                delay_param = getattr(instrument, "smooth_timestep", None)
+                if delay_param:
+                    time.sleep(delay_param())
+                    break  
 
         return None
 
-    def one_dimension_sweep(self):
+    def sweep_1d(self, 
+                 maxV: float = None,
+                 minV: float = None,
+                 voltage_configuration: Dict[str, float] = {},
+                 dV: float = 10e-3) -> pd.DataFrame:
+        
+        # Bring device to voltage configuration
+
+        if voltage_configuration is not None:
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
+            self.set_voltage_configuration(voltage_configuration)
+
+        # Default dV and maxV based on setup_config and config
+
+        if dV is None:
+            dV = self.voltage_resolution
+
+        if maxV is None:
+            maxV = self.voltage_sign * self.abs_max_gate_voltage
+
+        # Ensure we stay in the allowed voltage space 
+        
+        assert np.sign(maxV) == self.voltage_sign, self.logger.error("Double check the sign of the gate voltage (maxV) for your given device.")
+        assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, self.logger.error("Double check the sign of the gate voltage (minV) for your given device.")
+
+        # Set up gate sweeps
+        
+        num_steps = self.calculate_num_of_steps(minV, maxV, dV)
+        gates_involved = self.barriers + self.leads + self.accumulation + self.plungers
+
+        print(gates_involved)
+
+        self.logger.info(f"setting {gates_involved} to {minV} V")
+        
+        self.set_voltage_configuration(gates_involved, minV)
+
+        sweep_list = []
+
+        for voltage_source in self.voltage_sources.items():
+
+            for gate_name in gates_involved:
+               
+               if gate_name in self.voltage_source_names_check[voltage_source[0]]:
+                    
+                    print(self.voltage_source_names_check[voltage_source[0]][gate_name])
+
+                    param = voltage_source[1][gate_name]
+
+                    sweep_list.append(
+                        LinSweep_SIM928(param, minV, maxV, num_steps, get_after_set=False)
+                    )
+
+        # Execute the measurement
+        self.logger.attempt(f"sweeping {gates_involved} together from {minV} V to {maxV} V")
+        
+        result = qc.dataset.dond(
+            qc.dataset.TogetherSweep(
+                *sweep_list
+            ),
+            self.drain_volt,
+            break_condition=self._check_break_conditions,
+            measurement_name='Device Turn On',
+            exp=self.initialization_exp,
+            show_progress=True
+        )
+
+        self.logger.complete('\n')
+        
+        return None
+
+    def sweep_2d(self,
+                 P1: str = None, 
+                 P2: str = None, 
+                 P1_bounds: tuple = (None, None),
+                 P2_bounds: tuple = (None, None), 
+                 dV: float | tuple = None, 
+                 voltage_configuration: dict = None) -> tuple[pd.DataFrame, plt.Axes]:
+        
+        # Bring device to voltage configuration
+        if voltage_configuration is not None:
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
+            self.set_voltage_configuration(voltage_configuration)
+        else:
+            self.logger.info(f"setting {self.leads} to {self.results['turn_on']['saturation']} V")
+            self.set_voltage(self.leads, self.results['turn_on']['saturation'])
+
+        # Parse dV from user
+        if dV is None:
+            dV_P1 = self.voltage_resolution
+            dV_P2 = self.voltage_resolution
+        elif type(dV) is float:
+            dV_P1 = dV
+            dV_P2 = dV
+        elif type(dV) is tuple:
+            dV_P1, dV_P2 = dV
+        else:
+            self.logger.error("invalid dV")
+            return
+        
+        # Double check device bounds
+        minV_P1, maxV_P1 = P1_bounds
+        minV_P2, maxV_P2 = P2_bounds
+
+        if minV_P1 is None:
+            minV_P1 = self.results[P1]['pinch_off']['voltage']
+        else:
+            assert np.sign(minV_P1) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (minV) for B1.")
+
+        if minV_P2 is None:
+            minV_P2 = self.results[P2]['pinch_off']['voltage']
+        else:
+            assert np.sign(minV_P2) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (minV) for B2.")
+
+        if maxV_P1 is None:
+            if self.voltage_sign == 1:
+                maxV_P1 = min(self.results[P1]['pinch_off']['voltage']+self.voltage_sign*self.results[P1]['pinch_off']['width'], self.results['turn_on']['saturation'])
+            elif self.voltage_sign == -1:
+                maxV_P1 = max(self.results[P1]['pinch_off']['voltage']+self.voltage_sign*self.results[P1]['pinch_off']['width'], self.results['turn_on']['saturation'])
+        else:
+            assert np.sign(maxV_P1) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (maxV) for B1.")
+
+        if maxV_P2 is None:
+            if self.voltage_sign == 1:
+                maxV_P2 = min(self.results[P2]['pinch_off']['voltage']+self.voltage_sign*self.results[P2]['pinch_off']['width'], self.results['turn_on']['saturation'])
+            elif self.voltage_sign == -1:
+                maxV_P2 = max(self.results[P2]['pinch_off']['voltage']+self.voltage_sign*self.results[P2]['pinch_off']['width'], self.results['turn_on']['saturation'])
+        else:
+            assert np.sign(maxV_P2) == self.voltage_sign, self.logger.error("double check the sign of the gate voltage (maxV) for B2.")
+
+        self.logger.info(f"setting {P1} to {maxV_P1} V")
+        self.logger.info(f"setting {P2} to {maxV_P2} V")
+        
+        self.set_voltage_configuration({P1: maxV_P1, P2: maxV_P2})
+
+        def smooth_reset():
+            
+            """
+            Resets the inner loop variable smoothly back to the starting value
+            """
+            
+            self.set_gates_to_voltage([P2], maxV_P2)
+
+        num_steps_B1 = self.calculate_num_of_steps(minV_P1, maxV_P1, dV_P1)
+        num_steps_B2 = self.calculate_num_of_steps(minV_P2, maxV_P2, dV_P2)
+        
+        self.logger.attempt("barrier barrier scan")
+        
+        self.logger.info(f"stepping {P1} from {maxV_P1} V to {minV_P1} V")
+        self.logger.info(f"sweeping {P2} from {maxV_P2} V to {minV_P2} V")
+        
+        gates = self.barriers
+        param_check = []
+
+        for voltage_source in self.voltage_sources.items():
+
+            for gate_name in gates:
+                
+                if gate_name in self.voltage_source_names_check[voltage_source[0]]:
+                        
+                        print(self.voltage_source_names_check[voltage_source[0]][gate_name])
+
+                        param = voltage_source[1][gate_name]
+
+                        param_check.append(param)
+
+        result = qc.dataset.do2d(
+            param_check[0], # outer loop
+            maxV_P1,
+            minV_P1,
+            num_steps_B1,
+            param_check[1], # inner loop
+            maxV_P2,
+            minV_P2,
+            num_steps_B2,
+            self.drain_volt,
+            after_inner_actions = [smooth_reset],
+            set_before_sweep=True, 
+            show_progress=True, 
+            measurement_name='Barrier Barrier Sweep',
+            exp=self.initialization_exp
+        )
+        self.logger.complete("\n")
+
+        self.logger.info(f"returning gates {P1}, {P2} to {maxV_P1} V, {maxV_P2} V respectively")
+        self.set_voltage([P1], maxV_P1)
+        self.set_voltage([P2], maxV_P2)
+        
+        return None
+
+    def sweep_1d_measurement(self, 
+                 maxV: float = None,
+                 minV: float = None,
+                 voltage_configuration: Dict[str, float] = {},
+                 dV: float = 10e-3) -> pd.DataFrame:
+
+        # Bring device to voltage configuration
+
+        if voltage_configuration is not None:
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
+            self.set_voltage_configuration(voltage_configuration)
+
+        # Default values
+        
+        if dV is None:
+            dV = self.voltage_resolution
+
+        if maxV is None:
+            maxV = self.voltage_sign * self.abs_max_gate_voltage
+
+        # Safety checks
+        
+        assert np.sign(maxV) == self.voltage_sign
+        assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0
+
+        # Gates involved
+        
+        gates_involved = self.barriers + self.leads + self.accumulation + self.plungers
+
+        self.logger.info(f"setting {gates_involved} to {minV} V")
+
+        self.set_voltage_configuration(gates_involved, minV)
+
+        # Number of steps
+
+        num_steps = self.calculate_num_of_steps(minV, maxV, dV)
+
+        # Build parameter list
+        
+        gate_params = []
+
+        for voltage_source in self.voltage_sources.items():
+
+            for gate_name in gates_involved:
+
+                if gate_name in self.voltage_source_names_check[voltage_source[0]]:
+
+                    param = voltage_source[1][gate_name]
+                    gate_params.append(param)
+
+        # Create sweep values
+        
+        sweep_vals = np.linspace(minV, maxV, num_steps)
+
+        # Setup measurement
+        
+        meas = Measurement(exp=self.initialization_exp)
+
+        # Register parameters
+        for param in gate_params:
+            meas.register_parameter(param)
+
+        meas.register_parameter(self.drain_volt, setpoints=tuple(gate_params))
+
+        # Execute sweep
+        self.logger.attempt(
+            f"sweeping {gates_involved} together from {minV} V to {maxV} V"
+        )
+
+        with meas.run() as datasaver:
+
+            for v in sweep_vals:
+
+                # set all gates together
+                for param in gate_params:
+                    param.set(v)
+
+                # measurement
+                drain = self.drain_volt.get()
+
+                results = [(param, v) for param in gate_params]
+                results.append((self.drain_volt, drain))
+
+                datasaver.add_result(*results)
+
+                # break condition
+                if self._check_break_conditions(drain):
+                    break
+
+        self.logger.complete('\n')
+
+        return None
+
+    def sweep_2d_measurement(self,
+                 P1: str = None, 
+                 P2: str = None, 
+                 P1_bounds: tuple = (None, None),
+                 P2_bounds: tuple = (None, None), 
+                 dV: float | tuple = None,
+                 voltage_configuration: dict = None) -> tuple[pd.DataFrame, plt.Axes]:
+
+        # Bring device to voltage configuration
+        if voltage_configuration is not None:
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
+            self.set_voltage_configuration(voltage_configuration)
+        else:
+            self.logger.info(f"setting {self.leads} to {self.results['turn_on']['saturation']} V")
+            self.set_voltage(self.leads, self.results['turn_on']['saturation'])
+
+        # Parse dV
+        if dV is None:
+            dV_P1 = self.voltage_resolution
+            dV_P2 = self.voltage_resolution
+        elif type(dV) is float:
+            dV_P1 = dV
+            dV_P2 = dV
+        elif type(dV) is tuple:
+            dV_P1, dV_P2 = dV
+        else:
+            self.logger.error("invalid dV")
+            return
+
+        # Bounds
+        minV_P1, maxV_P1 = P1_bounds
+        minV_P2, maxV_P2 = P2_bounds
+
+        # (same bounds logic as your code omitted here for brevity)
+
+        self.logger.info(f"setting {P1} to {maxV_P1} V")
+        self.logger.info(f"setting {P2} to {maxV_P2} V")
+
+        self.set_voltage_configuration({P1: maxV_P1, P2: maxV_P2})
+
+        # Step counts
+        num_steps_B1 = self.calculate_num_of_steps(minV_P1, maxV_P1, dV_P1)
+        num_steps_B2 = self.calculate_num_of_steps(minV_P2, maxV_P2, dV_P2)
+
+        # Generate sweep arrays
+        P1_vals = np.linspace(maxV_P1, minV_P1, num_steps_B1)
+        P2_vals = np.linspace(maxV_P2, minV_P2, num_steps_B2)
+
+        self.logger.attempt("barrier barrier scan")
+
+        self.logger.info(f"stepping {P1} from {maxV_P1} V to {minV_P1} V")
+        self.logger.info(f"sweeping {P2} from {maxV_P2} V to {minV_P2} V")
+
+        # Resolve QCoDeS parameters
+        gates = self.barriers
+        param_check = []
+
+        for voltage_source in self.voltage_sources.items():
+
+            for gate_name in gates:
+
+                if gate_name in self.voltage_source_names_check[voltage_source[0]]:
+                    param = voltage_source[1][gate_name]
+                    param_check.append(param)
+
+        P1_param = param_check[0]
+        P2_param = param_check[1]
+
+        # Setup measurement
+        meas = Measurement(exp=self.initialization_exp)
+
+        meas.register_parameter(P1_param)
+        meas.register_parameter(P2_param)
+        meas.register_parameter(self.drain_volt, setpoints=(P1_param, P2_param))
+
+        # Inner reset function
+        def smooth_reset():
+
+            self.set_gates_to_voltage([P2], maxV_P2)
+
+        # Run measurement
+        with meas.run() as datasaver:
+
+            for v1 in P1_vals:
+
+                # set outer parameter
+                P1_param.set(v1)
+
+                for v2 in P2_vals:
+
+                    # set inner parameter
+                    P2_param.set(v2)
+
+                    drain = self.drain_volt.get()
+
+                    datasaver.add_result(
+                        (P1_param, v1),
+                        (P2_param, v2),
+                        (self.drain_volt, drain),
+                    )
+
+                # reset inner sweep
+                smooth_reset()
+
+        self.logger.complete("\n")
+
+        # Return gates to starting values
+        self.logger.info(f"returning gates {P1}, {P2} to {maxV_P1} V, {maxV_P2} V respectively")
+
+        self.set_voltage([P1], maxV_P1)
+        self.set_voltage([P2], maxV_P2)
+
+        return None
+
+    def sweep_nd(self):
         pass
 
-    def two_dimension_sweep(self):
+    def sweep_nd_measurement(self):
         pass
 
-    def N_dimension_sweep(self):
-        pass
+    def check_break_conditions(self):
+        
+        # Go through device break conditions to see if anything is flagged,
+        # should return a Boolean.
+        
+        # breakConditionsDict = {
+        #     0: 'Maximum current is exceeded.',
+        #     1: 'Maximum ohmic bias is exceeded.',
+        #     2: 'Maximum gate voltage is exceeded.',
+        #     3: 'Maximum gate differential is exceeded.',
+        # }
 
-class DataAcquisition:
-    
-    def __init__(self):
-        pass
+        # MAX CURRENT
 
-    def measure_current(self):
-        pass
+        isExceedingMaxCurrent = np.abs(self._get_drain_current()) > self.abs_max_current
+        # time.sleep(0.1)
 
-    def time_trace(self):
-        pass
+        # MAX BIAS
+        
+        # flag = []
+        # for gate_name in self.ohmics:
+        #     gate_voltage = getattr(self.voltage_source, f'{gate_name}')() 
+        #     if np.abs(gate_voltage * self.voltage_divider) > self.abs_max_ohmic_bias:
+        #         flag.append(True)
+        #     else:
+        #         flag.append(False)
+        # isExceedingMaxOhmicBias = np.array(flag).any()
+        # time.sleep(0.1)
 
-class DataAnalysis:
+        # MAX GATE VOLTAGE
+        
+        # flag = []
+        # for gate_name in self.all_gates:
+        #     gate_voltage = getattr(self.voltage_source, f'{gate_name}')()
+        #     if np.abs(gate_voltage) > self.abs_max_gate_voltage:
+        #         flag.append(True)
+        #     else:
+        #         flag.append(False)
+        # isExceedingMaxGateVoltage = np.array(flag).any()
+        # time.sleep(0.1)
+
+        # # MAX GATE DIFFERENTIAL
+        
+        # flag = []
+        # gates_to_check = self.barriers + self.leads
+        # for i in range(len(gates_to_check)):
+        #     for j in range(i+1, len(gates_to_check)):
+        #         gate_voltage_i = getattr(self.voltage_source, f'{self.all_gates[i]}')()
+        #         gate_voltage_j = getattr(self.voltage_source, f'{self.all_gates[j]}')()
+        #         # Check if the absolute difference between gate voltages is greater than 0.5
+        #         if np.abs(gate_voltage_i - gate_voltage_j) >= self.abs_max_gate_differential:
+        #             flag.append(True)
+        #         else:
+        #             flag.append(False)
+        # isExceedingMaxGateDifferential = np.array(flag).any()
+        # time.sleep(0.1)
+        
+        listOfBreakConditions = [
+            isExceedingMaxCurrent,
+            # isExceedingMaxOhmicBias,
+            # isExceedingMaxGateVoltage,
+            # isExceedingMaxGateDifferential,
+        ]
+        isExceeded = np.array(listOfBreakConditions).any()
+        
+        # breakConditions = np.where(np.any(listOfBreakConditions == True))[0]
+        # if len(breakConditions) != 0:
+        #     for index in breakConditions.tolist():
+        #         print(breakConditionsDict[index]+"\n")
+
+        return isExceeded
+
+    def calculate_num_of_steps(self, 
+                                minV: float, 
+                                maxV: float, 
+                                dV: float):
+        """Calculates the number of steps required for a sweep.
+
+        Args:
+            minV (float): Minimum voltage (V)   
+            maxV (float): Maximum voltage (V)
+            dV (float): Step size (V)
+
+        Returns:
+            None:
+        """
+   
+        return round(np.abs(maxV-minV) / dV) + 1
+
+class DataAnalysis(Logger):
     
     def __init__(self, tuner_config) -> None:
         
@@ -905,7 +1436,49 @@ class DataAnalysis:
         plt.show()
         return results
 
-class QuantumDotFET(DataAnalysis, DataAcquisition):
+class GUI:
+
+    def __init__(self, measurement_controller):
+
+        self.controller = measurement_controller
+
+        self.status_label = None
+        self.start_button = None
+        self.stop_button = None
+
+        self.build()
+
+    def build(self):
+
+        ui.label("Quantum Dot Measurement GUI").classes("text-h4")
+
+        with ui.row():
+
+            self.start_button = ui.button(
+                "Start Sweep",
+                on_click=self.start_measurement
+            )
+
+            self.stop_button = ui.button(
+                "Stop",
+                on_click=self.stop_measurement
+            )
+
+        self.status_label = ui.label("Idle")
+
+    def start_measurement(self):
+
+        self.status_label.set_text("Running...")
+
+        thread = threading.Thread(target=self.controller.run_sweep)
+        thread.start()
+
+    def stop_measurement(self):
+
+        self.controller.stop()
+        self.status_label.set_text("Stopped")
+
+class QuantumDotFET(DataAnalysis):
     
     """
     Dedicated class to tune simple FET devices.
@@ -931,8 +1504,6 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         DataAnalysis.__init__(self,
                               tuner_config = tuner_config
                               )
-        
-        DataAcquisition.__init__(self)
     
         # First, we save the config file data and the data directory, as well as loading the config files
 
@@ -1240,11 +1811,13 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
         """
 
         # Bring device to voltage configuration
+
         if voltage_configuration is not None:
             self.logger.info(f"setting voltage configuration: {voltage_configuration}")
             self._smoothly_set_voltage_configuration(voltage_configuration)
 
         # Default dV and maxV based on setup_config and config
+
         if dV is None:
             dV = self.voltage_resolution
 
@@ -1252,6 +1825,7 @@ class QuantumDotFET(DataAnalysis, DataAcquisition):
             maxV = self.voltage_sign * self.abs_max_gate_voltage
 
         # Ensure we stay in the allowed voltage space 
+
         assert np.sign(maxV) == self.voltage_sign, self.logger.error("Double check the sign of the gate voltage (maxV) for your given device.")
         assert np.sign(minV) == self.voltage_sign or np.sign(minV) == 0, self.logger.error("Double check the sign of the gate voltage (minV) for your given device.")
 

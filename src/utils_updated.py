@@ -1042,7 +1042,7 @@ class InstrumentControl(Logger):
    
         return round(np.abs(maxV-minV) / dV) + 1
 
-class DataAnalysis(Logger):
+class DataAnalysis:
     
     def __init__(self, tuner_config) -> None:
         

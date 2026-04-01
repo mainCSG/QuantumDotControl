@@ -147,7 +147,7 @@ class InstrumentControl:
 
         # The following method creates a logger that will provide information to the user while the code is running
 
-        self.initialise_logger()
+        self.logger.initialise_logger()
 
         # Now, we connect to the instruments specified in the config
 

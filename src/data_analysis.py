@@ -3,6 +3,8 @@
 import yaml, datetime, sys, time, os, shutil, json,re
 from pathlib import Path
 
+import inspect
+
 import pandas as pd
 
 import numpy as np
@@ -13,7 +15,7 @@ from scipy.ndimage import convolve
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-from typing import List, Dict
+from typing import List, Dict, Callable
 
 import qcodes as qc
 from qcodes.dataset import AbstractSweep, Measurement
@@ -37,7 +39,9 @@ import threading
 
 class DataAnalysis:
     
-    def __init__(self, logger, tuner_config) -> None:
+    def __init__(self, 
+                 logger, 
+                 tuner_config) -> None:
         
         self.logger = logger
 
@@ -62,6 +66,24 @@ class DataAnalysis:
     
     def linear(self, x, m, b):
         return m * x + b         
+    
+    def relu(self, x, a, x0, b):
+        return np.maximum(0, a * (x - x0) + b)
+
+    def fit_to_function(self, 
+                        x_data, 
+                        y_data, 
+                        function: Callable):
+        
+        popt, pcov = sp.optimize.curve_fit(function, x_data, y_data)
+        perr = np.sqrt(np.diag(pcov))
+
+        params = list(inspect.signature(function).parameters.keys())[1:]
+
+        for name, val, err in zip(params, popt, perr):
+            print(f"{name} = {val:.3f} ± {err:.3f}")
+
+        return params, popt, pcov
     
     def extract_bias_point(self,
                            data: pd.DataFrame,

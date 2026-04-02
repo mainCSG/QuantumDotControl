@@ -10,6 +10,9 @@ As of now, we are using the nicegui web server as the user interface for the aut
 import numpy as np
 import matplotlib.pyplot as plt
 from nicegui import ui
+import os
+import threading
+import time
 
 
 class tuner_gui:
@@ -19,6 +22,7 @@ class tuner_gui:
 
         :param self:
         '''
+        print(threading.current_thread().name)
         self.lipsum_text = 'Lorem ipsum dolor sit, amet consectetur adipisicing elit. Quis praesentium cumque magnam odio iure quidem, quod illum numquam possimus obcaecati commodi minima assumenda consectetur culpa fuga nulla ullam. In, libero.'
 
     def plotting_panel(self):
@@ -52,6 +56,19 @@ class tuner_gui:
         ui.button('Connect to instruments')
         ui.button('Autotune')
         ui.label(self.lipsum_text)
+        
+        config_files = os.listdir('../configs')
+        config_dict = {i : config_files[i] for i in range(len(config_files))}
+
+        ui.button('Print Thread', on_click= lambda : print(threading.current_thread().name))
+
+        ui.button('sleep', on_click = lambda : time.sleep(10))
+        with ui.row():
+            self.config_selection = config_files[0]
+            ui.select(config_files, label ='Config File', value = config_files[0],\
+                    on_change = lambda e: self.__setattr__("config_selection", e.value))
+            ui.button('load config', on_click = lambda : ui.notify(self.config_selection))
+
     
     def on_abort(self):
         ui.notify('Aborting...')
@@ -78,4 +95,4 @@ class tuner_gui:
             with ui.tab_panel('Pinch-offs'):
                 ui.label('Content of C')
 
-        ui.run()
+        ui.run(port = 8080)

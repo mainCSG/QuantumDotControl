@@ -13,6 +13,7 @@ from nicegui import ui
 import os
 import threading
 import time
+from buffered_readout import buffered_readout
 
 
 class tuner_gui:
@@ -24,6 +25,13 @@ class tuner_gui:
         '''
         print(threading.current_thread().name)
         self.lipsum_text = 'Lorem ipsum dolor sit, amet consectetur adipisicing elit. Quis praesentium cumque magnam odio iure quidem, quod illum numquam possimus obcaecati commodi minima assumenda consectetur culpa fuga nulla ullam. In, libero.'
+
+
+        self.readout = buffered_readout()
+
+        self.readout.run()
+
+
 
     def plotting_panel(self):
         with ui.matplotlib().figure as fig:
@@ -63,13 +71,44 @@ class tuner_gui:
         ui.button('Print Thread', on_click= lambda : print(threading.current_thread().name))
 
         ui.button('sleep', on_click = lambda : time.sleep(10))
-        with ui.row():
-            self.config_selection = config_files[0]
-            ui.select(config_files, label ='Config File', value = config_files[0],\
-                    on_change = lambda e: self.__setattr__("config_selection", e.value))
-            ui.button('load config', on_click = lambda : ui.notify(self.config_selection))
+ 
+        self.liveplot = ui.matplotlib(figsize = (3,2))
 
-    
+        fig = self.liveplot.figure
+        self.ax = fig.subplots(1,1)
+        xs = np.linspace(-1, 1)
+        self.line = self.ax.plot(xs, np.sin(xs))
+        self.liveplot.update()
+
+        ui.timer(0.05, self.update_liveplot)
+
+
+        self.n = 0
+
+    def update_liveplot(self):
+        retval = self.readout.get_buffer()
+        if retval is None:
+            return
+        else:
+            data, times = retval
+            self.line[0].set_ydata(data)
+            self.line[0].set_xdata(times)
+            self.ax.set_xlim(min(times), max(times))
+            self.ax.set_ylim(-0.5, 1.5)
+
+            #self.ax.relim()
+            #self.ax.autoscale_view()
+            #for l in self.ax.lines:
+                #l.remove()
+            #self.ax.clear()
+            #self.ax.plot(times, data)
+
+            #self.liveplot.figure.canvas.draw()
+            self.liveplot.figure.tight_layout()
+            self.liveplot.update()
+            ui.update()
+
+
     def on_abort(self):
         ui.notify('Aborting...')
 
@@ -91,8 +130,9 @@ class tuner_gui:
             with ui.tab_panel('Home'):
                 self.split_view(self.home_page)
             with ui.tab_panel('Turn-on'):
-                self.split_view(self.home_page)
+                #self.split_view(self.home_page)
+                ui.label('Content of B')
             with ui.tab_panel('Pinch-offs'):
                 ui.label('Content of C')
 
-        ui.run(port = 8080)
+        ui.run(port = 8081)

@@ -9,12 +9,13 @@ As of now, we are using the nicegui web server as the user interface for the aut
 
 import numpy as np
 import matplotlib.pyplot as plt
-from nicegui import ui
+from nicegui import ui, app
 import os
 import threading
 import time
-from buffered_readout import buffered_readout
+from buffered_readout import create_buffer_instance
 
+_gui_instances = []
 
 class tuner_gui:
     def __init__(self):
@@ -23,11 +24,15 @@ class tuner_gui:
 
         :param self:
         '''
-        print(threading.current_thread().name)
+        global _FirstPass
+        
+
         self.lipsum_text = 'Lorem ipsum dolor sit, amet consectetur adipisicing elit. Quis praesentium cumque magnam odio iure quidem, quod illum numquam possimus obcaecati commodi minima assumenda consectetur culpa fuga nulla ullam. In, libero.'
+        print(threading.current_thread().name)
+        global _gui_instance
+        _gui_instances.append(self)
 
-
-        self.readout = buffered_readout()
+        self.readout = create_buffer_instance()
 
         self.readout.run()
 
@@ -136,3 +141,11 @@ class tuner_gui:
                 ui.label('Content of C')
 
         ui.run(port = 8081)
+    def on_shutdown(self):
+        self.readout.join()
+
+@app.on_shutdown
+def shutdown():
+    global _gui_instances
+    for inst in _gui_instances:
+        inst.on_shutdown()

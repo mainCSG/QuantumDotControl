@@ -5,6 +5,16 @@ from typing import List, Tuple
 import random
 
 __BufferExists__ = False
+__Instance__ = None
+
+
+def create_buffer_instance():
+    global __Instance__
+    if __Instance__ is None:
+        __Instance__ = buffered_readout()
+
+    return __Instance__
+
 
 class buffered_readout:
     def __init__(self):
@@ -17,7 +27,7 @@ class buffered_readout:
 
         assert not __BufferExists__, "Error: Readout buffer already exists!!"
 
-        __exists__ = True
+        __BufferExists__ = True
 
         self.time_func = time.time
 
@@ -36,7 +46,7 @@ class buffered_readout:
     
         self.THREAD_NAME = "BufferThread"
         self.thread = threading.Thread(target = self.__thread_loop__, name = self.THREAD_NAME)
-
+        self.running = False
         self.shutdown_event = threading.Event()
 
     def __assert_correct_thread__(self):
@@ -123,7 +133,9 @@ class buffered_readout:
         return (retval, timestamps)
 
     def run(self):
-        self.thread.start()
+        if not self.running:
+            self.thread.start()
+            self.running = True
     def join(self):
         self.shutdown_event.set()
         self.thread.join()

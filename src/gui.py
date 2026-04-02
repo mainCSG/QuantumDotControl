@@ -1,6 +1,6 @@
 '''
 File: gui.py
-Authors: Mason Daub (mjdaub@uwaterloo.ca), Benjamin Van Osch (email)
+Authors: Mason Daub (mjdaub@uwaterloo.ca), Benjamin Van Osch (bvanosch@uwaterloo.ca)
 
 This file contains the gui class that runs the auto tuner.
 As of now, we are using the nicegui web server as the user interface for the auto tuner.

@@ -9,7 +9,7 @@ Entry point to the auto tuner. This
 import yaml
 
 from logger import Logger
-from instrument_control import InstrumentControl
+from src.write_control import InstrumentControl
 from data_analysis import DataAnalysis
 from gui import tuner_gui
 

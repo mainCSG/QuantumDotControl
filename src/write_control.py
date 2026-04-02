@@ -1,3 +1,14 @@
+'''
+File: write_control.py
+Authors: Benjamin Van Osch (bvanosch@uwaterloo.ca), Mason Daub (mjdaub@uwaterloo.ca)
+
+This file contains the WriteControl class, which handles all setting of values to instruments, 
+including sweeps and static voltage configurations.
+
+Currently, QCodes functions are used to carry out sweeps of instrument parameters, however in-house sweep functions
+are currently in development.
+'''
+
 # Import modules
 
 import yaml, datetime, sys, time, os, shutil, json,re
@@ -105,7 +116,7 @@ class LinSweep_SIM928(AbstractSweep[np.float64]):
     def setpoints(self) -> npt.NDArray[np.float64]:
         return self.get_setpoints()
     
-class InstrumentControl:
+class WriteControl:
         
     def __init__(self,
                  logger,
@@ -366,7 +377,7 @@ class InstrumentControl:
 
     def set_voltage_configuration(self, 
                                   voltage_configuration: Dict[str, float] = {},
-                                  stepsize: float = 10e-3):
+                                  stepsize: float = 1e-3):
         
         """
         This method allows the user to smoothly set a given voltage configuration.
@@ -374,7 +385,7 @@ class InstrumentControl:
         Args:
             voltage_configuration (Dict[str, float]): A dictionary containing the names of the gates to be set and
                                                       the corresponding voltages the gates will be set to.
-            stepsize (float): The voltage stepsize for all the gates. Default is set to 10 mV.
+            stepsize (float): The voltage stepsize for all the gates. Default is set to 1 mV.
         """
 
         # First, we determine which gates are being set.
@@ -458,11 +469,12 @@ class InstrumentControl:
 
         return None
 
-    def sweep_1d(self, 
-                 maxV: float = None,
-                 minV: float = None,
-                 voltage_configuration: Dict[str, float] = {},
-                 dV: float = 10e-3) -> pd.DataFrame:
+    def sweep_1d_linsweep(self,
+                          gate: str,  
+                          maxV: float = None,
+                          minV: float = None,
+                          voltage_configuration: Dict[str, float] = {},
+                          dV: float = 10e-3) -> pd.DataFrame:
         
         # Bring device to voltage configuration
 
@@ -486,9 +498,8 @@ class InstrumentControl:
         # Set up gate sweeps
         
         num_steps = self.calculate_num_of_steps(minV, maxV, dV)
-        gates_involved = self.barriers + self.leads + self.accumulation + self.plungers
-
-        print(gates_involved)
+        
+        gates_involved = gate
 
         self.logger.info(f"setting {gates_involved} to {minV} V")
         
@@ -528,13 +539,13 @@ class InstrumentControl:
         
         return None
 
-    def sweep_2d(self,
-                 P1: str = None, 
-                 P2: str = None, 
-                 P1_bounds: tuple = (None, None),
-                 P2_bounds: tuple = (None, None), 
-                 dV: float | tuple = None, 
-                 voltage_configuration: dict = None) -> tuple[pd.DataFrame, plt.Axes]:
+    def sweep_2d_linsweep(self,
+                          P1: str = None, 
+                          P2: str = None, 
+                          P1_bounds: tuple = (None, None),
+                          P2_bounds: tuple = (None, None), 
+                          dV: float | tuple = None, 
+                          voltage_configuration: dict = None) -> tuple[pd.DataFrame, plt.Axes]:
         
         # Bring device to voltage configuration
         if voltage_configuration is not None:
@@ -646,6 +657,9 @@ class InstrumentControl:
         self.set_voltage([P2], maxV_P2)
         
         return None
+
+    def sweep_nd_linsweep(self):
+        pass
 
     def sweep_1d_measurement(self, 
                  maxV: float = None,
@@ -854,11 +868,29 @@ class InstrumentControl:
 
         return None
 
-    def sweep_nd(self):
-        pass
-
     def sweep_nd_measurement(self):
         pass
+
+    def sweep_1d(self,
+                 gate: str,
+                 startV: float = None,
+                 endV: float = None,
+                 voltage_configuration: Dict[str, float] = {},
+                 dV: float = 10e-3) -> pd.DataFrame:
+        
+        """
+        This method allows the user to sweep a given gate parameter from a pre-defined start and end point, with a given stepsize.
+
+        Args:
+            gate (str):
+            startV (float):
+            endV (flaot):
+            voltage_configuration (Dict[str, float]): A dictionary containing the names of the gates to be set and
+                                                      the corresponding voltages the gates will be set to.
+            dV (float): The voltage stepsize for all the gates. Default is set to 1 mV.
+        """
+
+        return None
 
     def check_break_conditions(self):
         

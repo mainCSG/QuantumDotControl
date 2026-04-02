@@ -9,8 +9,13 @@ As of now, we are using the nicegui web server as the user interface for the aut
 
 import numpy as np
 import matplotlib.pyplot as plt
-from nicegui import ui
+from nicegui import ui, app
+import os
+import threading
+import time
+from buffered_readout import create_buffer_instance
 
+_gui_instances = []
 
 class tuner_gui:
     def __init__(self):
@@ -19,7 +24,19 @@ class tuner_gui:
 
         :param self:
         '''
+        global _FirstPass
+        
+
         self.lipsum_text = 'Lorem ipsum dolor sit, amet consectetur adipisicing elit. Quis praesentium cumque magnam odio iure quidem, quod illum numquam possimus obcaecati commodi minima assumenda consectetur culpa fuga nulla ullam. In, libero.'
+        print(threading.current_thread().name)
+        global _gui_instance
+        _gui_instances.append(self)
+
+        self.readout = create_buffer_instance()
+
+        self.readout.run()
+
+
 
     def plotting_panel(self):
         with ui.matplotlib().figure as fig:
@@ -52,7 +69,51 @@ class tuner_gui:
         ui.button('Connect to instruments')
         ui.button('Autotune')
         ui.label(self.lipsum_text)
-    
+        
+        config_files = os.listdir('../configs')
+        config_dict = {i : config_files[i] for i in range(len(config_files))}
+
+        ui.button('Print Thread', on_click= lambda : print(threading.current_thread().name))
+
+        ui.button('sleep', on_click = lambda : time.sleep(10))
+ 
+        self.liveplot = ui.matplotlib(figsize = (3,2))
+
+        fig = self.liveplot.figure
+        self.ax = fig.subplots(1,1)
+        xs = np.linspace(-1, 1)
+        self.line = self.ax.plot(xs, np.sin(xs))
+        self.liveplot.update()
+
+        ui.timer(0.05, self.update_liveplot)
+
+
+        self.n = 0
+
+    def update_liveplot(self):
+        retval = self.readout.get_buffer()
+        if retval is None:
+            return
+        else:
+            data, times = retval
+            self.line[0].set_ydata(data)
+            self.line[0].set_xdata(times)
+            self.ax.set_xlim(min(times), max(times))
+            self.ax.set_ylim(-0.5, 1.5)
+
+            #self.ax.relim()
+            #self.ax.autoscale_view()
+            #for l in self.ax.lines:
+                #l.remove()
+            #self.ax.clear()
+            #self.ax.plot(times, data)
+
+            #self.liveplot.figure.canvas.draw()
+            self.liveplot.figure.tight_layout()
+            self.liveplot.update()
+            ui.update()
+
+
     def on_abort(self):
         ui.notify('Aborting...')
 
@@ -74,8 +135,17 @@ class tuner_gui:
             with ui.tab_panel('Home'):
                 self.split_view(self.home_page)
             with ui.tab_panel('Turn-on'):
-                self.split_view(self.home_page)
+                #self.split_view(self.home_page)
+                ui.label('Content of B')
             with ui.tab_panel('Pinch-offs'):
                 ui.label('Content of C')
 
-        ui.run()
+        ui.run(port = 8081)
+    def on_shutdown(self):
+        self.readout.join()
+
+@app.on_shutdown
+def shutdown():
+    global _gui_instances
+    for inst in _gui_instances:
+        inst.on_shutdown()

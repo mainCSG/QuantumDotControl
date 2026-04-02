@@ -2,7 +2,7 @@
 File: main.py
 Authors: Benjamin Van Osch (bvanosch@uwaterloo.ca), Mason Daub (mjdaub@uwaterloo.ca)
 
-Entry point to the auto tuner.
+Entry point to the auto tuner. This
 
 '''
 from gui import tuner_gui

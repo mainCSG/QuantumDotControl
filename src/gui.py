@@ -34,9 +34,6 @@ class tuner_gui:
 
         self.readout = create_buffer_instance()
 
-        self.readout.run()
-
-
 
     def plotting_panel(self):
         with ui.matplotlib().figure as fig:
@@ -142,10 +139,20 @@ class tuner_gui:
 
         ui.run(port = 8081)
     def on_shutdown(self):
+        print("Starting on_shutdown")
         self.readout.join()
+    def on_startup(self):
+        print("Starting on_startup")
+        self.readout.run()
 
 @app.on_shutdown
 def shutdown():
     global _gui_instances
     for inst in _gui_instances:
         inst.on_shutdown()
+
+@app.on_startup
+def startup():
+    global _gui_instances
+    for inst in _gui_instances:
+        inst.on_startup()

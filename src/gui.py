@@ -13,8 +13,7 @@ from nicegui import ui, app
 import os
 import threading
 import time
-from buffered_readout import create_buffer_instance, buffered_readout
-from dataclasses import dataclass
+from buffered_readout import create_buffer_instance
 import time
 
 
@@ -25,9 +24,6 @@ class tuner_gui:
 
         :param self:
         '''
-        global _FirstPass
-        
-
         self.lipsum_text = 'Lorem ipsum dolor sit, amet consectetur adipisicing elit. Quis praesentium cumque magnam odio iure quidem, quod illum numquam possimus obcaecati commodi minima assumenda consectetur culpa fuga nulla ullam. In, libero.'
         print(threading.current_thread().name)
 
@@ -139,21 +135,3 @@ class tuner_gui:
         print("Starting on_shutdown")
         self.readout.join()
 
-gui : tuner_gui
-
-@app.on_startup
-def start_tuner_gui():
-    print("Starting the GUI...")
-    global gui
-    gui = tuner_gui()
-
-@app.on_shutdown
-def stop_tuner_gui():
-    print("Stopping the gui")
-    global gui
-    gui.on_shutdown()
-
-@ui.page('/')
-def tuner_gui_root_page():
-    global gui
-    gui.root_page()

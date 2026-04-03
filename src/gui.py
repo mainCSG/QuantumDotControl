@@ -13,9 +13,10 @@ from nicegui import ui, app
 import os
 import threading
 import time
-from buffered_readout import create_buffer_instance
+from buffered_readout import create_buffer_instance, buffered_readout
+from dataclasses import dataclass
+import time
 
-_gui_instances = []
 
 class tuner_gui:
     def __init__(self):
@@ -29,10 +30,11 @@ class tuner_gui:
 
         self.lipsum_text = 'Lorem ipsum dolor sit, amet consectetur adipisicing elit. Quis praesentium cumque magnam odio iure quidem, quod illum numquam possimus obcaecati commodi minima assumenda consectetur culpa fuga nulla ullam. In, libero.'
         print(threading.current_thread().name)
-        global _gui_instance
-        _gui_instances.append(self)
 
         self.readout = create_buffer_instance()
+        self.readout.run()
+
+        self.start_time = time.time()
 
 
     def plotting_panel(self):
@@ -74,12 +76,15 @@ class tuner_gui:
 
         ui.button('sleep', on_click = lambda : time.sleep(10))
  
-        self.liveplot = ui.matplotlib(figsize = (3,2))
+        self.liveplot = ui.matplotlib(figsize = (4, 3))
 
         fig = self.liveplot.figure
         self.ax = fig.subplots(1,1)
+        self.ax.set_xlabel("Time (s)")
+        self.ax.set_ylabel('Signal (V)')
         xs = np.linspace(-1, 1)
         self.line = self.ax.plot(xs, np.sin(xs))
+        fig.tight_layout()
         self.liveplot.update()
 
         ui.timer(0.05, self.update_liveplot)
@@ -87,34 +92,27 @@ class tuner_gui:
 
         self.n = 0
 
-    def update_liveplot(self):
+    def update_liveplot(self): 
         retval = self.readout.get_buffer()
         if retval is None:
             return
         else:
             data, times = retval
+
+            times_offset = np.array(times) - self.start_time
             self.line[0].set_ydata(data)
-            self.line[0].set_xdata(times)
-            self.ax.set_xlim(min(times), max(times))
+            self.line[0].set_xdata(times_offset)
+            self.ax.set_xlim(min(times_offset), max(times_offset))
             self.ax.set_ylim(-0.5, 1.5)
 
-            #self.ax.relim()
-            #self.ax.autoscale_view()
-            #for l in self.ax.lines:
-                #l.remove()
-            #self.ax.clear()
-            #self.ax.plot(times, data)
-
-            #self.liveplot.figure.canvas.draw()
-            self.liveplot.figure.tight_layout()
             self.liveplot.update()
-            ui.update()
+            #ui.update()
 
 
     def on_abort(self):
         ui.notify('Aborting...')
 
-    def start(self):
+    def root_page(self):
         with ui.header().classes(replace='row items-center') as header:
             with ui.dropdown_button('', icon = 'menu', auto_close=True):
                 ui.item('Export', on_click=lambda : ui.notify("You clicked export"))
@@ -137,22 +135,25 @@ class tuner_gui:
             with ui.tab_panel('Pinch-offs'):
                 ui.label('Content of C')
 
-        ui.run(port = 8081)
     def on_shutdown(self):
         print("Starting on_shutdown")
         self.readout.join()
-    def on_startup(self):
-        print("Starting on_startup")
-        self.readout.run()
 
-@app.on_shutdown
-def shutdown():
-    global _gui_instances
-    for inst in _gui_instances:
-        inst.on_shutdown()
+gui : tuner_gui
 
 @app.on_startup
-def startup():
-    global _gui_instances
-    for inst in _gui_instances:
-        inst.on_startup()
+def start_tuner_gui():
+    print("Starting the GUI...")
+    global gui
+    gui = tuner_gui()
+
+@app.on_shutdown
+def stop_tuner_gui():
+    print("Stopping the gui")
+    global gui
+    gui.on_shutdown()
+
+@ui.page('/')
+def tuner_gui_root_page():
+    global gui
+    gui.root_page()

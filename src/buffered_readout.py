@@ -22,7 +22,6 @@ class buffered_readout:
         A class to handle the asynchronous buffered readout of the SET current for
         autotuning devices.
         '''
-
         global __BufferExists__
 
         assert not __BufferExists__, "Error: Readout buffer already exists!!"

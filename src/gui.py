@@ -15,6 +15,7 @@ import threading
 import time
 from buffered_readout import create_buffer_instance
 import time
+from experiment_thread import ExperimentThread
 
 
 class tuner_gui:
@@ -25,12 +26,17 @@ class tuner_gui:
         :param self:
         '''
         self.lipsum_text = 'Lorem ipsum dolor sit, amet consectetur adipisicing elit. Quis praesentium cumque magnam odio iure quidem, quod illum numquam possimus obcaecati commodi minima assumenda consectetur culpa fuga nulla ullam. In, libero.'
-        print(threading.current_thread().name)
 
         self.readout = create_buffer_instance()
         self.readout.run()
 
         self.start_time = time.time()
+
+        self.exp_thread = ExperimentThread()
+        self.exp_thread.run()
+
+        test_func = lambda a, e: print(a)
+        self.exp_thread.add_job(test_func, ("Hello World!",))
 
 
     def plotting_panel(self):
@@ -67,10 +73,6 @@ class tuner_gui:
         
         config_files = os.listdir('../configs')
         config_dict = {i : config_files[i] for i in range(len(config_files))}
-
-        ui.button('Print Thread', on_click= lambda : print(threading.current_thread().name))
-
-        ui.button('sleep', on_click = lambda : time.sleep(10))
  
         self.liveplot = ui.matplotlib(figsize = (4, 3))
 
@@ -134,4 +136,5 @@ class tuner_gui:
     def on_shutdown(self):
         print("Starting on_shutdown")
         self.readout.join()
+        self.exp_thread.join()
 

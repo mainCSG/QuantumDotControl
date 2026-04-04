@@ -12,6 +12,7 @@ with an Abort call from the user.
 
 import threading
 from queue import PriorityQueue
+from collections.abc import Callable
 
 class ExperimentThread:
 
@@ -23,7 +24,7 @@ class ExperimentThread:
         self.abort_event =  threading.Event()
         self.shutdown_event = threading.Event()
         self.job_queue = PriorityQueue()
-        self.THREAD_NAME = "experimental_thread"
+        self.THREAD_NAME = "ExperimentThread"
         self.thread = threading.Thread(target = self.__thread_loop__, name = self.THREAD_NAME)
 
     def run(self):
@@ -31,7 +32,8 @@ class ExperimentThread:
         self.thread.start()
     
     def join(self):
-
+        print("Stopping the experiment thread...")
+        self.shutdown_event.set()
         self.thread.join()
     
     def __assert_correct_thread__(self):
@@ -39,10 +41,10 @@ class ExperimentThread:
         assert threading.current_thread().name == self.THREAD_NAME, f"The current thread, {threading.current_thread().name}, is not the Experiment Thread." 
 
     def add_job(self,
-                f: callable,
+                f: Callable,
                 args,
                 priority: int = 1):
-
+        print(args)
         self.job_queue.put((priority,(f, args)))
     
     def abort(self):
@@ -50,9 +52,10 @@ class ExperimentThread:
         self.abort_event.set()
 
     
-    def __thread_loop__(self, job):
+    def __thread_loop__(self):
+        print("Starting the Experiment Thread Worker")
 
-        while not self.shutdown_event.set():
+        while not self.shutdown_event.is_set():
 
             self.job_event.wait(timeout = 1)
 
@@ -60,6 +63,8 @@ class ExperimentThread:
                 priority, data = self.job_queue.get()
 
                 f, args = data
+                
+                print(f"Doing job: {data}")
 
                 f(*args, self.abort_event)
 
@@ -67,4 +72,5 @@ class ExperimentThread:
 
                 while self.abort_event.is_set():
                     self.job_queue.get()
+                    self.job_queue.task_done()
 

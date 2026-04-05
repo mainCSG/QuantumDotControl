@@ -18,11 +18,14 @@ from buffered_readout import create_buffer_instance
 _gui_instances = []
 
 class tuner_gui:
+    
     def __init__(self):
+        
         '''
         Creates an instance of the tuner gui
 
-        :param self:
+        params: 
+            self:
         '''
         global _FirstPass
         
@@ -36,9 +39,126 @@ class tuner_gui:
 
         self.readout.run()
 
+    def start(self):
+
+        """
+        The method that intialises the gui. As of now, it also defines the main page of the within itself.
+
+        params: 
+            self:
+        """
+
+        self.header()
+
+        # I tried putting these splitters into a separate function, but then the gui wouldn't start. 
+
+        with ui.splitter(value = 54, limits = (54,54)) as splitter1:
+            
+            with splitter1.before:
+
+                with ui.dropdown_button('', icon = 'menu', auto_close=True):
+                    ui.item('Load Config Files', on_click=lambda : ui.notify("Fetching Configuration Files..."))
+                    ui.item('Instrument Information', on_click=lambda : ui.notify("Loading Instrument Information..."))
+                    ui.item('Device Information', on_click=lambda : ui.notify("Loading Device Information..."))
+
+                stages = ['Setup','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
+
+                with ui.tabs() as tabs:
+                    
+                    for stage in stages:
+                        ui.tab(stage)
+
+                with ui.tab_panels(tabs, value='Home').classes('w-full'):
+            
+                    with ui.tab_panel('Setup'):
+
+                        self.results_plot_panel()
+
+                        ui.button('Connect to instruments')
+                        ui.button('Autotune')
+                        ui.label(self.lipsum_text)
+                        
+                        config_files = os.listdir('../configs')
+                        config_dict = {i : config_files[i] for i in range(len(config_files))}
+
+                    with ui.tab_panel('Bootstrapping'):
+
+                        ui.label('Bootstrapping Information')
+                    
+                    with ui.tab_panel('Coarse Tuning'):
+                        
+                        ui.label('Coarse Tuning Information')   
+
+                    with ui.tab_panel('Virtual Gating'):
+                        
+                        ui.label('Virtual Gating Information')
+
+                    with ui.tab_panel('Charge State Tuning'):
+                        
+                        ui.label('Charge State Tuning')
+
+                    with ui.tab_panel('Fine Tuning'):
+                        
+                        ui.label('Fine Tuning Information')
+
+            with splitter1.after:
+
+                with ui.splitter(horizontal = True) as splitter2:
+                    
+                    with splitter2.before:
+                        
+                        self.live_plot_window()
+
+                    with splitter2.after:
+
+                        ui.label('Logger Information').classes('ml-2')
 
 
-    def plotting_panel(self):
+                ui.timer(0.05, self.update_liveplot)
+                self.n = 0
+
+        self.footer()
+
+        ui.run(port = 8081)
+
+    def header(self):
+        
+        """
+        The method that defines the header of the gui.
+
+        params: 
+            self:
+        """
+
+        with ui.header().classes(replace='row items-center') as header:
+            ui.label('Header')
+
+    def footer(self):
+        
+        """
+        The method that intialises the footer of the gui.
+
+        params: 
+            self:
+        """
+
+        with ui.footer(value=True) as footer:
+            ui.label('Footer')
+            ui.button('ABORT', on_click = self.on_abort, color='red')
+
+    def results_plot_panel(self):
+
+        """
+        The method that defines the results plots. This method takes the output plots from data_analysis 
+        and displays them in its corresponding autotuning stage tab.
+
+        params:
+            self:
+            results:
+
+
+        """
+
         with ui.matplotlib().figure as fig:
             #fig = plt.gcf()
             axs = fig.subplots(1, 2)
@@ -47,37 +167,38 @@ class tuner_gui:
             axs[1].plot(xs, np.cos(xs))
             fig.tight_layout()
 
-    def right_panel(self):
-        with ui.splitter(horizontal = True) as splitter:
-            with splitter.before:
-                self.plotting_panel()
-            with splitter.after:
-                ui.label('Status')
-                ui.label('Autotuner: idle')
-                ui.label('Instrmuents...')
-                ui.label(self.lipsum_text)
-
-    def split_view(self, page):
-        with ui.splitter() as splitter:
-            with splitter.after:
-                self.right_panel()
-            with splitter.before:
-                page()
-
-    def home_page(self):
-        ui.label('Home Page stuff')
-        ui.button('Connect to instruments')
-        ui.button('Autotune')
-        ui.label(self.lipsum_text)
+    def split_view(self, page1, page2, horizontal_split: bool = False):
         
-        config_files = os.listdir('../configs')
-        config_dict = {i : config_files[i] for i in range(len(config_files))}
+        """
+        This method creates a split view of two specified pages. 
 
-        ui.button('Print Thread', on_click= lambda : print(threading.current_thread().name))
+        params:
+            self:
+            page1: The first page of the split. Depending on if horizontal_split is True or False, 
+                   this page will be on the top, or the left, respectively.
+            page2: The second page of the split. Depending on if horizontal_split is True or False, 
+                   this page will be on the bottom, or the right, respectively.
+            horizontal_split: Determines whether the split creates a left/right splitting, or a top/bottom splitting. True implies
+                              the split is horizontal, meaning it will be top/bottom. False means a vertical split, or left/right splitting.
+        """
 
-        ui.button('sleep', on_click = lambda : time.sleep(10))
- 
-        self.liveplot = ui.matplotlib(figsize = (3,2))
+        with ui.splitter(horizontal = horizontal_split) as splitter:
+            with splitter.after:
+                page2()
+            with splitter.before:
+                page1()
+   
+    def live_plot_window(self):
+
+        """
+        The method that defines the live plot window, which streams the measurement of our readout instrument.
+
+        params:
+            self:
+        
+        """
+
+        self.liveplot = ui.matplotlib(figsize = (30,20))
 
         fig = self.liveplot.figure
         self.ax = fig.subplots(1,1)
@@ -85,12 +206,17 @@ class tuner_gui:
         self.line = self.ax.plot(xs, np.sin(xs))
         self.liveplot.update()
 
-        ui.timer(0.05, self.update_liveplot)
-
-
-        self.n = 0
-
     def update_liveplot(self):
+        
+        """
+        The method that updates the live plot window. This method gets values from the readout buffer, and adds them to the 
+        live plot window.
+
+        params:
+            self:
+        
+        """
+
         retval = self.readout.get_buffer()
         if retval is None:
             return
@@ -113,36 +239,15 @@ class tuner_gui:
             self.liveplot.update()
             ui.update()
 
-
     def on_abort(self):
         ui.notify('Aborting...')
-
-    def start(self):
-        with ui.header().classes(replace='row items-center') as header:
-            with ui.dropdown_button('', icon = 'menu', auto_close=True):
-                ui.item('Export', on_click=lambda : ui.notify("You clicked export"))
-        #ui.button(on_click=lambda: left_drawer.toggle(), icon='menu').props('flat color=white')
-            with ui.tabs() as tabs:
-                ui.tab('Home')
-                ui.tab('Turn-on')
-                ui.tab('Pinch-offs')
-
-        with ui.footer(value=True) as footer:
-            ui.label('Footer')
-            ui.button('ABORT', on_click = self.on_abort, color='red')
-
-        with ui.tab_panels(tabs, value='Home').classes('w-full'):
-            with ui.tab_panel('Home'):
-                self.split_view(self.home_page)
-            with ui.tab_panel('Turn-on'):
-                #self.split_view(self.home_page)
-                ui.label('Content of B')
-            with ui.tab_panel('Pinch-offs'):
-                ui.label('Content of C')
-
-        ui.run(port = 8081)
+    
     def on_shutdown(self):
         self.readout.join()
+
+    def experiment_progress_bar():
+
+        pb = ui.linear_progress()
 
 @app.on_shutdown
 def shutdown():

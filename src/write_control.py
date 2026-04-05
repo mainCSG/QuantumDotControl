@@ -306,8 +306,6 @@ class WriteControl:
         self.plungers = []
         self.accumulation = []
         self.screening = []
-
-        # TODO Add additional logic to load SPI rack connections separately from other instruments (either or, both, etc.)
         
         for gate, details in self.device_gates.items():
             
@@ -882,13 +880,112 @@ class WriteControl:
         This method allows the user to sweep a given gate parameter from a pre-defined start and end point, with a given stepsize.
 
         Args:
-            gate (str):
-            startV (float):
-            endV (flaot):
+            gate (str): The gate to be swept.
+
+            startV (float): The intial voltage for the sweep, specified in volts.
+            
+            endV (float): The final voltage for the sweep, specified in volts.
+            
             voltage_configuration (Dict[str, float]): A dictionary containing the names of the gates to be set and
                                                       the corresponding voltages the gates will be set to.
-            dV (float): The voltage stepsize for all the gates. Default is set to 1 mV.
+            
+            dV (float): The voltage stepsize for all the gates. The default is set to 1 mV.
         """
+
+        if voltage_configuration is not None:
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
+            self.set_voltage_configuration(voltage_configuration)
+
+        # Default dV and maxV based on setup_config and config
+
+        if dV is None:
+            dV = self.voltage_resolution
+
+        if startV is None:
+            maxV = self.voltage_sign * self.abs_max_gate_voltage
+
+        if endV is None:
+            maxV = self.voltage_sign * self.abs_max_gate_voltage
+
+        assert np.sign(endV) == self.voltage_sign, self.logger.error("Double check the sign of the gate voltage (maxV) for your given device.")
+        assert np.sign(startV) == self.voltage_sign or np.sign(startV) == 0, self.logger.error("Double check the sign of the gate voltage (minV) for your given device.")
+
+        # Set up gate sweeps
+        
+        num_steps = self.calculate_num_of_steps(startV, endV, dV)
+        
+        gates_involved = gate
+
+        self.logger.info(f"setting {gates_involved} to {startV} V")
+        
+        self.set_voltage_configuration(gates_involved, startV)
+
+        intermediate = []
+        done = set()
+
+        prevvals = {}
+        gate_params = {}
+        gate_steps = {}
+
+        # Now, we map the gate to the source and save the correspondance
+
+        gate_to_source = {}
+
+        for source_name, instrument in self.voltage_sources.items():
+            for gate in self.voltage_source_names_check[source_name]:
+                gate_to_source[gate] = instrument
+
+        for gate, target in voltage_configuration.items():
+
+            instrument = gate_to_source[gate]
+            param = getattr(instrument, gate)
+
+            gate_params[gate] = param
+            prevvals[gate] = float(param.get())
+
+            step_param = getattr(instrument, f"{gate}_step", None)
+            
+            gate_steps[gate] = step_param() if step_param else dV
+
+        # Now, we generate the ramp
+
+        while len(done) < len(voltage_configuration):
+
+            step = {}
+
+            for gate, target in voltage_configuration.items():
+
+                if gate in done:
+                    continue
+
+                prev = prevvals[gate]
+                step_size = gate_steps[gate]
+
+                dv = target - prev
+
+                if abs(dv) <= step_size:
+                    step[gate] = target
+                    done.add(gate)
+                else:
+                    step[gate] = prev + step_size * (1 if dv > 0 else -1)
+
+                prevvals[gate] = step[gate]
+
+            intermediate.append(step)
+
+        # Finally, we apply the ramp
+
+        for step in intermediate:
+
+            for gate, voltage in step.items():
+                gate_params[gate].set(voltage)
+
+            # This lets us sleep once per step
+            for instrument in self.voltage_sources.values():
+                delay_param = getattr(instrument, "smooth_timestep", None)
+                if delay_param:
+                    time.sleep(delay_param())
+                    break
 
         return None
 

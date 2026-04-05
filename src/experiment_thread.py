@@ -12,10 +12,11 @@ with an Abort call from the user.
 
 import threading
 from queue import PriorityQueue
+from nicegui import app
 
 class ExperimentThread:
 
-
+    
     def __init__(self):
 
 
@@ -25,7 +26,8 @@ class ExperimentThread:
         self.job_queue = PriorityQueue()
         self.THREAD_NAME = "experimental_thread"
         self.thread = threading.Thread(target = self.__thread_loop__, name = self.THREAD_NAME)
-
+    
+    
     def run(self):
 
         self.thread.start()
@@ -68,3 +70,7 @@ class ExperimentThread:
                 while self.abort_event.is_set():
                     self.job_queue.get()
 
+@app.on_startup
+
+
+@app.on_startup

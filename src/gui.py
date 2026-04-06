@@ -20,17 +20,24 @@ from experiment_thread import ExperimentThread
 
 
 class tuner_gui:
+    
+    # The below methods define the layout of the GUI
+
     def __init__(self):
+        
         '''
         Creates an instance of the tuner gui
 
-        :param self:
+        params: 
+            self:
         '''
         global _FirstPass
         
         # print(threading.current_thread().name)
         global _gui_instances
         _gui_instances.append(self)
+
+        self.start_time = 0
 
         self.readout = create_buffer_instance()
         self.readout.run()
@@ -70,32 +77,38 @@ class tuner_gui:
             
                     with ui.tab_panel('Setup'):
 
-                        ui.button('Connect to instruments', on_click = self.on_connect)
+                        self.results_plot_panel()
 
-                        ui.button('Autotune', on_click = self.on_autotune)
+                        self.instr = ui.button('Connect to instruments', on_click = self.experiment_progress_bar)
+                        self.autotune = ui.button('Autotune')
                         
                         config_files = os.listdir('../configs')
                         config_dict = {i : config_files[i] for i in range(len(config_files))}
 
                     with ui.tab_panel('Bootstrapping'):
 
-                        ui.label('Bootstrapping Information')
+                        ui.label('Collecting Bootstrapping Information...')
+
                     
                     with ui.tab_panel('Coarse Tuning'):
                         
-                        ui.label('Coarse Tuning Information')   
+                        ui.label('Collecting Coarse Tuning Information...')   
+
 
                     with ui.tab_panel('Virtual Gating'):
                         
-                        ui.label('Virtual Gating Information')
+                        ui.label('Collecting Virtual Gating Information...')
+
 
                     with ui.tab_panel('Charge State Tuning'):
                         
-                        ui.label('Charge State Tuning')
+                        ui.label('Collecting Charge State Tuning...')
+
 
                     with ui.tab_panel('Fine Tuning'):
                         
-                        ui.label('Fine Tuning Information')
+                        ui.label('Collecting Fine Tuning Information...')
+
 
             with splitter1.after:
 
@@ -111,6 +124,7 @@ class tuner_gui:
 
 
                 ui.timer(0.05, self.update_liveplot)
+                ui.timer(0.25, self.update_experiment_progress_bar)
                 self.n = 0
 
         self.footer()
@@ -127,7 +141,7 @@ class tuner_gui:
         """
 
         with ui.header().classes(replace='row items-center') as header:
-            ui.label('Header')
+            ui.label('Welcome to the Quantum Spin Qubit Device Autotuner!!!')
 
     def footer(self):
         
@@ -139,10 +153,9 @@ class tuner_gui:
         """
 
         with ui.footer(value=True) as footer:
-            ui.label('Footer')
             ui.button('ABORT', on_click = self.on_abort, color='red')
 
-    # The below methods define the features of the GUI
+    # The below methods define all features and general functions of the GUI
 
     def results_plot_panel(self):
 
@@ -164,7 +177,7 @@ class tuner_gui:
             axs[0].plot(xs, np.sin(xs))
             axs[1].plot(xs, np.cos(xs))
             fig.tight_layout()
-   
+
     def live_plot_window(self):
 
         """
@@ -188,11 +201,6 @@ class tuner_gui:
         self.ax.tick_params(labelsize = 50)
         self.liveplot.update()
 
-        ui.timer(0.05, self.update_liveplot)
-
-
-        self.n = 0
-
     def update_liveplot(self): 
         retval = self.readout.get_buffer()
         if retval is None:
@@ -209,63 +217,20 @@ class tuner_gui:
             self.liveplot.update()
             ui.update()
 
+    def experiment_progress_bar(self):
 
-    def experiment_progress_bar():
+        self.pb = ui.linear_progress(show_value = False)
+        self.instr.disable()
 
-        pb = ui.linear_progress()
+    def update_experiment_progress_bar(self):
 
-    def split_view(self, page1, page2, horizontal_split: bool = False):
-        
-        """
-        This method creates a split view of two specified pages. 
+        if self.pb.value < 1.02:
+            self.pb.value += 0.01
 
-        params:
-            self:
-            page1: The first page of the split. Depending on if horizontal_split is True or False, 
-                   this page will be on the top, or the left, respectively.
-            page2: The second page of the split. Depending on if horizontal_split is True or False, 
-                   this page will be on the bottom, or the right, respectively.
-            horizontal_split: Determines whether the split creates a left/right splitting, or a top/bottom splitting. True implies
-                              the split is horizontal, meaning it will be top/bottom. False means a vertical split, or left/right splitting.
-        """
-
-        with ui.splitter(horizontal = horizontal_split) as splitter:
-            with splitter.after:
-                page2()
-            with splitter.before:
-                page1()
-
-    # The below methods define all the button press logic of the GUI
-
-    def on_connect(self):
-        
-        """
-        This method will connect to the load_config_files method in write control and XXX in buffered readout, to initialise connections 
-        to the instruments for setting voltages, and the buffered readout to start capturing data on the live plotting window.
-
-        params:
-            self:
-        """
-        
-        pass
-
-    def on_autotune(self):
-        
-        """
-        This method starts the defined autotuning protocol. Currently, the autotuning protocol is specific to the Intel Tunnel Falls
-        devices, by following the autotuning_protocol.py file. This will be updated to allow for application to general devices.
-
-
-        params:
-            self:
-
-        """
-        
-        pass
-
-    def experiment_progress_bar():
-
-        pb = ui.linear_progress()
+        if round(self.pb.value, 1) == 1.0:
+            
+            self.pb.delete()
+            self.instr.enable()
 
     def split_view(self, page1, page2, horizontal_split: bool = False):
         
@@ -317,32 +282,8 @@ class tuner_gui:
         pass
 
     def on_abort(self):
-        
         ui.notify('Aborting...')
-
-    def root_page(self):
-        with ui.header().classes(replace='row items-center') as header:
-            with ui.dropdown_button('', icon = 'menu', auto_close=True):
-                ui.item('Export', on_click=lambda : ui.notify("You clicked export"))
-        #ui.button(on_click=lambda: left_drawer.toggle(), icon='menu').props('flat color=white')
-            with ui.tabs() as tabs:
-                ui.tab('Home')
-                ui.tab('Turn-on')
-                ui.tab('Pinch-offs')
-
-        with ui.footer(value=True) as footer:
-            ui.label('Footer')
-            ui.button('ABORT', on_click = self.on_abort, color='red')
-
-        with ui.tab_panels(tabs, value='Home').classes('w-full'):
-            with ui.tab_panel('Home'):
-                self.split_view(self.home_page)
-            with ui.tab_panel('Turn-on'):
-                #self.split_view(self.home_page)
-                ui.label('Content of B')
-            with ui.tab_panel('Pinch-offs'):
-                ui.label('Content of C')
-
+    
     def on_shutdown(self):
         
         self.readout.join()

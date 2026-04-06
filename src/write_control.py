@@ -306,8 +306,6 @@ class WriteControl:
         self.plungers = []
         self.accumulation = []
         self.screening = []
-
-        # TODO Add additional logic to load SPI rack connections separately from other instruments (either or, both, etc.)
         
         for gate, details in self.device_gates.items():
             
@@ -871,12 +869,16 @@ class WriteControl:
         This method allows the user to sweep a given gate parameter from a pre-defined start and end point, with a given stepsize.
 
         Args:
-            gate (str):
-            startV (float):
-            endV (flaot):
+            gate (str): The gate to be swept.
+
+            startV (float): The intial voltage for the sweep, specified in volts.
+            
+            endV (float): The final voltage for the sweep, specified in volts.
+            
             voltage_configuration (Dict[str, float]): A dictionary containing the names of the gates to be set and
                                                       the corresponding voltages the gates will be set to.
-            dV (float): The voltage stepsize for all the gates. Default is set to 1 mV.
+            
+            dV (float): The voltage stepsize for all the gates. The default is set to 1 mV.
         """
 
         # First, we set the initial voltage configuration specified

@@ -16,7 +16,7 @@ from collections.abc import Callable
 
 class ExperimentThread:
 
-
+    
     def __init__(self):
 
 
@@ -26,7 +26,8 @@ class ExperimentThread:
         self.job_queue = PriorityQueue()
         self.THREAD_NAME = "ExperimentThread"
         self.thread = threading.Thread(target = self.__thread_loop__, name = self.THREAD_NAME)
-
+    
+    
     def run(self):
 
         self.thread.start()
@@ -74,3 +75,10 @@ class ExperimentThread:
                     self.job_queue.get()
                     self.job_queue.task_done()
 
+@app.on_startup
+def run_experimental_thread():
+    pass
+
+@app.on_startup
+def __init__():
+    pass

@@ -15,7 +15,7 @@ import yaml, datetime, sys, time, os, shutil, json,re
 from pathlib import Path
 
 import pandas as pd
-
+import math
 import numpy as np
 
 import scipy as sp
@@ -400,20 +400,16 @@ class WriteControl:
 
         # Now, we set up some lists to hold the voltage values 
 
-        intermediate = []
-        done = set()
-
-        prevvals = {}
         gate_params = {}
-        gate_steps = {}
+        start_vals = {}
+        step_sizes = {}
 
         # Now, we map the gate to the source and save the correspondance
 
-        gate_to_source = {}
+        gate_to_source = {gate: instrument for source_name, instrument in self.voltage_sources.items()
+                          for gate in self.voltage_source_names_check[source_name]}
 
-        for source_name, instrument in self.voltage_sources.items():
-            for gate in self.voltage_source_names_check[source_name]:
-                gate_to_source[gate] = instrument
+        # Now, we gather the parameters to set
 
         for gate, target in voltage_configuration.items():
 
@@ -421,53 +417,46 @@ class WriteControl:
             param = getattr(instrument, gate)
 
             gate_params[gate] = param
-            prevvals[gate] = float(param.get())
+            start_vals[gate] = float(param.get())
 
             step_param = getattr(instrument, f"{gate}_step", None)
-            
-            gate_steps[gate] = step_param() if step_param else stepsize
+            step_sizes[gate] = step_param() if step_param else stepsize
 
-        # Now, we generate the ramp
+        # Now, we determine the number of steps needed for each gate
 
-        while len(done) < len(voltage_configuration):
+        steps_needed = {}
 
-            step = {}
+        for gate, target in voltage_configuration.items():
+
+            dv = abs(target - start_vals[gate])
+            steps_needed[gate] = math.ceil(dv / step_sizes[gate])
+
+        max_steps = max(steps_needed.values())
+
+        # Finally, we conduct the ramp
+
+        for step in range(1, max_steps + 1):
 
             for gate, target in voltage_configuration.items():
 
-                if gate in done:
-                    continue
+                start = start_vals[gate] 
+                step_size = step_sizes[gate]
 
-                prev = prevvals[gate]
-                step_size = gate_steps[gate]
+                direction = np.sign(target - start)
+                value = start + direction * step * step_size
 
-                dv = target - prev
-
-                if abs(dv) <= step_size:
-                    step[gate] = target
-                    done.add(gate)
+                if direction > 0:
+                    value = min(value, target)
                 else:
-                    step[gate] = prev + step_size * (1 if dv > 0 else -1)
+                    value = max(value, target)
 
-                prevvals[gate] = step[gate]
+                gate_params[gate].set(value)
 
-            intermediate.append(step)
-
-        # Finally, we apply the ramp
-
-        for step in intermediate:
-
-            for gate, voltage in step.items():
-                gate_params[gate].set(voltage)
-
-            # This lets us sleep once per step
-            for instrument in self.voltage_sources.values():
-                delay_param = getattr(instrument, "smooth_timestep", None)
-                if delay_param:
-                    time.sleep(delay_param())
-                    break  
-
-        return None
+        for instrument in self.voltage_sources.values():
+            delay_param = getattr(instrument, "smooth_timestep", None)
+            if delay_param:
+                time.sleep(delay_param())
+                break
 
     def sweep_1d_linsweep(self,
                           gate: str,  
@@ -890,7 +879,103 @@ class WriteControl:
             dV (float): The voltage stepsize for all the gates. Default is set to 1 mV.
         """
 
-        return None
+        # First, we set the initial voltage configuration specified
+
+        if voltage_configuration is not None:
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
+            self.set_voltage_configuration(voltage_configuration)
+
+        # Then, we set the default dV and V bounds based on the config and setup_config files
+
+        if dV is None:
+            dV = self.voltage_resolution
+
+        if startV is None:
+            minV = self.voltage_sign * self.abs_max_gate_voltage
+
+        if endV is None:
+            maxV = self.voltage_sign * self.abs_max_gate_voltage
+
+        assert np.sign(endV) == self.voltage_sign, self.logger.error("Double check the sign of the gate voltage (maxV) for your given device.")
+        assert np.sign(startV) == self.voltage_sign or np.sign(startV) == 0, self.logger.error("Double check the sign of the gate voltage (minV) for your given device.")
+
+        # Now, we collect the gate involved and set it to the initial voltage
+        
+        gates_involved = gate
+
+        self.logger.info(f"setting {gates_involved} to {startV} V")
+        
+        self.set_voltage_configuration(gates_involved, startV)
+
+        # First, we determine which gates are being set.
+
+        gates = list(voltage_configuration.keys())
+
+        # Then, we assert that the sign of the voltage we wish to set agrees with the device we are testing
+
+        for gate in gates:
+
+            assert np.sign(voltage_configuration[gate]) == np.sign(self.voltage_sign) or np.sign(voltage_configuration[gate]) == 0, f"Check voltage sign on {gate}"
+
+        # Now, we set up some lists to hold the voltage values 
+
+        gate_params = {}
+        start_vals = {}
+        step_sizes = {}
+
+        # Now, we map the gate to the source and save the correspondance
+
+        gate_to_source = {gate: instrument for source_name, instrument in self.voltage_sources.items()
+                          for gate in self.voltage_source_names_check[source_name]}
+
+        # Now, we gather the parameters to set
+
+        for gate, target in voltage_configuration.items():
+
+            instrument = gate_to_source[gate]
+            param = getattr(instrument, gate)
+
+            gate_params[gate] = param
+            start_vals[gate] = float(param.get())
+
+            step_param = getattr(instrument, f"{gate}_step", None)
+            step_sizes[gate] = step_param() if step_param else stepsize
+
+        # Now, we determine the number of steps needed for each gate
+
+        steps_needed = {}
+
+        for gate, target in voltage_configuration.items():
+
+            dv = abs(target - start_vals[gate])
+            steps_needed[gate] = math.ceil(dv / step_sizes[gate])
+
+        max_steps = max(steps_needed.values())
+
+        # Finally, we conduct the ramp
+
+        for step in range(1, max_steps + 1):
+
+            for gate, target in voltage_configuration.items():
+
+                start = start_vals[gate] 
+                step_size = step_sizes[gate]
+
+                direction = np.sign(target - start)
+                value = start + direction * step * step_size
+
+                if direction > 0:
+                    value = min(value, target)
+                else:
+                    value = max(value, target)
+
+                gate_params[gate].set(value)
+
+        for instrument in self.voltage_sources.values():
+            delay_param = getattr(instrument, "smooth_timestep", None)
+            if delay_param:
+                time.sleep(delay_param())
+                break
 
     def check_break_conditions(self):
         

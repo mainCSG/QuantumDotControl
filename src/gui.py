@@ -6,6 +6,7 @@ This file contains the gui class that runs the auto tuner.
 As of now, we are using the nicegui web server as the user interface for the auto tuner.
 '''
 
+# Imports
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -25,21 +26,137 @@ class tuner_gui:
 
         :param self:
         '''
-        self.lipsum_text = 'Lorem ipsum dolor sit, amet consectetur adipisicing elit. Quis praesentium cumque magnam odio iure quidem, quod illum numquam possimus obcaecati commodi minima assumenda consectetur culpa fuga nulla ullam. In, libero.'
+        global _FirstPass
+        
+        # print(threading.current_thread().name)
+        global _gui_instances
+        _gui_instances.append(self)
 
         self.readout = create_buffer_instance()
         self.readout.run()
 
-        self.start_time = time.time()
+    # The below methods define the layout of the GUI
 
-        self.exp_thread = ExperimentThread()
-        self.exp_thread.run()
+    def start(self):
 
-        test_func = lambda a, e: print(f"'{a}' from {threading.current_thread().name}")
-        self.exp_thread.add_job(test_func, ("Hello World!",))
+        """
+        The method that intialises the gui. As of now, it also defines the main page of the within itself.
+
+        params: 
+            self:
+        """
+
+        self.header()
+
+        # I tried putting these splitters into a separate function, but then the gui wouldn't start. 
+
+        with ui.splitter(value = 54, limits = (54,54)) as splitter1:
+            
+            with splitter1.before:
+
+                with ui.dropdown_button('', icon = 'menu', auto_close=True):
+                    ui.item('Load Config Files', on_click=lambda : ui.notify("Fetching Configuration Files..."))
+                    ui.item('Instrument Information', on_click=lambda : ui.notify("Loading Instrument Information..."))
+                    ui.item('Device Information', on_click=lambda : ui.notify("Loading Device Information..."))
+
+                stages = ['Setup','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
+
+                with ui.tabs() as tabs:
+                    
+                    for stage in stages:
+                        ui.tab(stage)
+
+                with ui.tab_panels(tabs, value='Home').classes('w-full'):
+            
+                    with ui.tab_panel('Setup'):
+
+                        ui.button('Connect to instruments', on_click = self.on_connect)
+
+                        ui.button('Autotune', on_click = self.on_autotune)
+                        
+                        config_files = os.listdir('../configs')
+                        config_dict = {i : config_files[i] for i in range(len(config_files))}
+
+                    with ui.tab_panel('Bootstrapping'):
+
+                        ui.label('Bootstrapping Information')
+                    
+                    with ui.tab_panel('Coarse Tuning'):
+                        
+                        ui.label('Coarse Tuning Information')   
+
+                    with ui.tab_panel('Virtual Gating'):
+                        
+                        ui.label('Virtual Gating Information')
+
+                    with ui.tab_panel('Charge State Tuning'):
+                        
+                        ui.label('Charge State Tuning')
+
+                    with ui.tab_panel('Fine Tuning'):
+                        
+                        ui.label('Fine Tuning Information')
+
+            with splitter1.after:
+
+                with ui.splitter(horizontal = True) as splitter2:
+                    
+                    with splitter2.before:
+                        
+                        self.live_plot_window()
+
+                    with splitter2.after:
+
+                        ui.label('Logger Information').classes('ml-2')
 
 
-    def plotting_panel(self):
+                ui.timer(0.05, self.update_liveplot)
+                self.n = 0
+
+        self.footer()
+
+        ui.run(port = 8081)
+
+    def header(self):
+        
+        """
+        The method that defines the header of the gui.
+
+        params: 
+            self:
+        """
+
+        with ui.header().classes(replace='row items-center') as header:
+            ui.label('Header')
+
+    def footer(self):
+        
+        """
+        The method that intialises the footer of the gui.
+
+        params: 
+            self:
+        """
+
+        with ui.footer(value=True) as footer:
+            ui.label('Footer')
+            ui.button('ABORT', on_click = self.on_abort, color='red')
+
+    # The below methods define the features of the GUI
+
+    def results_plot_panel(self):
+
+        """
+        The method that defines the results plots. This method takes the output plots from data_analysis 
+        and displays them in its corresponding autotuning stage tab.
+
+        params:
+            self:
+            results:
+
+
+        """
+
         with ui.matplotlib().figure as fig:
             #fig = plt.gcf()
             axs = fig.subplots(1, 2)
@@ -47,34 +164,18 @@ class tuner_gui:
             axs[0].plot(xs, np.sin(xs))
             axs[1].plot(xs, np.cos(xs))
             fig.tight_layout()
+   
+    def live_plot_window(self):
 
-    def right_panel(self):
-        with ui.splitter(horizontal = True) as splitter:
-            with splitter.before:
-                self.plotting_panel()
-            with splitter.after:
-                ui.label('Status')
-                ui.label('Autotuner: idle')
-                ui.label('Instrmuents...')
-                ui.label(self.lipsum_text)
+        """
+        The method that defines the live plot window, which streams the measurement of our readout instrument.
 
-    def split_view(self, page):
-        with ui.splitter() as splitter:
-            with splitter.after:
-                self.right_panel()
-            with splitter.before:
-                page()
-
-    def home_page(self):
-        ui.label('Home Page stuff')
-        ui.button('Connect to instruments')
-        ui.button('Autotune')
-        ui.label(self.lipsum_text)
+        params:
+            self:
         
-        config_files = os.listdir('../configs')
-        config_dict = {i : config_files[i] for i in range(len(config_files))}
- 
-        self.liveplot = ui.matplotlib(figsize = (4, 3))
+        """
+
+        self.liveplot = ui.matplotlib(figsize = (30,20))
 
         fig = self.liveplot.figure
         self.ax = fig.subplots(1,1)
@@ -82,7 +183,9 @@ class tuner_gui:
         self.ax.set_ylabel('Signal (V)')
         xs = np.linspace(-1, 1)
         self.line = self.ax.plot(xs, np.sin(xs))
-        fig.tight_layout()
+        self.ax.set_xlabel('time (s)', fontsize = 75)
+        self.ax.set_ylabel('Current (A)', fontsize = 75)
+        self.ax.tick_params(labelsize = 50)
         self.liveplot.update()
 
         ui.timer(0.05, self.update_liveplot)
@@ -104,10 +207,117 @@ class tuner_gui:
             self.ax.set_ylim(-0.5, 1.5)
 
             self.liveplot.update()
-            #ui.update()
+            ui.update()
 
+
+    def experiment_progress_bar():
+
+        pb = ui.linear_progress()
+
+    def split_view(self, page1, page2, horizontal_split: bool = False):
+        
+        """
+        This method creates a split view of two specified pages. 
+
+        params:
+            self:
+            page1: The first page of the split. Depending on if horizontal_split is True or False, 
+                   this page will be on the top, or the left, respectively.
+            page2: The second page of the split. Depending on if horizontal_split is True or False, 
+                   this page will be on the bottom, or the right, respectively.
+            horizontal_split: Determines whether the split creates a left/right splitting, or a top/bottom splitting. True implies
+                              the split is horizontal, meaning it will be top/bottom. False means a vertical split, or left/right splitting.
+        """
+
+        with ui.splitter(horizontal = horizontal_split) as splitter:
+            with splitter.after:
+                page2()
+            with splitter.before:
+                page1()
+
+    # The below methods define all the button press logic of the GUI
+
+    def on_connect(self):
+        
+        """
+        This method will connect to the load_config_files method in write control and XXX in buffered readout, to initialise connections 
+        to the instruments for setting voltages, and the buffered readout to start capturing data on the live plotting window.
+
+        params:
+            self:
+        """
+        
+        pass
+
+    def on_autotune(self):
+        
+        """
+        This method starts the defined autotuning protocol. Currently, the autotuning protocol is specific to the Intel Tunnel Falls
+        devices, by following the autotuning_protocol.py file. This will be updated to allow for application to general devices.
+
+
+        params:
+            self:
+
+        """
+        
+        pass
+
+    def experiment_progress_bar():
+
+        pb = ui.linear_progress()
+
+    def split_view(self, page1, page2, horizontal_split: bool = False):
+        
+        """
+        This method creates a split view of two specified pages. 
+
+        params:
+            self:
+            page1: The first page of the split. Depending on if horizontal_split is True or False, 
+                   this page will be on the top, or the left, respectively.
+            page2: The second page of the split. Depending on if horizontal_split is True or False, 
+                   this page will be on the bottom, or the right, respectively.
+            horizontal_split: Determines whether the split creates a left/right splitting, or a top/bottom splitting. True implies
+                              the split is horizontal, meaning it will be top/bottom. False means a vertical split, or left/right splitting.
+        """
+
+        with ui.splitter(horizontal = horizontal_split) as splitter:
+            with splitter.after:
+                page2()
+            with splitter.before:
+                page1()
+
+    # The below methods define all the button press logic of the GUI
+
+    def on_connect(self):
+        
+        """
+        This method will connect to the load_config_files method in write control and XXX in buffered readout, to initialise connections 
+        to the instruments for setting voltages, and the buffered readout to start capturing data on the live plotting window.
+
+        params:
+            self:
+        """
+        
+        pass
+
+    def on_autotune(self):
+        
+        """
+        This method starts the defined autotuning protocol. Currently, the autotuning protocol is specific to the Intel Tunnel Falls
+        devices, by following the autotuning_protocol.py file. This will be updated to allow for application to general devices.
+
+
+        params:
+            self:
+
+        """
+        
+        pass
 
     def on_abort(self):
+        
         ui.notify('Aborting...')
 
     def root_page(self):
@@ -134,7 +344,7 @@ class tuner_gui:
                 ui.label('Content of C')
 
     def on_shutdown(self):
-        print("Starting on_shutdown")
+        
         self.readout.join()
-        self.exp_thread.join()
+
 

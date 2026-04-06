@@ -84,7 +84,12 @@ class DataAnalysis:
             print(f"{name} = {val:.3f} ± {err:.3f}")
 
         return params, popt, pcov
+
+    def gradient(self):
+        pass
+
     
+
     def extract_bias_point(self,
                            data: pd.DataFrame,
                            plot_process: bool,

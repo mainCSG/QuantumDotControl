@@ -71,6 +71,9 @@ class ExperimentThread:
                     self.job_queue.get()
 
 @app.on_startup
-
+def run_experimental_thread():
+    pass
 
 @app.on_startup
+def __init__():
+    pass

@@ -35,7 +35,7 @@ class tuner_gui:
         self.exp_thread = ExperimentThread()
         self.exp_thread.run()
 
-        test_func = lambda a, e: print(a)
+        test_func = lambda a, e: print(f"'{a}' from {threading.current_thread().name}")
         self.exp_thread.add_job(test_func, ("Hello World!",))
 
 

@@ -14,6 +14,7 @@ import threading
 from queue import PriorityQueue
 from collections.abc import Callable
 
+
 class ExperimentThread:
 
     
@@ -74,11 +75,3 @@ class ExperimentThread:
                 while self.abort_event.is_set():
                     self.job_queue.get()
                     self.job_queue.task_done()
-
-@app.on_startup
-def run_experimental_thread():
-    pass
-
-@app.on_startup
-def __init__():
-    pass

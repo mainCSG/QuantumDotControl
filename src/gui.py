@@ -27,20 +27,18 @@ class tuner_gui:
         
         '''
         Creates an instance of the tuner gui
-
-        params: 
-            self:
         '''
-        global _FirstPass
-        
-        # print(threading.current_thread().name)
-        global _gui_instances
-        _gui_instances.append(self)
 
-        self.start_time = 0
+        self.start_time = time.time()
 
         self.readout = create_buffer_instance()
         self.readout.run()
+
+        self.experiment_thread = ExperimentThread()
+        self.experiment_thread.run()
+
+        testjob = lambda a, event: print(f"{a} from {threading.current_thread().name}!")
+        self.experiment_thread.add_job(testjob, ("Hello",))
 
     # The below methods define the layout of the GUI
 
@@ -125,7 +123,6 @@ class tuner_gui:
 
 
                 ui.timer(0.05, self.update_liveplot)
-                ui.timer(0.25, self.update_experiment_progress_bar)
 
     def header(self):
         
@@ -283,5 +280,6 @@ class tuner_gui:
     def on_shutdown(self):
         
         self.readout.join()
+        self.experiment_thread.join()
 
 

@@ -6,6 +6,7 @@ This file contains the gui class that runs the auto tuner.
 As of now, we are using the nicegui web server as the user interface for the auto tuner.
 '''
 
+# Imports
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -14,8 +15,9 @@ import os
 import threading
 import time
 from buffered_readout import create_buffer_instance
+import time
+from experiment_thread import ExperimentThread
 
-_gui_instances = []
 
 class tuner_gui:
     
@@ -31,16 +33,16 @@ class tuner_gui:
         '''
         global _FirstPass
         
-
-        print(threading.current_thread().name)
-        global _gui_instance
+        # print(threading.current_thread().name)
+        global _gui_instances
         _gui_instances.append(self)
 
         self.start_time = 0
 
         self.readout = create_buffer_instance()
-
         self.readout.run()
+
+    # The below methods define the layout of the GUI
 
     def start(self):
 
@@ -176,27 +178,6 @@ class tuner_gui:
             axs[1].plot(xs, np.cos(xs))
             fig.tight_layout()
 
-    def split_view(self, page1, page2, horizontal_split: bool = False):
-        
-        """
-        This method creates a split view of two specified pages. 
-
-        params:
-            self:
-            page1: The first page of the split. Depending on if horizontal_split is True or False, 
-                   this page will be on the top, or the left, respectively.
-            page2: The second page of the split. Depending on if horizontal_split is True or False, 
-                   this page will be on the bottom, or the right, respectively.
-            horizontal_split: Determines whether the split creates a left/right splitting, or a top/bottom splitting. True implies
-                              the split is horizontal, meaning it will be top/bottom. False means a vertical split, or left/right splitting.
-        """
-
-        with ui.splitter(horizontal = horizontal_split) as splitter:
-            with splitter.after:
-                page2()
-            with splitter.before:
-                page1()
-
     def live_plot_window(self):
 
         """
@@ -251,7 +232,6 @@ class tuner_gui:
             self.pb.delete()
             self.instr.enable()
 
-
     def split_view(self, page1, page2, horizontal_split: bool = False):
         
         """
@@ -305,10 +285,7 @@ class tuner_gui:
         ui.notify('Aborting...')
     
     def on_shutdown(self):
+        
         self.readout.join()
 
-@app.on_shutdown
-def shutdown():
-    global _gui_instances
-    for inst in _gui_instances:
-        inst.on_shutdown()
+

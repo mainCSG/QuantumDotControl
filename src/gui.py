@@ -44,7 +44,7 @@ class tuner_gui:
 
     # The below methods define the layout of the GUI
 
-    def start(self):
+    def root_page(self):
 
         """
         The method that intialises the gui. As of now, it also defines the main page of the within itself.
@@ -54,6 +54,7 @@ class tuner_gui:
         """
 
         self.header()
+        self.footer()
 
         # I tried putting these splitters into a separate function, but then the gui wouldn't start. 
 
@@ -125,11 +126,6 @@ class tuner_gui:
 
                 ui.timer(0.05, self.update_liveplot)
                 ui.timer(0.25, self.update_experiment_progress_bar)
-                self.n = 0
-
-        self.footer()
-
-        ui.run(port = 8081)
 
     def header(self):
         

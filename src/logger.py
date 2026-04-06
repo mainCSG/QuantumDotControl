@@ -44,11 +44,12 @@ class Logger:
         a log of everything that occured during the experiment. This method is when an InstrumentControl object is initialised.
         """
 
-        ATTEMPT, COMPLETE, IN_PROGRESS = logging.INFO - 2, logging.INFO - 1, logging.INFO
+        ATTEMPT, COMPLETE, IN_PROGRESS, RESULTS = logging.INFO - 3, logging.INFO - 2, logging.INFO - 1, logging.INFO
 
         logging.addLevelName(ATTEMPT, 'ATTEMPT')
         logging.addLevelName(COMPLETE, 'COMPLETE')
         logging.addLevelName(IN_PROGRESS, 'IN PROGRESS')
+        logging.addLevelName(RESULTS, 'RESULTS')
 
         def attempt(self, message, *args, **kwargs):
             if self.isEnabledFor(ATTEMPT):
@@ -62,9 +63,14 @@ class Logger:
             if self.isEnabledFor(IN_PROGRESS):
                 self._log(IN_PROGRESS, message, args, **kwargs)
 
+        def results(self, message, *args, **kwargs):
+            if self.isEnabledFor(RESULTS):
+                self._log(RESULTS, message, args, **kwargs)
+
         logging.Logger.attempt = attempt
         logging.Logger.complete = complete
         logging.Logger.in_progress = in_progress
+        logging.Logger.results = results
 
         console_formatter = ColoredFormatter(
                 "%(log_color)s%(asctime)s - %(name)s - %(levelname)s %(message)s",
@@ -73,7 +79,7 @@ class Logger:
                 log_colors={
                     'ATTEMPT': 'yellow',
                     'COMPLETE': 'green',
-                    'DEBUG': 'white',
+                    'RESULTS': 'white',
                     'INFO': 'white',
                     'IN PROGRESS': 'white',
                     'WARNING': 'red',

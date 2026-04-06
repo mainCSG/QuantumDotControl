@@ -1,86 +1,79 @@
-'''
-File: autotuning_protocol.py
-Authors: Benjamin Van Osch (bvanosch@uwaterloo.ca), Mason Daub (mjdaub@uwaterloo.ca)
+# Import modules
 
-This file details the autotuning protocol in its entirety. This file uses the functions defined in write_control and 
-data_analysis to implement experiments for automatic tuning of quantum dot devices.
+import yaml, datetime, sys, time, os, shutil, json,re
+from pathlib import Path
 
-Each stage of the autotuning code is a class, with the methods of the class corresponding to the experiments of the
+import pandas as pd
 
-'''
+import numpy as np
 
-from instrument_control import InstrumentControl
-from data_analysis import DataAnalysis
+import scipy as sp
+from scipy.ndimage import convolve
 
-class Bootstrapping(InstrumentControl, DataAnalysis):
+import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 
-    def __init__(self):
-        
-        return None
+from typing import List, Dict
 
-    def extract_turn_on_voltage(self,
-                gate):
-        return None
-    
-    def extract_gate_ranges(self,
-                  gate):
-        return None
-    
-    def extract_working_points(self,
-                             gates):
-        return None
-    
-    def extract_coulomb_blockade_peaks(self,
-                     gate):
-        
-        return None
-    
-    def extract_coulomb_diamonds(self,
-                         gates):
-        
-        return None
-    
-    def extract_lead_dot_tunneling(self,
-                           gate):
-        
-        return None
+import qcodes as qc
+from qcodes.dataset import AbstractSweep, Measurement
+from qcodes.dataset.dond.do_nd_utils import ActionsT
+from qcodes.parameters import ParameterBase
+import numpy.typing as npt
 
-class CoarseTuning(InstrumentControl, DataAnalysis):
+import skimage
+from skimage.transform import probabilistic_hough_line
+from skimage.feature import canny
+from skimage.filters import threshold_otsu
+from skimage.morphology import diamond, rectangle  # noqa
 
-    def __init__(self):
+import logging
+from colorlog import ColoredFormatter
+import sys
 
-        return None
-    
-    def extract_charge_stability_diagram():
+from nicegui import ui
+import threading
 
-        return None
-    
+class Bootstrapping:
+
+    def ground_device():
+        pass
+
+    def turn_on():
+        pass
+
+    def pinch_off():
+        pass
+
+    def barrier_barrier_sweep():
+        pass
+
+    def set_plunger_sweep():
+        pass
+
+    def coulomb_diamonds():
+        pass
+
+    def tune_lead_dot_tunneling():
+        pass
+
+class CoarseTuning:
+
+    def plunger_plunger_sweep():
+        pass
+
 class VirtualGating:
 
-    def __init__(self):
-        
-        return None
-    
-    def construct_lever_arm_matrix():
+    def lever_arm_matrix():
+        pass
 
-        return None
-    
-    def extract_virtual_CSD():
-
-        return None
-    
 class ChargeStateTuning:
 
-    def extract_charge_states():
+    def determine_charge_states():
+        pass
 
-        return None
-    
 class FineTuning:
 
-    def find_PSB():
+    def rabi_oscilations():
+        pass
 
-        return None
-
-    def extract_rabi_frequency():
-
-        return None 

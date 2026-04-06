@@ -1,3 +1,14 @@
+'''
+File: write_control.py
+Authors: Benjamin Van Osch (bvanosch@uwaterloo.ca), Mason Daub (mjdaub@uwaterloo.ca)
+
+This file contains the WriteControl class, which handles all setting of values to instruments, 
+including sweeps and static voltage configurations.
+
+Currently, QCodes functions are used to carry out sweeps of instrument parameters, however in-house sweep functions
+are currently in development.
+'''
+
 # Import modules
 
 import yaml, datetime, sys, time, os, shutil, json,re
@@ -105,7 +116,7 @@ class LinSweep_SIM928(AbstractSweep[np.float64]):
     def setpoints(self) -> npt.NDArray[np.float64]:
         return self.get_setpoints()
     
-class InstrumentControl:
+class WriteControl:
         
     def __init__(self,
                  logger,
@@ -147,7 +158,7 @@ class InstrumentControl:
 
         # The following method creates a logger that will provide information to the user while the code is running
 
-        self.initialise_logger()
+        self.logger.initialise_logger()
 
         # Now, we connect to the instruments specified in the config
 
@@ -295,8 +306,6 @@ class InstrumentControl:
         self.plungers = []
         self.accumulation = []
         self.screening = []
-
-        # TODO Add additional logic to load SPI rack connections separately from other instruments (either or, both, etc.)
         
         for gate, details in self.device_gates.items():
             
@@ -366,7 +375,7 @@ class InstrumentControl:
 
     def set_voltage_configuration(self, 
                                   voltage_configuration: Dict[str, float] = {},
-                                  stepsize: float = 10e-3):
+                                  stepsize: float = 1e-3):
         
         """
         This method allows the user to smoothly set a given voltage configuration.
@@ -374,7 +383,7 @@ class InstrumentControl:
         Args:
             voltage_configuration (Dict[str, float]): A dictionary containing the names of the gates to be set and
                                                       the corresponding voltages the gates will be set to.
-            stepsize (float): The voltage stepsize for all the gates. Default is set to 10 mV.
+            stepsize (float): The voltage stepsize for all the gates. Default is set to 1 mV.
         """
 
         # First, we determine which gates are being set.
@@ -458,11 +467,12 @@ class InstrumentControl:
 
         return None
 
-    def sweep_1d(self, 
-                 maxV: float = None,
-                 minV: float = None,
-                 voltage_configuration: Dict[str, float] = {},
-                 dV: float = 10e-3) -> pd.DataFrame:
+    def sweep_1d_linsweep(self,
+                          gate: str,  
+                          maxV: float = None,
+                          minV: float = None,
+                          voltage_configuration: Dict[str, float] = {},
+                          dV: float = 10e-3) -> pd.DataFrame:
         
         # Bring device to voltage configuration
 
@@ -486,9 +496,8 @@ class InstrumentControl:
         # Set up gate sweeps
         
         num_steps = self.calculate_num_of_steps(minV, maxV, dV)
-        gates_involved = self.barriers + self.leads + self.accumulation + self.plungers
-
-        print(gates_involved)
+        
+        gates_involved = gate
 
         self.logger.info(f"setting {gates_involved} to {minV} V")
         
@@ -528,13 +537,13 @@ class InstrumentControl:
         
         return None
 
-    def sweep_2d(self,
-                 P1: str = None, 
-                 P2: str = None, 
-                 P1_bounds: tuple = (None, None),
-                 P2_bounds: tuple = (None, None), 
-                 dV: float | tuple = None, 
-                 voltage_configuration: dict = None) -> tuple[pd.DataFrame, plt.Axes]:
+    def sweep_2d_linsweep(self,
+                          P1: str = None, 
+                          P2: str = None, 
+                          P1_bounds: tuple = (None, None),
+                          P2_bounds: tuple = (None, None), 
+                          dV: float | tuple = None, 
+                          voltage_configuration: dict = None) -> tuple[pd.DataFrame, plt.Axes]:
         
         # Bring device to voltage configuration
         if voltage_configuration is not None:
@@ -646,6 +655,9 @@ class InstrumentControl:
         self.set_voltage([P2], maxV_P2)
         
         return None
+
+    def sweep_nd_linsweep(self):
+        pass
 
     def sweep_1d_measurement(self, 
                  maxV: float = None,
@@ -854,11 +866,128 @@ class InstrumentControl:
 
         return None
 
-    def sweep_nd(self):
-        pass
-
     def sweep_nd_measurement(self):
         pass
+
+    def sweep_1d(self,
+                 gate: str,
+                 startV: float = None,
+                 endV: float = None,
+                 voltage_configuration: Dict[str, float] = {},
+                 dV: float = 10e-3) -> pd.DataFrame:
+        
+        """
+        This method allows the user to sweep a given gate parameter from a pre-defined start and end point, with a given stepsize.
+
+        Args:
+            gate (str): The gate to be swept.
+
+            startV (float): The intial voltage for the sweep, specified in volts.
+            
+            endV (float): The final voltage for the sweep, specified in volts.
+            
+            voltage_configuration (Dict[str, float]): A dictionary containing the names of the gates to be set and
+                                                      the corresponding voltages the gates will be set to.
+            
+            dV (float): The voltage stepsize for all the gates. The default is set to 1 mV.
+        """
+
+        if voltage_configuration is not None:
+            self.logger.info(f"setting voltage configuration: {voltage_configuration}")
+            self.set_voltage_configuration(voltage_configuration)
+
+        # Default dV and maxV based on setup_config and config
+
+        if dV is None:
+            dV = self.voltage_resolution
+
+        if startV is None:
+            maxV = self.voltage_sign * self.abs_max_gate_voltage
+
+        if endV is None:
+            maxV = self.voltage_sign * self.abs_max_gate_voltage
+
+        assert np.sign(endV) == self.voltage_sign, self.logger.error("Double check the sign of the gate voltage (maxV) for your given device.")
+        assert np.sign(startV) == self.voltage_sign or np.sign(startV) == 0, self.logger.error("Double check the sign of the gate voltage (minV) for your given device.")
+
+        # Set up gate sweeps
+        
+        num_steps = self.calculate_num_of_steps(startV, endV, dV)
+        
+        gates_involved = gate
+
+        self.logger.info(f"setting {gates_involved} to {startV} V")
+        
+        self.set_voltage_configuration(gates_involved, startV)
+
+        intermediate = []
+        done = set()
+
+        prevvals = {}
+        gate_params = {}
+        gate_steps = {}
+
+        # Now, we map the gate to the source and save the correspondance
+
+        gate_to_source = {}
+
+        for source_name, instrument in self.voltage_sources.items():
+            for gate in self.voltage_source_names_check[source_name]:
+                gate_to_source[gate] = instrument
+
+        for gate, target in voltage_configuration.items():
+
+            instrument = gate_to_source[gate]
+            param = getattr(instrument, gate)
+
+            gate_params[gate] = param
+            prevvals[gate] = float(param.get())
+
+            step_param = getattr(instrument, f"{gate}_step", None)
+            
+            gate_steps[gate] = step_param() if step_param else dV
+
+        # Now, we generate the ramp
+
+        while len(done) < len(voltage_configuration):
+
+            step = {}
+
+            for gate, target in voltage_configuration.items():
+
+                if gate in done:
+                    continue
+
+                prev = prevvals[gate]
+                step_size = gate_steps[gate]
+
+                dv = target - prev
+
+                if abs(dv) <= step_size:
+                    step[gate] = target
+                    done.add(gate)
+                else:
+                    step[gate] = prev + step_size * (1 if dv > 0 else -1)
+
+                prevvals[gate] = step[gate]
+
+            intermediate.append(step)
+
+        # Finally, we apply the ramp
+
+        for step in intermediate:
+
+            for gate, voltage in step.items():
+                gate_params[gate].set(voltage)
+
+            # This lets us sleep once per step
+            for instrument in self.voltage_sources.values():
+                delay_param = getattr(instrument, "smooth_timestep", None)
+                if delay_param:
+                    time.sleep(delay_param())
+                    break
+
+        return None
 
     def check_break_conditions(self):
         

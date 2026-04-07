@@ -17,7 +17,36 @@ import time
 from buffered_readout import create_buffer_instance
 import time
 from experiment_thread import ExperimentThread
+from qcodes.station import Station
+from qcodes.instrument_drivers.mock_instruments import DummyInstrument
+from qcodes.parameters import Parameter
+import random
 
+class RandomDummy(DummyInstrument):
+    '''
+    A dummy instrument for testing the readout buffer
+    '''
+    def __init__(self,
+        name: str = "dummy",
+        gates = ("dac1",),
+        **kwargs):
+
+        super().__init__(name, gates, **kwargs)
+
+        self.add_parameter("rand1",
+                parameter_class=Parameter,
+                initial_value=0,
+                label=f"Gate rand",
+                unit="V",
+                set_cmd=None,
+                get_cmd=lambda : random.Random(time.monotonic()).random())
+        self.add_parameter("rand2",
+                parameter_class=Parameter,
+                initial_value=0,
+                label=f"Gate rand",
+                unit="V",
+                set_cmd=None,
+                get_cmd=lambda : random.Random(time.monotonic()).random())
 
 class tuner_gui:
     
@@ -29,10 +58,15 @@ class tuner_gui:
         Creates an instance of the tuner gui
         '''
 
-        self.start_time = time.time()
+        self.start_time = time.monotonic()
 
-        self.readout = create_buffer_instance()
+        self.station = Station(config_file = "../configs/dummy_station.yaml")
+        self.station_lock = threading.Lock()
+
+        self.readout = create_buffer_instance(self.station, self.station_lock)
         self.readout.run()
+
+        self.readout.add_readout_instrument("DummyInst", ["rand1", "rand2"], lambda inst, args : inst.print_readable_snapshot())
 
         self.experiment_thread = ExperimentThread()
         self.experiment_thread.run()
@@ -199,9 +233,12 @@ class tuner_gui:
         if retval is None:
             return
         else:
-            data, times = retval
+            keys =  list(retval.keys())
+            key = keys[0]
+            data = [retval[key][i][0] for i in range(len(retval[key]))]
+            times = [retval[key][i][1] for i in range(len(retval[key]))]
 
-            times_offset = np.array(times) - self.start_time
+            times_offset = np.array(times) - times[-1]
             self.line[0].set_ydata(data)
             self.line[0].set_xdata(times_offset)
             self.ax.set_xlim(min(times_offset), max(times_offset))

@@ -21,6 +21,7 @@ from qcodes.station import Station
 from qcodes.instrument_drivers.mock_instruments import DummyInstrument
 from qcodes.parameters import Parameter
 import random
+import os, sys
 
 class RandomDummy(DummyInstrument):
     '''
@@ -64,15 +65,17 @@ class tuner_gui:
         self.station_lock = threading.Lock()
 
         self.readout = create_buffer_instance(self.station, self.station_lock)
-        self.readout.run()
+        #self.readout.run()
 
-        self.readout.add_readout_instrument("DummyInst", ["rand1", "rand2"], lambda inst, args : inst.print_readable_snapshot())
+        self.readout.add_instrument("DummyInst", ["rand1", "rand2"], lambda inst, *args : inst.print_readable_snapshot())
 
         self.experiment_thread = ExperimentThread()
         self.experiment_thread.run()
 
         testjob = lambda a, event: print(f"{a} from {threading.current_thread().name}!")
         self.experiment_thread.add_job(testjob, ("Hello",))
+
+        self.abort_signal = threading.Event()
 
     # The below methods define the layout of the GUI
 
@@ -157,6 +160,7 @@ class tuner_gui:
 
 
                 ui.timer(0.05, self.update_liveplot)
+                ui.timer(0.5, self.watchdog_timer)
 
     def header(self):
         
@@ -235,6 +239,7 @@ class tuner_gui:
         else:
             keys =  list(retval.keys())
             key = keys[0]
+            data = retval[key]
             data = [retval[key][i][0] for i in range(len(retval[key]))]
             times = [retval[key][i][1] for i in range(len(retval[key]))]
 
@@ -311,12 +316,19 @@ class tuner_gui:
         
         pass
 
+    def watchdog_timer(self):
+        if not self.readout.watchdog():
+            # Trigger a reset
+            print("Readout buffer watchdog detected a problem. Triggering a reset.")
+            app.stop()
+            python = sys.executable  # path to the Python interpreter
+            os.execv(python, [python] + sys.argv)
+
     def on_abort(self):
         ui.notify('Aborting...')
+        self.abort_signal.set()
     
     def on_shutdown(self):
-        
-        self.readout.join()
+        self.abort_signal.set() # Abort any currently running experiments.
+        self.readout.shutdown_instruments()
         self.experiment_thread.join()
-
-

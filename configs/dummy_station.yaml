@@ -1,5 +1,5 @@
 instruments:
   DummyInst:
     type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument
-    init:
-      name: DummyInst
+  DummyInst2:
+    type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument

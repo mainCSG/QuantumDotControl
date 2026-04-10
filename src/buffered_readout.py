@@ -517,7 +517,7 @@ class buffered_readout:
         false to trigger a reset.
 
         '''
-        WATCHDOG_TIME = 30 # time between heartbeats before death is declared.
+        WATCHDOG_TIME = 60 # time between heartbeats before death is declared.
         self.monitored_parameters.clear()
         
         for name, thread in self.instrument_threads.items():

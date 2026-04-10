@@ -10,6 +10,7 @@ As of now, we are using the nicegui web server as the user interface for the aut
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 from nicegui import ui, app
 import os
 import threading
@@ -68,6 +69,7 @@ class tuner_gui:
         #self.readout.run()
 
         self.readout.add_instrument("DummyInst", ["rand1", "rand2"], lambda inst, *args : inst.print_readable_snapshot())
+        self.readout.add_instrument("DummyInst2", ["rand1", "rand2"], lambda inst, *args : inst.print_readable_snapshot())
 
         self.experiment_thread = ExperimentThread()
         self.experiment_thread.run()
@@ -219,36 +221,54 @@ class tuner_gui:
         
         """
 
-        self.liveplot = ui.matplotlib(figsize = (30,20))
+        self.liveplot = ui.matplotlib(figsize = (8,6))
 
         fig = self.liveplot.figure
         self.ax = fig.subplots(1,1)
         self.ax.set_xlabel("Time (s)")
         self.ax.set_ylabel('Signal (V)')
         xs = np.linspace(-1, 1)
-        self.line = self.ax.plot(xs, np.sin(xs))
-        self.ax.set_xlabel('time (s)', fontsize = 75)
-        self.ax.set_ylabel('Current (A)', fontsize = 75)
-        self.ax.tick_params(labelsize = 50)
+        self.lines = self.ax.plot(xs, np.sin(xs))
+        self.ax.set_xlabel('time (s)', fontsize = 16)
+        self.ax.set_ylabel('Current (A)', fontsize = 16)
+        self.ax.tick_params(labelsize = 12)
+        fig.tight_layout()
         self.liveplot.update()
 
     def update_liveplot(self): 
+        colors = ['tab:blue', 'tab:red', 'tab:orange', 'tab:purple', 'tab:green']
+        linestyles = ['-', '--', '-.', ':']
+
         retval = self.readout.get_buffer()
         if retval is None:
             return
         else:
             keys =  list(retval.keys())
-            key = keys[0]
-            data = retval[key]
-            data = [retval[key][i][0] for i in range(len(retval[key]))]
-            times = [retval[key][i][1] for i in range(len(retval[key]))]
+            num_keys = len(keys)
+            if num_keys != len(self.lines):
+                # Clear the axis.
+                for line in self.lines:
+                    line.remove()
+                # add the lines back in
+                for j in range(num_keys):
+                    col = colors[j % len(colors)]
+                    ls = linestyles[j // len(colors)]
+                    self.ax.add_line(Line2D([0],[0], lw = 2, color = col, linestyle=ls))
+                self.lines = self.ax.get_lines()
 
-            times_offset = np.array(times) - times[-1]
-            self.line[0].set_ydata(data)
-            self.line[0].set_xdata(times_offset)
-            self.ax.set_xlim(min(times_offset), max(times_offset))
-            self.ax.set_ylim(-0.5, 1.5)
+            for j in range(num_keys):
+                key = keys[j]
+                data = retval[key]
+                data = [retval[key][i][0] for i in range(len(retval[key]))]
+                times = [retval[key][i][1] for i in range(len(retval[key]))]
 
+                times_offset = np.array(times) - times[-1]
+                self.lines[j].set_ydata(data)
+                self.lines[j].set_xdata(times_offset)
+                self.ax.set_xlim(min(times_offset), max(times_offset))
+                self.ax.set_ylim(-0.5, 1.5)
+
+            self.ax.legend(self.lines, keys, )
             self.liveplot.update()
             ui.update()
 

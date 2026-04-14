@@ -15,7 +15,7 @@ from nicegui import ui, app
 import os
 import threading
 import time
-from buffered_readout import create_buffer_instance
+from instrument_handler import create_buffer_instance
 import time
 from experiment_thread import ExperimentThread
 from qcodes.station import Station
@@ -23,6 +23,7 @@ from qcodes.instrument_drivers.mock_instruments import DummyInstrument
 from qcodes.parameters import Parameter
 import random
 import os, sys
+from tunerlog import TunerLog
 
 class RandomDummy(DummyInstrument):
     '''
@@ -68,8 +69,10 @@ class tuner_gui:
         self.readout = create_buffer_instance(self.station, self.station_lock)
         #self.readout.run()
 
-        self.readout.add_instrument("DummyInst", ["rand1", "rand2"], lambda inst, *args : inst.print_readable_snapshot())
-        self.readout.add_instrument("DummyInst2", ["rand1", "rand2"], lambda inst, *args : inst.print_readable_snapshot())
+        self.readout.add_instrument("DummyInst")
+        self.readout.add_instrument("DummyInst2")
+
+        self.readout.monitor_parameter("DummyInst", ["rand1", "rand2"])
 
         self.experiment_thread = ExperimentThread()
         self.experiment_thread.run()
@@ -78,6 +81,7 @@ class tuner_gui:
         self.experiment_thread.add_job(testjob, ("Hello",))
 
         self.abort_signal = threading.Event()
+        self.logger = TunerLog("TunerGUI")
 
     # The below methods define the layout of the GUI
 
@@ -158,8 +162,9 @@ class tuner_gui:
 
                     with splitter2.after:
 
-                        ui.label('Logger Information').classes('ml-2')
-
+                        self.ui_log = ui.log()
+                        self.logger.add_ui_handler(self.ui_log)
+                        self.logger.info("Added NiceGUI UI handler to logger.")
 
                 ui.timer(0.05, self.update_liveplot)
                 ui.timer(0.5, self.watchdog_timer)
@@ -339,13 +344,13 @@ class tuner_gui:
     def watchdog_timer(self):
         if not self.readout.watchdog():
             # Trigger a reset
-            print("Readout buffer watchdog detected a problem. Triggering a reset.")
-            app.stop()
-            python = sys.executable  # path to the Python interpreter
-            os.execv(python, [python] + sys.argv)
+            self.logger.error("Readout buffer watchdog detected a problem. Triggering a reset.")
+            #python = sys.executable  # path to the Python interpreter
+            #os.execv(python, [python] + sys.argv)
 
     def on_abort(self):
         ui.notify('Aborting...')
+        self.logger.warning("Experiment abort signal sent")
         self.abort_signal.set()
     
     def on_shutdown(self):

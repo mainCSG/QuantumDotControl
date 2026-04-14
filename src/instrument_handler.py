@@ -10,7 +10,6 @@ import threading
 import time
 import numpy as np
 from typing import List, Tuple
-import random
 from qcodes.station import Station
 from qcodes.instrument import Instrument
 from qcodes.parameters import Parameter
@@ -18,22 +17,24 @@ from collections.abc import Callable
 from typing import Tuple, Dict, Any, Literal, Protocol, Optional, Deque
 from queue import Queue
 from collections import deque
+from dataclasses import dataclass
 from enum import Enum
+from tunerlog import TunerLog
 import re
-import sys, os
 
-__BufferExists__ = False
-__Instance__ = None
+_BufferExists = False
+_Instance = None
 
+logger = TunerLog("Instr. Control")
 
 def create_buffer_instance(station : Station, station_lock : threading.Lock):
-    global __Instance__
-    if __Instance__ is None:
-        __Instance__ = buffered_readout(station, station_lock)
+    global _Instance, logger
+    if _Instance is None:
+        _Instance = instrument_handler(station, station_lock)
 
-    return __Instance__
+    return _Instance
 
-def make_list(strings : str | List[str] | None) -> List[str] | None:
+def make_list(strings : str | List[str] | Literal['all']) -> List[str]:
     if isinstance(strings, str):
         return [strings]
     else:
@@ -46,22 +47,71 @@ class inst_status(Enum):
             invalid = "Invalid"
 
 class InstrumentCallback(Protocol):
-    def __call__(self, instrument: Instrument, *args: Any) -> None:
+    def __call__(self, instrument: Instrument, *args: Any) -> Any:
         ...
 
-class buffer_thread:
+class TunerFuture:
+    def __init__(self):
+        self._done_event = threading.Event()
+        self._result : Any = None
+        self._exception : Exception | None = None
+
+    def set_result(self, result : Any):
+        self._result = result
+        self._done_event.set()
+
+    def set_exception(self, e : Exception):
+        self._exception = e
+        self._done_event.set()
+
+    def result(self, timeout : float | None = None):
+        if self._done_event.wait(timeout):
+            if self._exception is not None:
+                raise self._exception
+            return self._result
+        else:
+            raise TimeoutError("Future timed out while waiting for result")
+    
+@dataclass
+class instrument_job:
+    future : TunerFuture
+    when : float
+    type : str
+
+class instrument_callback_job(instrument_job):
+    def __init__(self, future : TunerFuture, callback : InstrumentCallback, *args, when : float = -1):
+        self.callback : Callable[[Instrument], Any] = lambda inst: callback(inst, args)
+        super().__init__(future, when, "instrument_callback")
+
+class get_parameter_job(instrument_job):
+    def __init__(self, future : TunerFuture, params : List[str], when : float = -1):
+        super().__init__(future, when, "get parameter job")
+        self.parameters = params
+
+class set_parameter_job(instrument_job):
+    def __init__(self, future : TunerFuture, set_vals : Dict[str, Any], when : float = -1):
+        super().__init__(future, when, "set parameter job")
+        self.set_vals = set_vals
+
+class change_monitor_status_job(instrument_job):
+    def __init__(self, future : TunerFuture, params : List[str], add : bool = True, when : float = -1):
+        super().__init__(future, when, "modify monitor status job")
+        self.parameters = params
+        self.add_or_remove = add
+
+class instrument_thread:
     def __init__(self, thread_name : str,\
-                    instrument_name : str,\
+                    instrument_name: str,\
                     station : Station,\
                     station_lock : threading.Lock,\
                     global_shutdown: threading.Event,\
-                    init_func : Optional[InstrumentCallback] = None,
+                    init_func : Optional[InstrumentCallback] = None,\
                     *init_args : Any):
         
         self.parameters_private : List[str] = []
         self.parameters_public : List[str] = []
         self.parameters_lock = threading.Lock()
-        self.param_queue = Queue()
+        self.job_queue : Queue[instrument_job] = Queue()
 
         self.BUFFER_SIZE = 1000
         self.buffer : Dict[str, Deque[Tuple[float, float]]] = {}
@@ -73,7 +123,7 @@ class buffer_thread:
                                         name = self.thread_name,\
                                         args = (instrument_name, station, station_lock, init_func, init_args))
         
-        self.instrument : Instrument = None # DO NOT ACCESS EXTERNALLY
+        self.instrument : Instrument # DO NOT ACCESS EXTERNALLY
         
         self.shutdown_signal = threading.Event()
         self.global_shutdown = global_shutdown
@@ -94,9 +144,15 @@ class buffer_thread:
         status = self.get_status()
         if status == "Running":
             # log
-            print(f"Stopping the instrument thread {self.thread_name}")
+            logger.debug(f"Joining the instrument thread {self.thread_name}")
             self.shutdown_signal.set()
-            self.thread.join()
+            try:
+                self.thread.join(10)
+            except TimeoutError as e:
+                logger.exception("Joining thread '%s' timed out!", self.thread_name)
+                raise e # propagate the exception
+            else:
+                logger.debug("Thread '%s' joined successfully", self.thread_name)
 
     def _update_status(self, status_string : str):
         '''
@@ -104,6 +160,7 @@ class buffer_thread:
         '''
         with self.status_lock:
             self.status = status_string
+            logger.debug("Thread '%s' updating status to '%s'", self.thread_name, status_string)
     def get_status(self) -> str:
         '''
         Get current status of the instrument buffer thread (thread safe).
@@ -143,36 +200,46 @@ class buffer_thread:
         self._update_status("Initializing")
         # Try to load the instrument
         try:
+            logger.info("Attemting to load instrument '%s'.", instrument_name)
             with station_lock:
                 self.instrument = station.load_instrument(instrument_name)
             if not init_func is None:
                 # if there is an incorrect number of arguments, init_func will raise a type error
                 # There may be additional exceptions raised within init_func if they are not handled
                 init_func(self.instrument, *init_args)
-        except Exception as e:
+        except:
             # log the error
-            print(f"Worker exception for {instrument_name} with initialization function {init_func} and args {init_args}.\n {e}")
+            logger.exception(f"Initialization exception for {instrument_name} with initialization function {init_func} and args {init_args}.")
             self.shutdown_signal.set() # Signal to the watchdog that the thread shut down instead of hung
             self._update_status("Failed to initialize")
             return # kill the thread.
         
+        logger.info("Thread started for instrument '%s': %r", instrument_name, self.instrument)
+        logger.instrument_snapshot(self.instrument)
         # Start the readout loop
         self._update_status("Running")
+        
+        loop_times = deque(maxlen = 500) # A deque for tracking the average loop time
         tprev = self.timefunc()
         while not self.shutdown_signal.is_set() and not self.global_shutdown.is_set():
-            
             self._process_queue()
             self._read_parameters()
-            tnow : float
-            with self.heartbeat_lock:
-                tnow = self.timefunc()
-                self.heartbeat = tnow
+
+            tnow = self.timefunc()
             delta = tnow - tprev
             sleep_time = self.measure_time - delta
             if sleep_time > 0.001:
                 time.sleep(self.measure_time)
-            tprev = self.timefunc()
 
+            with self.heartbeat_lock:
+                tprev = self.timefunc()
+                loop_times.append(tprev - self.heartbeat)
+                self.heartbeat = tprev
+            
+        loop_times = list(loop_times)
+        average_dt = np.average(loop_times) * 1e3
+        times_stdev = np.std(loop_times) * 1e3
+        logger.debug("'%s' average loop time: %f +- %f ms (target %f ms)", self.thread_name, average_dt, times_stdev, self.measure_time * 1e3)
         # Clear the monitored parameters
         with self.parameters_lock:
             self.parameters_private = []
@@ -188,83 +255,105 @@ class buffer_thread:
             param : Parameter
             try:
                 param = getattr(self.instrument, param_name)
-            except Exception as e:
-                print(f"Exception while reading parameter: {e}")
+            except:
+                logger.exception("Exception occured while reading parameter '%s.%s.'", self.instrument.name, param_name)
             else:
                 value = param()
                 timestamp = self.timefunc()
 
                 self.buffer[param_name].append((value, timestamp))
-        
-    def _process_queue(self):
-        if not self.param_queue.empty():
-            op, name = self.param_queue.get()
-            name_in_params = name in self.parameters_private
-            if op == "add" and not name_in_params:
-                try:
-                    param = getattr(self.instrument, name)
-                    if not param.gettable:
-                        raise Exception(f"Parameter {self.instrument.name}.{name} is not gettable!")
-                except KeyError as e:
-                    print(f"Key error for parameter {self.instrument.name}.{name}! {e}")
-                except Exception as e:
-                    # log the exceptions (keyError from getattr, or the manual exception)
-                    print(e)
-                else:
-                    self.parameters_private.append(name) # Add the name to the list of monitored params
-                    # add a new buffer entry if there is not already one.
-                    with self.buffer_lock:
-                        if not name in self.buffer:
-                            self.buffer[name] = deque(maxlen =self.BUFFER_SIZE)
 
-            elif op == 'add' and name_in_params:
-                # log
-                print(f"Parameter {self.instrument.name}.{name} is already being monitored.")
-            elif op == 'remove' and name_in_params:
-                self.parameters_private.remove(name)
-                print(f"Parameter {self.instrument.name}.{name} is no longer being monitored.")
-            elif op == 'callback':
-                # in this case name is actually a lambda function.
-                try:
-                    name(self.instrument)
-                except Exception as e:
-                    print(f"Exception with callback function {name}: {e}")
-            
-            # Update the copy
-            with self.parameters_lock:
-                self.parameters_public = self.parameters_private.copy()
-            
-
-
-    def queue_parameters(self, param_names : List[str], operation : Literal["add", "remove"] = "add") -> int:
-        '''
-        Communicates to the thread that you would like to try to add or remove a parameter from the list
-        of measured parameters.
-
-        Parameters
-        ---------
-        param_names : str | List[str]
-            A name or list of parameter names belonging to this instrument to add.
-
-        operation: "add" or "remove"
-            Specifies whether to add or remove the requested parameter from the list of measured parameters
-
-        Returns
-        -------
-        Returns the number of parameters that are attempting to be added.
-        '''
-        n = 0
+    def _update_public_parameters(self):
         with self.parameters_lock:
-            for param_name in param_names:
-                if not param_name in self.parameters_public:
-                    self.param_queue.put((operation, param_name))
-                    n += 1
-        return n
-    
-    def queue_instrument_callback(self, callback : InstrumentCallback, *args):
-        self.param_queue.put(("callback", lambda inst: callback(inst, *args)))
+            self.parameters_public = self.parameters_private.copy()
 
-class buffered_readout:
+    def _process_queue(self):
+        count = 2 # to prevent infinite loops with the when parameter of a job
+        while self.job_queue.qsize() > 0 and count > 0:
+            curr_time = time.monotonic()
+            job = self.job_queue.get()
+            logger.debug("Instrument '%s', processing job %r", self.instrument.name, job)
+
+            if job.when > curr_time and (job.when > 0):
+                self.job_queue.put(job)
+                self.job_queue.task_done()
+                count -= 1
+                continue
+
+            if isinstance(job, instrument_callback_job):
+                try:
+                    retval = job.callback(self.instrument)
+                except Exception as e:
+                    job.future.set_exception(e)
+                else:
+                    job.future.set_result(retval)
+                    
+            elif isinstance(job, get_parameter_job):
+                params = job.parameters
+                retval = {}
+                for param in params:
+                    try:
+                        value = getattr(self.instrument, param)()
+                    except Exception as e:
+                        job.future.set_exception(e)
+                    else:
+                        retval[param] = value
+                job.future.set_result(retval)
+
+            elif isinstance(job, set_parameter_job):
+                for param, setval in job.set_vals.items():
+                    try:
+                        getattr(self.instrument, param)(setval)
+                    except Exception as e:
+                        job.future.set_exception(e)
+                job.future.set_result(None)
+            
+            elif isinstance(job, change_monitor_status_job):
+                self._handle_monitor_status_job(job)
+
+            return
+         
+    def _handle_monitor_status_job(self, job : change_monitor_status_job) -> bool:
+        if job.add_or_remove: # adding a monitored param
+            for param in job.parameters:
+                already_monitored = param in self.parameters_private
+                if already_monitored:
+                    continue
+                try:
+                    # Test to make sure the requested parameter exists
+                    qparam = getattr(self.instrument, param)
+                except Exception as e:
+                    job.future.set_exception(e)
+                    self._update_public_parameters()
+                    return False
+                else:
+                    # Add a new deque to the buffer dictionary if required
+                    self.parameters_private.append(param)
+                    logger.info("Now monitoring parameter %s.%s", self.instrument.name, param)
+                    with self.buffer_lock:
+                        if not param in self.buffer:
+                            self.buffer[param] = deque(maxlen = self.BUFFER_SIZE)
+
+        else: # Remove a monitored param
+            for param in job.parameters:
+                already_monitored = param in self.parameters_private
+                if not already_monitored:
+                    continue
+                try:
+                    self.parameters_private.remove(param)
+                except Exception as e:
+                    job.future.set_exception(e)
+                    self._update_public_parameters()
+                    return False
+                else:
+                    logger.info("No longer monitoring parameter %s.%s", self.instrument.name, param)
+                
+        self._update_public_parameters()
+        job.future.set_result(None)
+        return True               
+            
+
+class instrument_handler:
     def __init__(self, station : Station, station_lock : threading.Lock):
         '''
         A class to handle the asynchronous buffered readout of the SET current for
@@ -285,13 +374,13 @@ class buffered_readout:
             A function with no arguments that returns some sort of time class. For now this is set to
             time.monotonic to guarantee a monotonic increase in time.
         '''
-        global __BufferExists__
+        global _BufferExists
 
-        assert not __BufferExists__, "Error: Readout buffer already exists!!"
+        assert not _BufferExists, "Error: Readout buffer already exists!!"
 
-        __BufferExists__ = True
+        _BufferExists = True
 
-        self.instrument_threads : Dict[str, buffer_thread] = {}
+        self.instrument_threads : Dict[str, instrument_thread] = {}
 
         self.heartbeats : Dict[str, float] = {}
 
@@ -331,7 +420,7 @@ class buffered_readout:
             If there are no data points in the perscribed averaging range
         '''
         if t_stop <= 0.0:
-            t_stop = self.time_func()
+            t_stop = time.monotonic()
 
         t_start = t_stop - t_avg
         
@@ -360,7 +449,7 @@ class buffered_readout:
         
         return retval
 
-    def get_buffer(self, param_names : str | List[str] | None = None, blocking : bool= False, timeout : float = 0.1) -> Dict[str, List[Tuple[float, float]]] | None:
+    def get_buffer(self, param_names : str | List[str] | Literal['all'] = 'all', blocking : bool= False, timeout : float = 0.1) -> Dict[str, List[Tuple[float, float]]]:
         '''
         Try to copy a buffer for a parameter with optional blocking
 
@@ -384,7 +473,7 @@ class buffered_readout:
             This will get thrown if param_names are not able to be parsed
         '''
         buffer_copies = {}
-        if param_names is None:
+        if param_names == 'all':
             param_names = self.monitored_parameters
         param_names = make_list(param_names)
         for param_name in param_names:
@@ -407,7 +496,7 @@ class buffered_readout:
                     finally:
                         thread.buffer_lock.release()
 
-        return buffer_copies if len(buffer_copies) > 0 else None
+        return buffer_copies
 
     def shutdown_instruments(self):
         self.global_shutdown.set()
@@ -415,7 +504,7 @@ class buffered_readout:
             inst_thread.stop()
 
 
-    def add_instrument(self, name : str, param_names : str | List[str] | None = None,\
+    def add_instrument(self, name : str,\
                                 init_func : Optional[InstrumentCallback] = None,\
                                 *init_args : Any) -> None:
         '''
@@ -441,48 +530,152 @@ class buffered_readout:
         init_args : Tuple = ()
             The arguments to get passed to the init function. By default, it is an empty tuple.
         '''
-        param_names = make_list(param_names) # Make it iterable
-
         # Check to see if the instrument already exists
         instr_thread = self.instrument_threads.get(name)
         if instr_thread is None:
             self.heartbeats[name] = time.monotonic() # Create the first heartbeat
 
-            self.instrument_threads[name] = buffer_thread(f"{name}Thread", name,\
+            self.instrument_threads[name] = instrument_thread(f"{name}Thread", name,\
                                                         self.station,\
                                                         self.station_lock,\
                                                         self.global_shutdown,\
                                                         init_func, init_args)
-            if param_names is not None:
-                self.instrument_threads[name].queue_parameters(param_names)
 
             self.instrument_threads[name].start()
+
+    def add_callback(self, instrument : str,
+                     callback : InstrumentCallback,
+                     *args,
+                     wait : bool = True,
+                     timeout : float = 60,
+                     when : float = -1) -> Any:
+        """Add a callback function to an instruments job queue.
+
+        Args:
+            instrument (str): _description_
+            callback (InstrumentCallback): _description_
+            wait (bool, optional): _description_. Defaults to True.
+            timeout (float, optional): _description_. Defaults to 60.
+            when (float, optional): When (in absolute time with time.monotonic) to do the callback. 
+                By default, it will execute as soon as it gets to the front of the queue.
+            
+        Returns:
+            Any: If the instrument does not exist, it will return None. If wait is true,
+                it will return the result of the callback. If wait is false, it will return a future.
+        """
+        inst = self.instrument_threads.get(instrument)
+        if inst is not None:
+            future = TunerFuture()
+            job = instrument_callback_job(future, callback, *args, when = when)
+            inst.job_queue.put(job)
+
+            if wait:
+                return future.result(timeout)
+            else:
+                return future
+        else:
+            return None
+
+    def get_parameter(self, instrument : str, 
+                      params : str | List[str],
+                      wait : bool= True,
+                      timeout : float = 60,
+                      when = -1) -> Any:
+        """Get parameters from an instrument
+
+        Args:
+            instrument (str): The name of the instrument to read from
+            params (str | List[str]): The name of the parameter(s) to read
+            wait (bool, optional): Whether or not to wait for the get command to complete. Defaults to True
+            timeout (float | None, optional): Timeout for waiting, defaults to 60s
+
+        Returns:
+            Any: If wait is True, then it will return a dictionary of the gotten parameters.
+                If wait is False, it will return the Future for the job. If the instrument name is
+                invalid, it will return None.
+        """
+        params = make_list(params)
+
+        inst = self.instrument_threads.get(instrument)
+        if inst is not None:
+            future = TunerFuture()
+            job = get_parameter_job(future, params, when)
+            inst.job_queue.put(job)
+
+            if wait:
+                return future.result(timeout)
+            else:
+                return future
+        return None
     
-    def remove_instrument(self, name : str):
+    def set_parameter(self, instrument : str,
+                      set_vals : Dict[str, Any],
+                      wait : bool = True,
+                      timeout : float = 60,
+                      when : float = -1) -> bool | TunerFuture:
+        """Set one or more parameters of an instrument.
+
+        Args:
+            instrument (str): _description_
+            set_vals (Dict[str, Any]): A dictionary of the parameter names and the value you want to set it to.
+                For example {'dac1': 1.0, 'dac2': 2.0}.
+            wait (bool, optional): Wait for operation to complete if True. Defaults to True.
+            timeout (float, optional): Timeout for waiting. Defaults to 60s.
+
+        Returns:
+            bool | Future: Returns false on error and true on success. If wait is False, it will return the
+                future.
+        """
+        inst = self.instrument_threads.get(instrument)
+        if inst is not None:
+
+            future = TunerFuture()
+            job = set_parameter_job(future = future, set_vals = set_vals, when=when)
+            inst.job_queue.put(job)
+            if wait:
+                return future.result(timeout)
+            else:
+                return future
+        return False
+
+    def remove_instrument(self, name : str, finish_jobs : bool = True):
         '''
         Stop a specific instrument and close it. This will not delete any of the data that is still buffered.
         '''
         if name in self.instrument_threads:
             thread = self.instrument_threads[name]
+            if finish_jobs:
+                thread.job_queue.join()
             thread.stop()
     
-    def add_parameter(self, inst_name : str, params : str | List[str]):
+    def monitor_parameter(self, inst_name : str, 
+                          params : str | List[str],
+                          remove = False,
+                          wait : bool = True, 
+                          timeout : float = 60,
+                          when : float = -1) -> bool | TunerFuture:
         inst = self.instrument_threads.get(inst_name)
         if not inst is None:
             params = make_list(params)
-            inst.queue_parameters(params)
+            future = TunerFuture()
+            job =change_monitor_status_job(future, params, not remove, when)
+
+            inst.job_queue.put(job)
+
+            if wait:
+                return future.result(timeout)
+            else:
+                return future
         else:
-            # log 
-            print(f"Cannot add parameter to instrument {inst_name}: it does not exist!")
+            logger.warning("Cannot add parameters to instrument '%s': It does not exist!", inst_name)
+        return False
         
-    def remove_parameter(self, inst_name : str, params : str | List[str]):
-        inst = self.instrument_threads.get(inst_name)
-        if not inst is None:
-            params = make_list(params)
-            inst.queue_parameters(params, 'remove')
-        else:
-            # log 
-            print(f"Cannot remove parameter from instrument {inst_name}: it does not exist!")
+    def stop_monitoring_parameter(self, inst_name : str, 
+                          params : str | List[str], 
+                          wait : bool = True, 
+                          timeout : float = 60,
+                          when : float = -1) -> bool | TunerFuture:
+        return self.monitor_parameter(inst_name, params, True, wait, timeout, when)
 
     def get_instrument_status(self, instrument_name : str) -> str:
         '''
@@ -500,7 +693,7 @@ class buffered_readout:
             Returns a inst_status enumeration (which is just a string) to describe the 
             current status of the instrument. 
         '''
-        inst_thread : buffer_thread = self.instrument_threads.get(instrument_name)
+        inst_thread : instrument_thread | None = self.instrument_threads.get(instrument_name)
         if not inst_thread is None:
             return inst_thread.get_status()
         else:
@@ -536,6 +729,5 @@ class buffered_readout:
                         self.monitored_parameters.append(f"{name}.{param}")
             
             elif not alive and (thread_status == 'Running' or thread_status == 'Initializing'):
-                print(f"Instrument thread {name} is dead with status {thread_status}")
-                #return False
+                logger.warning(f"Instrument thread {name} is dead with status {thread_status}")
         return True

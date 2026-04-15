@@ -121,7 +121,7 @@ class instrument_thread:
         self.thread_name = thread_name
         self.thread = threading.Thread(target = self._worker,\
                                         name = self.thread_name,\
-                                        args = (instrument_name, station, station_lock, init_func, init_args))
+                                        args = (instrument_name, station, station_lock, init_func, *init_args))
         
         self.instrument : Instrument # DO NOT ACCESS EXTERNALLY
         
@@ -293,7 +293,7 @@ class instrument_thread:
                 retval = {}
                 for param in params:
                     try:
-                        value = getattr(self.instrument, param)()
+                        value = self.getattr_recursive(self.instrument, param)()
                     except Exception as e:
                         job.future.set_exception(e)
                     else:
@@ -303,7 +303,7 @@ class instrument_thread:
             elif isinstance(job, set_parameter_job):
                 for param, setval in job.set_vals.items():
                     try:
-                        getattr(self.instrument, param)(setval)
+                        self.getattr_recursive(self.instrument, param)(setval)
                     except Exception as e:
                         job.future.set_exception(e)
                 job.future.set_result(None)
@@ -312,7 +312,14 @@ class instrument_thread:
                 self._handle_monitor_status_job(job)
 
             return
-         
+    def getattr_recursive(self, obj, param : str):
+        splitted = param.split('.', maxsplit = 1)
+        attr = getattr(obj, splitted[0])
+        if len(splitted) == 1:
+            return attr
+        else:
+            return self.getattr_recursive(attr, splitted[1])
+        
     def _handle_monitor_status_job(self, job : change_monitor_status_job) -> bool:
         if job.add_or_remove: # adding a monitored param
             for param in job.parameters:
@@ -539,7 +546,7 @@ class instrument_handler:
                                                         self.station,\
                                                         self.station_lock,\
                                                         self.global_shutdown,\
-                                                        init_func, init_args)
+                                                        init_func, *init_args)
 
             self.instrument_threads[name].start()
 

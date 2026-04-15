@@ -20,6 +20,7 @@ import time
 from experiment_thread import ExperimentThread
 from qcodes.station import Station
 from qcodes.instrument_drivers.mock_instruments import DummyInstrument
+from qcodes.instrument import Instrument
 from qcodes.parameters import Parameter
 import random
 import os, sys
@@ -60,19 +61,35 @@ class tuner_gui:
         '''
         Creates an instance of the tuner gui
         '''
-
+        self.logger = TunerLog("TunerGUI")
         self.start_time = time.monotonic()
 
-        self.station = Station(config_file = "../configs/dummy_station.yaml")
+        self.station = Station(config_file = "../configs/test_station.yaml")
         self.station_lock = threading.Lock()
 
         self.readout = create_buffer_instance(self.station, self.station_lock)
         #self.readout.run()
 
+        def init_agilent(instrument: Instrument, *args):
+            instrument.NPLC(1.0)
+            instrument.range_auto('off')
+
+        def init_spi_rack(instrument: Instrument, *args):
+            
+            instrument.add_spi_module(8, 'D5a', 'module1')
+            args[0].instrument_snapshot(instrument.module1.dac0)
+            return
+
         self.readout.add_instrument("DummyInst")
         self.readout.add_instrument("DummyInst2")
+        self.readout.add_instrument("agilent_left", init_agilent)
+        self.readout.add_instrument("agilent_right", init_agilent)
+        self.readout.add_instrument("spi_rack", init_spi_rack, self.logger)
 
-        self.readout.monitor_parameter("DummyInst", ["rand1", "rand2"])
+        self.readout.monitor_parameter('agilent_left', ['volt'])
+        self.readout.monitor_parameter('agilent_right', ['volt'])
+        self.readout.set_parameter('agilent_left', {'range': 1})
+        self.readout.set_parameter('spi_rack', {'module1.dac0.voltage': 1})
 
         self.experiment_thread = ExperimentThread()
         self.experiment_thread.run()
@@ -81,7 +98,7 @@ class tuner_gui:
         self.experiment_thread.add_job(testjob, ("Hello",))
 
         self.abort_signal = threading.Event()
-        self.logger = TunerLog("TunerGUI")
+        
 
     # The below methods define the layout of the GUI
 
@@ -166,7 +183,7 @@ class tuner_gui:
                         self.logger.add_ui_handler(self.ui_log)
                         self.logger.info("Added NiceGUI UI handler to logger.")
 
-                ui.timer(0.05, self.update_liveplot)
+                ui.timer(0.25, self.update_liveplot)
                 ui.timer(0.5, self.watchdog_timer)
 
     def header(self):
@@ -275,7 +292,7 @@ class tuner_gui:
 
             self.ax.legend(self.lines, keys, )
             self.liveplot.update()
-            ui.update()
+            #ui.update()
 
     def experiment_progress_bar(self):
 

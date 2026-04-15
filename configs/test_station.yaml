@@ -1,0 +1,16 @@
+instruments:
+  DummyInst:
+    type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument
+  DummyInst2:
+    type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument
+  agilent_left:
+    type: qcodes.instrument_drivers.agilent.Agilent_34410A.Agilent34410A
+    address: TCPIP0::169.254.10.10::inst0::INSTR
+  agilent_right:
+    type: qcodes.instrument_drivers.agilent.Agilent_34410A.Agilent34410A
+    address: TCPIP0::169.254.4.10::inst0::INSTR
+  spi_rack:
+    type: qblox_instruments.qcodes_drivers.spi_rack.SpiRack #qcodes.instrument_drivers.SpiRack.spi_rack.SpiRack
+    address: COM3
+
+    

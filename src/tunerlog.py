@@ -71,7 +71,7 @@ class TunerLog(logging.Logger):
 
             if logfile is None:
                 #logfile = f"../logs/QDot_tuner_{datetime.datetime.now().strftime("%m-%d-%Y_%H-%M-%S")}.log"
-                logfile = f"../logs/QDot_tuner_{datetime.datetime.now().strftime("%m-%d-%Y")}.log"
+                logfile = f"../logs/QDot_tuner_{datetime.datetime.now().strftime('%m-%d-%Y')}.log"
 
             if fileHandler is None:
                 fileHandler = logging.FileHandler(logfile)
@@ -101,8 +101,11 @@ class TunerLog(logging.Logger):
 
         global loggers, uiHandler, history
 
-        if uiHandler is None:
-            uiHandler = LogElementHandler(element, level_num)
+        if uiHandler is not None:
+            for logger in loggers.values():
+                logger.removeHandler(uiHandler)
+        
+        uiHandler = LogElementHandler(element, level_num)
         
         for logger in loggers.values():
             if not uiHandler in logger.handlers:

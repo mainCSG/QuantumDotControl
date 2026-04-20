@@ -1,5 +1,5 @@
 '''
-File: buffered_readout.py
+File: instrument_handler.py
 
 Author: Mason Daub (mjdaub@uwaterloo.ca)
 

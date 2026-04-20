@@ -17,7 +17,7 @@ import threading
 import time
 from instrument_handler import create_buffer_instance
 import time
-from experiment_thread import ExperimentThread
+from experiment_handler import ExperimentThread
 from qcodes.station import Station
 from qcodes.instrument_drivers.mock_instruments import DummyInstrument
 from qcodes.instrument import Instrument

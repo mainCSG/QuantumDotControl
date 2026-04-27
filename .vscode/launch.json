@@ -11,7 +11,8 @@
             "program": "${workspaceFolder}/src/main.py",
             "cwd": "${workspaceFolder}/src",
             "console": "integratedTerminal",
-            "justMyCode": true
+            "justMyCode": true,
+            "python": "C:/Users/BaughLaflamme/anaconda3/envs/autotunning/python.exe"
         }
     ]
 }

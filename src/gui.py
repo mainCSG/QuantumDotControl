@@ -25,6 +25,7 @@ from qcodes.parameters import Parameter
 import random
 import os, sys
 from tunerlog import TunerLog
+from experiment_base import SweepLayer, AbstractSweep
 
 class RandomDummy(DummyInstrument):
     '''
@@ -67,8 +68,7 @@ class tuner_gui:
         self.station = Station(config_file = "../configs/test_station.yaml")
         self.station_lock = threading.Lock()
 
-        self.readout = create_buffer_instance(self.station, self.station_lock)
-        #self.readout.run()
+        self.instrument_handler = create_buffer_instance(self.station, self.station_lock) 
 
         def init_agilent(instrument: Instrument, *args):
             instrument.NPLC(1.0)
@@ -80,16 +80,16 @@ class tuner_gui:
             args[0].instrument_snapshot(instrument.module1.dac0)
             return
 
-        self.readout.add_instrument("DummyInst")
-        self.readout.add_instrument("DummyInst2")
-        self.readout.add_instrument("agilent_left", init_agilent)
-        self.readout.add_instrument("agilent_right", init_agilent)
-        self.readout.add_instrument("spi_rack", init_spi_rack, self.logger)
+        self.instrument_handler.add_instrument("DummyInst")
+        self.instrument_handler.add_instrument("DummyInst2")
+        self.instrument_handler.add_instrument("agilent_left", init_agilent)
+        self.instrument_handler.add_instrument("agilent_right", init_agilent)
+        self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
 
-        self.readout.monitor_parameter('agilent_left', ['volt'])
-        self.readout.monitor_parameter('agilent_right', ['volt'])
-        self.readout.set_parameter('agilent_left', {'range': 1})
-        self.readout.set_parameter('spi_rack', {'module1.dac0.voltage': 1})
+        self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
+        self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
+        self.instrument_handler.set_parameter('agilent_left', {'range': 1})
+        self.instrument_handler.set_parameter('spi_rack', {'module1.dac0.voltage': 1})
 
         self.experiment_thread = ExperimentThread()
         self.experiment_thread.run()
@@ -125,7 +125,7 @@ class tuner_gui:
                     ui.item('Instrument Information', on_click=lambda : ui.notify("Loading Instrument Information..."))
                     ui.item('Device Information', on_click=lambda : ui.notify("Loading Device Information..."))
 
-                stages = ['Setup','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
+                stages = ['Debug', 'Setup','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
 
                 with ui.tabs() as tabs:
                     
@@ -169,6 +169,17 @@ class tuner_gui:
                         ui.label('Collecting Fine Tuning Information...')
 
 
+                    with ui.tab_panel('Debug'):
+
+                        ui.label('Debug / Manual Controls')
+
+                        ui.button(
+                            'Run Test Sweep',
+                            on_click=self.run_test_sweep
+                        )
+
+                        self.debug_status = ui.label('Idle')
+
             with splitter1.after:
 
                 with ui.splitter(horizontal = True) as splitter2:
@@ -185,6 +196,37 @@ class tuner_gui:
 
                 ui.timer(0.25, self.update_liveplot)
                 ui.timer(0.5, self.watchdog_timer)
+
+    def run_test_sweep(self):
+
+        self.debug_status.set_text("Running sweep...")
+
+        self.logger.info("Sweep job started")
+
+        sweep = AbstractSweep(
+            layers=[
+                SweepLayer('spi_rack.module1.dac0.voltage', 0.0, 0.1, 500, 0.01),
+            ],
+            measure=lambda ih, sp: ih.read_buffer('agilent_right.volt')
+        )
+
+        future = self.experiment_thread.add_job(
+            AbstractSweep.do_sweep_job,
+            args=(sweep, self.instrument_handler),
+            wait=False
+        )
+
+        def check_result():
+            try:
+                result = future.result(timeout=0)
+            except TimeoutError:
+                ui.timer(0.1, check_result, once=True)
+            except Exception as e:
+                self.debug_status.set_text(f"Error: {e}")
+            else:
+                self.debug_status.set_text(f"Sweep complete: {len(result)} points")
+
+        check_result()
 
     def header(self):
         
@@ -261,7 +303,7 @@ class tuner_gui:
         colors = ['tab:blue', 'tab:red', 'tab:orange', 'tab:purple', 'tab:green']
         linestyles = ['-', '--', '-.', ':']
 
-        retval = self.readout.get_buffer()
+        retval = self.instrument_handler.get_buffer()
         if retval is None:
             return
         else:
@@ -359,7 +401,7 @@ class tuner_gui:
         pass
 
     def watchdog_timer(self):
-        if not self.readout.watchdog():
+        if not self.instrument_handler.watchdog():
             # Trigger a reset
             self.logger.error("Readout buffer watchdog detected a problem. Triggering a reset.")
             #python = sys.executable  # path to the Python interpreter
@@ -372,5 +414,5 @@ class tuner_gui:
     
     def on_shutdown(self):
         self.abort_signal.set() # Abort any currently running experiments.
-        self.readout.shutdown_instruments()
+        self.instrument_handler.shutdown_instruments()
         self.experiment_thread.join()

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import time
 import threading
+import numpy as np
 from dataclasses import dataclass
 from collections.abc import Callable
 from typing import Any
@@ -42,60 +43,87 @@ from tunerlog import TunerLog
 logger = TunerLog("Expt. Base")
 
 @dataclass
-class SweepLayers:
-    
-    '''
-    One axis of a multi-dimensional sweep.
+class SweepLayer:
+    param: str
+    start: float
+    end: float
+    num_points: int
+    measurement_time: float
 
-    Parameters resolved through instrument_handler
-    -----------------------------------------------
-    instrument : str
-        The instrument name as registered in the station / instrument_handler
-        (e.g. "dac", "vna").
-    parameter : str
-        The QCoDeS parameter name on that instrument (e.g. "ch1_v", "frequency").
-        Supports dotted sub-parameters in the same format as instrument_handler
-        (e.g. "ch1.voltage").
-    setpoints : Sequence
-        Ordered values to step through on this axis.
-    delay : float
-        Seconds to wait after set_parameter completes before continuing.
-        Uses interruptible sleep so aborts remain responsive.
-    before_sweep : Callable | None
-        Called once before this axis begins.
-        Signature: (layer: SweepLayer) -> None
-    after_sweep : Callable | None
-        Called once after this axis finishes (runs even on abort via finally).
-        Signature: (layer: SweepLayer) -> None
-    after_step : Callable | None
-        Called after each step on this layer, before descending into inner layers.
-        Signature: (layer: SweepLayer, value: Any) -> None
-    name : str
-        Human-readable label for logging. Falls back to "instrument.parameter".
-    '''
-
-    instrument: str
-    parameter: str
-    layers: list[list]
-    before_sweep: Callable[[SweepLayers], None] | None = None
-    after_sweep:  Callable[[SweepLayers], None] | None = None
-    after_step:   Callable[[SweepLayers, Any], None] | None = None
-    name: str = ''
-
-    def __post_init__(self) -> None:
-        if not self.instrument:
-            raise ValueError("SweepLayer.instrument must not be empty.")
-        if not self.parameter:
-            raise ValueError("SweepLayer.parameter must not be empty.")
-        if len(self.setpoints) == 0:
-            raise ValueError("SweepLayer.setpoints must not be empty.")
+    def __post_init__(self):
+        if '.' not in self.param:
+            raise ValueError("param must be 'instrument.parameter'")
+        if self.num_points <= 0:
+            raise ValueError("num_points must be > 0")
 
     @property
-    def label(self) -> str:
-        return self.name or f"{self.instrument}.{self.parameter}"
+    def instrument(self):
+        return self.param.split('.', 1)[0]
 
-class Sweep:
+    @property
+    def parameter(self):
+        return self.param.split('.', 1)[1]
 
-    def __init__(self):
+class AbstractSweep:
 
-        pass
+    def __init__(self, layers, measure):
+        self.layers = layers
+        self.measure = measure
+        self.results = []
+
+    def run(self, instr_handler, abort_event):
+        self._run_layer(0, instr_handler, abort_event, [])
+
+    def _run_layer(self, idx, instr_handler, abort_event, current_setpoints):
+
+        if idx == len(self.layers):
+            if abort_event.is_set():
+                raise RuntimeError("Sweep aborted")
+
+            data = self.measure(instr_handler, tuple(current_setpoints))
+            self.results.append({
+                "setpoints": tuple(current_setpoints),
+                "data": data
+            })
+            return
+
+        layer = self.layers[idx]
+
+        values = np.linspace(layer.start, layer.end, layer.num_points)
+
+        for val in values:
+
+            if abort_event.is_set():
+                raise RuntimeError("Sweep aborted")
+
+            logger.info(f"[SWEEP] Step: setting values {val}")
+
+            # Set parameter
+            instr_handler.set_parameter(
+                layer.instrument,
+                {layer.parameter: float(val)},
+                wait=True
+            )
+
+            # Measurement wait (interruptible)
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < layer.measurement_time:
+                if abort_event.is_set():
+                    raise RuntimeError("Sweep aborted")
+                time.sleep(0.01)
+
+            logger.info("[SWEEP] Measuring...")
+
+
+
+            # recurse
+            self._run_layer(
+                idx + 1,
+                instr_handler,
+                abort_event,
+                current_setpoints + [float(val)]
+            )
+
+    def do_sweep_job(sweep, instr_handler, abort_event):
+        sweep.run(instr_handler, abort_event)
+        return sweep.results

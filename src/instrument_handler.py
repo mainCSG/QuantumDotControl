@@ -80,7 +80,7 @@ class instrument_job:
 
 class instrument_callback_job(instrument_job):
     def __init__(self, future : TunerFuture, callback : InstrumentCallback, *args, when : float = -1):
-        self.callback : Callable[[Instrument], Any] = lambda inst: callback(inst, args)
+        self.callback : Callable[[Instrument], Any] = lambda inst: callback(inst, *args)
         super().__init__(future, when, "instrument_callback")
 
 class get_parameter_job(instrument_job):
@@ -254,7 +254,7 @@ class instrument_thread:
         for param_name in self.parameters_private:
             param : Parameter
             try:
-                param = getattr(self.instrument, param_name)
+                param = self.getattr_recursive(self.instrument, param_name)
             except:
                 logger.exception("Exception occured while reading parameter '%s.%s.'", self.instrument.name, param_name)
             else:
@@ -328,7 +328,7 @@ class instrument_thread:
                     continue
                 try:
                     # Test to make sure the requested parameter exists
-                    qparam = getattr(self.instrument, param)
+                    qparam = self.getattr_recursive(self.instrument, param)
                 except Exception as e:
                     job.future.set_exception(e)
                     self._update_public_parameters()

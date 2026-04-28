@@ -20,7 +20,28 @@ from typing import Tuple, Dict, Any, Literal, Protocol, Optional, Deque
 from qcodes.instrument import Instrument
 from tunerlog import TunerLog
 
+_ExperimentThreadInstance = None
+_ExperimentHandlerInstance = None
+
 logger = TunerLog('Expt. Control')
+
+def create_experiment_thread():
+    global _ExperimentThreadInstance
+
+    if _ExperimentThreadInstance is None:
+        _ExperimentThreadInstance = ExperimentThread()
+        _ExperimentThreadInstance.run()
+
+    return _ExperimentThreadInstance
+
+def get_experiment_handler():
+    global _ExperimentHandlerInstance
+
+    if _ExperimentHandlerInstance is None:
+        thread = create_experiment_thread()
+        _ExperimentHandlerInstance = experiment_handler(thread)
+
+    return _ExperimentHandlerInstance
 
 class Expt_status(Enum):
             queued = "Queued"
@@ -125,3 +146,34 @@ class ExperimentThread:
 
             # reset event once queue is empty
             self.job_event.clear()
+
+
+class experiment_handler:
+
+    def __init__(self, experiment_thread):
+        self.experiment_thread = experiment_thread
+
+    def do_sweep(self,
+                sweep,
+                instrument_handler,
+                wait: bool = True,
+                timeout: float = 60,
+                filename: str = "sweep.csv"):
+
+        future = TunerFuture()
+
+        def sweep_fn(abort_event):
+            result = sweep.run(instrument_handler, abort_event)
+            future.set_result(result)
+            return result
+
+        self.experiment_thread.add_job(
+            sweep_fn,
+            args=(),
+            wait=False
+        )
+
+        if wait:
+            return future.result(timeout)
+        else:
+            return future

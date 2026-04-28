@@ -17,7 +17,7 @@ import threading
 import time
 from instrument_handler import create_buffer_instance
 import time
-from experiment_handler import ExperimentThread
+from experiment_handler import get_experiment_handler
 from qcodes.station import Station
 from qcodes.instrument_drivers.mock_instruments import DummyInstrument
 from qcodes.instrument import Instrument
@@ -25,7 +25,7 @@ from qcodes.parameters import Parameter
 import random
 import os, sys
 from tunerlog import TunerLog
-from experiment_base import SweepLayer, AbstractSweep
+from experiment_base import SweepLayer, Sweep
 
 class RandomDummy(DummyInstrument):
     '''
@@ -70,6 +70,8 @@ class tuner_gui:
 
         self.instrument_handler = create_buffer_instance(self.station, self.station_lock) 
 
+        self.experiment_handler = get_experiment_handler()
+
         def init_agilent(instrument: Instrument, *args):
             instrument.NPLC(1.0)
             instrument.range_auto('off')
@@ -77,25 +79,16 @@ class tuner_gui:
         def init_spi_rack(instrument: Instrument, *args):
             
             instrument.add_spi_module(8, 'D5a', 'module1')
+            instrument.add_spi_module(7, 'D5a', 'module2')
             args[0].instrument_snapshot(instrument.module1.dac0)
             return
 
-        self.instrument_handler.add_instrument("DummyInst")
-        self.instrument_handler.add_instrument("DummyInst2")
         self.instrument_handler.add_instrument("agilent_left", init_agilent)
         self.instrument_handler.add_instrument("agilent_right", init_agilent)
         self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
 
         self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
         self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
-        self.instrument_handler.set_parameter('agilent_left', {'range': 1})
-        self.instrument_handler.set_parameter('spi_rack', {'module1.dac0.voltage': 1})
-
-        self.experiment_thread = ExperimentThread()
-        self.experiment_thread.run()
-
-        testjob = lambda a, event: print(f"{a} from {threading.current_thread().name}!")
-        self.experiment_thread.add_job(testjob, ("Hello",))
 
         self.abort_signal = threading.Event()
         
@@ -200,29 +193,32 @@ class tuner_gui:
     def run_test_sweep(self):
 
         self.debug_status.set_text("Running sweep...")
-
         self.logger.info("Sweep job started")
 
-        sweep = AbstractSweep(
+        sweep = Sweep(
             layers=[
-                SweepLayer('spi_rack.module1.dac0.voltage', 0.0, 0.1, 500, 0.01),
+                SweepLayer('spi_rack.module1.dac0.voltage', 0.0, 0.2, 100, 0.01),
+                SweepLayer('spi_rack.module1.dac1.voltage', 0.0, 0.2, 100, 0.01)
             ],
             measure=lambda ih, sp: ih.read_buffer('agilent_right.volt')
         )
 
-        future = self.experiment_thread.add_job(
-            AbstractSweep.do_sweep_job,
-            args=(sweep, self.instrument_handler),
+        future = self.experiment_handler.do_sweep(
+            sweep=sweep,
+            instrument_handler=self.instrument_handler,
             wait=False
         )
 
         def check_result():
             try:
                 result = future.result(timeout=0)
+
             except TimeoutError:
                 ui.timer(0.1, check_result, once=True)
+
             except Exception as e:
                 self.debug_status.set_text(f"Error: {e}")
+
             else:
                 self.debug_status.set_text(f"Sweep complete: {len(result)} points")
 
@@ -415,4 +411,4 @@ class tuner_gui:
     def on_shutdown(self):
         self.abort_signal.set() # Abort any currently running experiments.
         self.instrument_handler.shutdown_instruments()
-        self.experiment_thread.join()
+        self.experiment_handler.experiment_thread.join()

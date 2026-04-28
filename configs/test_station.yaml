@@ -1,8 +1,4 @@
 instruments:
-  DummyInst:
-    type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument
-  DummyInst2:
-    type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument
   agilent_left:
     type: qcodes.instrument_drivers.agilent.Agilent_34410A.Agilent34410A
     address: TCPIP0::169.254.10.10::inst0::INSTR

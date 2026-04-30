@@ -28,33 +28,34 @@ from tunerlog import TunerLog
 logger = TunerLog('Exp. Base')
 
 @dataclass
-class SweepLayer:
-    param: str
+class SweepParam:
+    parameter: str
     start: float
     end: float
+
+@dataclass
+class SweepLayer:
+    targets: list[SweepParam]
     num_points: int
     measurement_time: float
 
     def __post_init__(self):
-        if '.' not in self.param:
-            raise ValueError("param must be 'instrument.parameter'")
         if self.num_points <= 0:
             raise ValueError("num_points must be > 0")
-
-    @property
-    def instrument(self):
-        return self.param.split('.', 1)[0]
-
-    @property
-    def parameter(self):
-        return self.param.split('.', 1)[1]
 
 class Sweep:
 
     def __init__(self, layers, measure):
+        
         self.layers = layers
         self.measure = measure
         self.results = []
+
+        self.all_params = [
+            p.parameter
+            for layer in self.layers
+            for p in layer.targets
+        ]
 
         self.filename = f"sweep_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
 
@@ -68,7 +69,7 @@ class Sweep:
         self._csv_file = open(self.csv_path, "w", newline="")
         self._csv_writer = csv.writer(self._csv_file)
 
-        header = [f"setpoint_{i}" for i in range(len(self.layers))] + ["data"]
+        header = self.all_params + ["data"]
         self._csv_writer.writerow(header)
 
     def _close_csv(self):
@@ -82,7 +83,7 @@ class Sweep:
                 0,
                 instr_handler,
                 abort_event,
-                current_setpoints=[]
+                current_setpoints={}
             )
 
         finally:
@@ -93,40 +94,55 @@ class Sweep:
         if idx == len(self.layers):
             if abort_event.is_set():
                 raise RuntimeError("Sweep aborted")
-
             return
 
         layer = self.layers[idx]
 
-        values = np.linspace(layer.start, layer.end, layer.num_points)
+        values_per_param = [
+            np.linspace(p.start, p.end, layer.num_points)
+            for p in layer.targets
+        ]
 
-        for val in values:
+        for i in range(layer.num_points):
 
             if abort_event.is_set():
                 raise RuntimeError("Sweep aborted")
 
-            logger.info(f"[SWEEP] Step: setting values {val}")
+            step_values = {}
 
-            # Set parameter
-            instr_handler.set_parameter(
-                layer.instrument,
-                {layer.parameter: float(val)},
-                wait=True
-            )
+            for p, values in zip(layer.targets, values_per_param):
+                val = float(values[i])
 
-            # Wait time between points (interruptible)
+                instr, param = p.parameter.split('.', 1)
+
+                logger.info(f"[SWEEP] {p.parameter} -> {val}")
+
+                instr_handler.set_parameter(
+                    instr,
+                    {param: val},
+                    wait=True
+                )
+
+                step_values[p.parameter] = val
+
+            # Wait
+
             t0 = time.monotonic()
             while time.monotonic() - t0 < layer.measurement_time:
                 if abort_event.is_set():
                     raise RuntimeError("Sweep aborted")
                 time.sleep(0.001)
 
-            # recurse
+            new_setpoints = current_setpoints.copy()
+            new_setpoints.update(step_values)
+
+            # Recurse
+
             self.set_voltage_layer(
                 idx + 1,
                 instr_handler,
                 abort_event,
-                current_setpoints + [float(val)]
+                new_setpoints
             )
 
     def run(self, instr_handler, abort_event):
@@ -138,7 +154,7 @@ class Sweep:
                 0,
                 instr_handler,
                 abort_event,
-                current_setpoints=[]
+                current_setpoints={}
             )
 
         finally:
@@ -150,15 +166,16 @@ class Sweep:
             if abort_event.is_set():
                 raise RuntimeError("Sweep aborted")
 
-            data = self.measure(instr_handler, tuple(current_setpoints))
-        
+            data = self.measure(instr_handler, current_setpoints.copy())  # ✅ fixed
+            
             self.results.append({
-                "setpoints": tuple(current_setpoints),
+                "setpoints": current_setpoints.copy(),
                 "data": data
             })
 
-            # Write to CSV
-            row = list(current_setpoints) + [data]
+            # CSV write
+
+            row = [current_setpoints.get(p, None) for p in self.all_params] + [data]
             self._csv_writer.writerow(row)
             self._csv_file.flush()
 
@@ -166,23 +183,35 @@ class Sweep:
 
         layer = self.layers[idx]
 
-        values = np.linspace(layer.start, layer.end, layer.num_points)
+        values_per_param = [
+            np.linspace(p.start, p.end, layer.num_points)
+            for p in layer.targets
+        ]
 
-        for val in values:
+        for i in range(layer.num_points):
 
             if abort_event.is_set():
                 raise RuntimeError("Sweep aborted")
 
-            logger.info(f"[SWEEP] Step: setting values {val}")
+            step_values = {}
 
-            # Set parameter
-            instr_handler.set_parameter(
-                layer.instrument,
-                {layer.parameter: float(val)},
-                wait=True
-            )
+            for p, values in zip(layer.targets, values_per_param):
+                val = float(values[i])
 
-            # Measurement wait (interruptible)
+                instr, param = p.parameter.split('.', 1)
+
+                logger.info(f"[SWEEP] {p.parameter} -> {val}")  # ✅ fixed
+
+                instr_handler.set_parameter(
+                    instr,
+                    {param: val},
+                    wait=True
+                )
+
+                step_values[p.parameter] = val
+
+            # Wait
+
             t0 = time.monotonic()
             while time.monotonic() - t0 < layer.measurement_time:
                 if abort_event.is_set():
@@ -191,10 +220,14 @@ class Sweep:
 
             logger.info("[SWEEP] Measuring...")
 
-            # recurse
+            new_setpoints = current_setpoints.copy()
+            new_setpoints.update(step_values)
+
+            # Recurse
+
             self._run_layer(
                 idx + 1,
                 instr_handler,
                 abort_event,
-                current_setpoints + [float(val)]
+                new_setpoints
             )

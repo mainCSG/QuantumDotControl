@@ -48,7 +48,7 @@ class Bootstrapping:
     def barrier_barrier_sweep():
         pass
 
-    def set_plunger_sweep():
+    def coulomb_blockade_sweep():
         pass
 
     def coulomb_diamonds():

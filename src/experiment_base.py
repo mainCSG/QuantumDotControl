@@ -2,28 +2,8 @@
 File: experiment_base.py
 Authors: Benjamin Van Osch (bvanosch@uwaterloo.ca), Mason Daub (mjdaub@uwaterloo.ca)
 
-Defines SweepLayer, Sweep, and do_sweep_job for use with ExperimentThread.
+Defines SweepLayer objects and the Sweep class to handle all the running of all sweeps used in the Autotuner. 
 
-All hardware I/O is routed through the instrument_handler using set_parameter and
-get_parameter — the sweep never touches QCoDeS instruments directly.
-
-A SweepLayer describes one axis: which instrument parameter to drive and over which
-setpoints. An Sweep composes layers outermost → innermost, and calls a
-user-supplied measurement callback at every innermost point.
-
-do_sweep_job matches the ExperimentThread calling convention (f(*args, abort_event))
-and is registered like:
-
-    thread.add_job(do_sweep_job, (sweep, instr_handler), priority=1)
-
-Measurement callback signature
---------------------------------
-    def my_measure(instr_handler: instrument_handler,
-                   setpoints: tuple) -> Any:
-        return instr_handler.get_parameter("vna", "S21")
-
-The return value is stored in AbstractSweep.results as:
-    {'setpoints': (v0, v1, ...), 'data': <return value of measure>}
 '''
 
 # Imports
@@ -91,10 +71,63 @@ class Sweep:
         header = [f"setpoint_{i}" for i in range(len(self.layers))] + ["data"]
         self._csv_writer.writerow(header)
 
-
     def _close_csv(self):
         if self._csv_file is not None:
             self._csv_file.close()
+
+    def set_voltage_configuration(self, instr_handler, abort_event):
+
+        try:
+            self.set_voltage_layer(
+                0,
+                instr_handler,
+                abort_event,
+                current_setpoints=[]
+            )
+
+        finally:
+            print("Voltage Configuration Set!")
+
+    def set_voltage_layer(self, idx, instr_handler, abort_event, current_setpoints):
+
+        if idx == len(self.layers):
+            if abort_event.is_set():
+                raise RuntimeError("Sweep aborted")
+
+            return
+
+        layer = self.layers[idx]
+
+        values = np.linspace(layer.start, layer.end, layer.num_points)
+
+        for val in values:
+
+            if abort_event.is_set():
+                raise RuntimeError("Sweep aborted")
+
+            logger.info(f"[SWEEP] Step: setting values {val}")
+
+            # Set parameter
+            instr_handler.set_parameter(
+                layer.instrument,
+                {layer.parameter: float(val)},
+                wait=True
+            )
+
+            # Wait time between points (interruptible)
+            t0 = time.monotonic()
+            while time.monotonic() - t0 < layer.measurement_time:
+                if abort_event.is_set():
+                    raise RuntimeError("Sweep aborted")
+                time.sleep(0.001)
+
+            # recurse
+            self.set_voltage_layer(
+                idx + 1,
+                instr_handler,
+                abort_event,
+                current_setpoints + [float(val)]
+            )
 
     def run(self, instr_handler, abort_event):
 
@@ -154,7 +187,7 @@ class Sweep:
             while time.monotonic() - t0 < layer.measurement_time:
                 if abort_event.is_set():
                     raise RuntimeError("Sweep aborted")
-                time.sleep(0.01)
+                time.sleep(0.001)
 
             logger.info("[SWEEP] Measuring...")
 

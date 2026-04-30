@@ -170,6 +170,11 @@ class tuner_gui:
                             'Run Test Sweep',
                             on_click=self.run_test_sweep
                         )
+                        
+                        ui.button(
+                            'Run Test Sweep 2',
+                            on_click=self.run_test_sweep_2
+                        )
 
                         self.debug_status = ui.label('Idle')
 
@@ -197,10 +202,43 @@ class tuner_gui:
 
         sweep = Sweep(
             layers=[
-                SweepLayer('spi_rack.module1.dac0.voltage', 0.0, 0.2, 100, 0.01),
-                SweepLayer('spi_rack.module1.dac1.voltage', 0.0, 0.2, 100, 0.01)
+                SweepLayer('spi_rack.module1.dac0.voltage', 0.0, 0.2, 100, 0.1),
             ],
-            measure=lambda ih, sp: ih.read_buffer('agilent_right.volt')
+            measure=lambda ih, sp: ih.read_buffer('agilent_left.volt','agilent_right.volt')
+        )
+
+        future = self.experiment_handler.do_sweep(
+            sweep=sweep,
+            instrument_handler=self.instrument_handler,
+            wait=False
+        )
+
+        def check_result():
+            try:
+                result = future.result(timeout=0)
+
+            except TimeoutError:
+                ui.timer(0.1, check_result, once=True)
+
+            except Exception as e:
+                self.debug_status.set_text(f"Error: {e}")
+
+            else:
+                self.debug_status.set_text(f"Sweep complete: {len(result)} points")
+
+        check_result()
+
+    def run_test_sweep_2(self):
+
+        self.debug_status.set_text("Running sweep...")
+        self.logger.info("Sweep job started")
+
+        sweep = Sweep(
+            layers=[
+                SweepLayer('spi_rack.module1.dac0.voltage', 0.0, 0.2, 20, 0.01),
+                SweepLayer('spi_rack.module1.dac1.voltage', 0.0, 0.2, 20, 0.01)
+            ],
+            measure=lambda ih, sp: ih.read_buffer('agilent_left.volt','agilent_right.volt')
         )
 
         future = self.experiment_handler.do_sweep(

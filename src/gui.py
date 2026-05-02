@@ -25,7 +25,7 @@ from qcodes.parameters import Parameter
 import random
 import os, sys
 from tunerlog import TunerLog
-from experiment_base import SweepLayer, Sweep
+from experiment_base import SweepParam, SweepLayer, Sweep
 
 class RandomDummy(DummyInstrument):
     '''
@@ -74,7 +74,7 @@ class tuner_gui:
 
         def init_agilent(instrument: Instrument, *args):
             instrument.NPLC(1.0)
-            instrument.range_auto('off')
+            instrument.range_auto('on')
 
         def init_spi_rack(instrument: Instrument, *args):
             
@@ -176,6 +176,11 @@ class tuner_gui:
                             on_click=self.run_test_sweep_2
                         )
 
+                        ui.button(
+                            'Run Test Sweep 3',
+                            on_click=self.run_test_sweep_3
+                        )
+
                         self.debug_status = ui.label('Idle')
 
             with splitter1.after:
@@ -192,19 +197,32 @@ class tuner_gui:
                         self.logger.add_ui_handler(self.ui_log)
                         self.logger.info("Added NiceGUI UI handler to logger.")
 
-                ui.timer(0.25, self.update_liveplot)
+                ui.timer(0.025, self.update_liveplot)
                 ui.timer(0.5, self.watchdog_timer)
 
     def run_test_sweep(self):
 
         self.debug_status.set_text("Running sweep...")
-        self.logger.info("Sweep job started")
+        self.logger.info("Sweep job queued")
 
         sweep = Sweep(
             layers=[
-                SweepLayer('spi_rack.module1.dac0.voltage', 0.0, 0.2, 100, 0.1),
+                SweepLayer(
+                    targets=[
+                        SweepParam('spi_rack.module1.dac0.voltage', 0.1, 0.0),
+                        SweepParam('spi_rack.module1.dac1.voltage', 0.1, 0.0)
+                    ],
+                    num_points=20,
+                    measurement_time=0.1
+                )
             ],
-            measure=lambda ih, sp: ih.read_buffer('agilent_left.volt','agilent_right.volt')
+            measure=lambda ih, sp: (
+                ih.read_buffer([
+                    'agilent_left.volt',
+                    'agilent_right.volt'
+                ]),
+                ['agilent_left.volt', 'agilent_right.volt']
+            )
         )
 
         future = self.experiment_handler.do_sweep(
@@ -224,21 +242,39 @@ class tuner_gui:
                 self.debug_status.set_text(f"Error: {e}")
 
             else:
-                self.debug_status.set_text(f"Sweep complete: {len(result)} points")
+                self.debug_status.set_text(f"Sweep complete!")
 
         check_result()
 
     def run_test_sweep_2(self):
 
         self.debug_status.set_text("Running sweep...")
-        self.logger.info("Sweep job started")
+        self.logger.info("Sweep job queued")
 
         sweep = Sweep(
             layers=[
-                SweepLayer('spi_rack.module1.dac0.voltage', 0.0, 0.2, 20, 0.01),
-                SweepLayer('spi_rack.module1.dac1.voltage', 0.0, 0.2, 20, 0.01)
+                SweepLayer(
+                    targets=[
+                        SweepParam('spi_rack.module1.dac0.voltage', 0.0, 0.3)
+                    ],
+                    num_points=20,
+                    measurement_time=0.05
+                ),
+                SweepLayer(
+                    targets=[
+                        SweepParam('spi_rack.module1.dac1.voltage', 0.0, 0.3)
+                    ],
+                    num_points=20,
+                    measurement_time=0.05
+                )
             ],
-            measure=lambda ih, sp: ih.read_buffer('agilent_left.volt','agilent_right.volt')
+            measure=lambda ih, sp: (
+                ih.read_buffer([
+                    'agilent_left.volt',
+                    'agilent_right.volt'
+                ]),
+                ['agilent_left.volt', 'agilent_right.volt']
+            )
         )
 
         future = self.experiment_handler.do_sweep(
@@ -258,7 +294,56 @@ class tuner_gui:
                 self.debug_status.set_text(f"Error: {e}")
 
             else:
-                self.debug_status.set_text(f"Sweep complete: {len(result)} points")
+                self.debug_status.set_text(f"Sweep complete!")
+
+        check_result()
+
+    def run_test_sweep_3(self):
+
+        self.debug_status.set_text("Running sweep...")
+        self.logger.info("Sweep job queued")
+
+        sweep = Sweep(
+            layers=[
+                SweepLayer(
+                    targets=[
+                        SweepParam('spi_rack.module1.dac0.voltage', 0.0, 0.5)
+                    ],
+                    num_points=20,
+                    measurement_time=0.05
+                ),
+                SweepLayer(
+                    targets=[
+                        SweepParam('spi_rack.module1.dac1.voltage', 0.0, 0.3)
+                    ],
+                    num_points=20,
+                    measurement_time=0.05
+                )
+            ],
+            measure=lambda ih, sp: ih.read_buffer(
+                ['agilent_left.volt',
+                'agilent_right.volt'
+            ])
+        )
+
+        future = self.experiment_handler.set_voltage_configuration(
+            sweep=sweep,
+            instrument_handler=self.instrument_handler,
+            wait=False
+        )
+
+        def check_result():
+            try:
+                result = future.result(timeout=0)
+
+            except TimeoutError:
+                ui.timer(0.1, check_result, once=True)
+
+            except Exception as e:
+                self.debug_status.set_text(f"Error: {e}")
+
+            else:
+                self.debug_status.set_text(f"Sweep complete!")
 
         check_result()
 
@@ -328,7 +413,7 @@ class tuner_gui:
         xs = np.linspace(-1, 1)
         self.lines = self.ax.plot(xs, np.sin(xs))
         self.ax.set_xlabel('time (s)', fontsize = 16)
-        self.ax.set_ylabel('Current (A)', fontsize = 16)
+        self.ax.set_ylabel('Signal (V)', fontsize = 16)
         self.ax.tick_params(labelsize = 12)
         fig.tight_layout()
         self.liveplot.update()
@@ -364,11 +449,10 @@ class tuner_gui:
                 self.lines[j].set_ydata(data)
                 self.lines[j].set_xdata(times_offset)
                 self.ax.set_xlim(min(times_offset), max(times_offset))
-                self.ax.set_ylim(-0.5, 1.5)
+                self.ax.set_ylim(-0.5, 5.0)
 
             self.ax.legend(self.lines, keys, )
             self.liveplot.update()
-            #ui.update()
 
     def experiment_progress_bar(self):
 

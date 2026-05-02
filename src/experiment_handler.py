@@ -156,6 +156,7 @@ class experiment_handler:
     def do_sweep(self,
                 sweep,
                 instrument_handler,
+                current_setpoints = {},
                 wait: bool = True,
                 timeout: float = 60,
                 filename: str = "sweep.csv"):
@@ -163,7 +164,35 @@ class experiment_handler:
         future = TunerFuture()
 
         def sweep_fn(abort_event):
-            result = sweep.run(instrument_handler, abort_event)
+            result = sweep.run(instrument_handler, abort_event, current_setpoints)
+
+            future.set_result(result)
+            return result
+
+        self.experiment_thread.add_job(
+            sweep_fn,
+            args=(),
+            wait=False
+        )
+
+        if wait:
+            return future.result(timeout)
+        else:
+            return future
+        
+    def set_voltage_configuration(self,
+                sweep,
+                instrument_handler,
+                current_setpoints = {},
+                wait: bool = True,
+                timeout: float = 60,
+                filename: str = "sweep.csv"):
+
+        future = TunerFuture()
+
+        def sweep_fn(abort_event):
+            result = sweep.set_voltage_configuration(instrument_handler, abort_event, current_setpoints)
+            
             future.set_result(result)
             return result
 

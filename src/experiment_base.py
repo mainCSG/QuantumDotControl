@@ -66,30 +66,60 @@ class Sweep:
         self._csv_writer = None
 
     def _open_csv(self):
-        self._csv_file = open(self.csv_path, "w", newline="")
-        self._csv_writer = csv.writer(self._csv_file)
 
-        header = self.all_params + ["data"]
-        self._csv_writer.writerow(header)
+        keys = [
+            'agilent_left.volt',
+            'agilent_right.volt'
+        ]
+        ap = list(self.all_params)
+        
+        self._header = ap + keys
+        
+        self._csv_file = open(self.csv_path, "w", newline="")
+        
+        self._csv_writer = csv.writer(self._csv_file)
+        self._csv_writer.writerow(self._header)
 
     def _close_csv(self):
         if self._csv_file is not None:
             self._csv_file.close()
 
-    def set_voltage_configuration(self, instr_handler, abort_event):
+    def set_voltage_configuration(self, instr_handler, abort_event, current_setpoints = {}):
 
         try:
             self.set_voltage_layer(
                 0,
                 instr_handler,
                 abort_event,
-                current_setpoints={}
+                current_setpoints=current_setpoints
             )
 
         finally:
             print("Voltage Configuration Set!")
 
     def set_voltage_layer(self, idx, instr_handler, abort_event, current_setpoints):
+
+        """
+        A method that sets a particular voltage configuration without measurement. The intended use of this method
+        is to set voltage configurations in between experiments, as well as allow for smooth resetting of voltages
+        once a layer has been completely swept.
+
+        Parameters
+        ----------
+        name: idx
+            The layer index for the sweep. In set_voltage_configuration, this is always set to 0 initially.
+
+        instr_handler:  
+            The instrument_handler instance that instantiates when the gui is run. 
+        
+        abort_event:
+            The abort event that can be dynamically updated to abort any experiment job if needed.
+
+        current_setpoints:
+            The current values set on the instrument. Defaults to empty.
+
+        """
+
 
         if idx == len(self.layers):
             if abort_event.is_set():
@@ -125,13 +155,13 @@ class Sweep:
 
                 step_values[p.parameter] = val
 
-            # Wait
+                # Wait
 
-            t0 = time.monotonic()
-            while time.monotonic() - t0 < layer.measurement_time:
-                if abort_event.is_set():
-                    raise RuntimeError("Sweep aborted")
-                time.sleep(0.001)
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < layer.measurement_time:
+                    if abort_event.is_set():
+                        raise RuntimeError("Sweep aborted")
+                    time.sleep(0.001)
 
             new_setpoints = current_setpoints.copy()
             new_setpoints.update(step_values)
@@ -145,7 +175,7 @@ class Sweep:
                 new_setpoints
             )
 
-    def run(self, instr_handler, abort_event):
+    def run(self, instr_handler, abort_event, current_setpoints = {}):        
 
         try:
             self._open_csv()
@@ -154,7 +184,7 @@ class Sweep:
                 0,
                 instr_handler,
                 abort_event,
-                current_setpoints={}
+                current_setpoints=current_setpoints
             )
 
         finally:
@@ -162,20 +192,30 @@ class Sweep:
 
     def _run_layer(self, idx, instr_handler, abort_event, current_setpoints):
 
+        layer_start_setpoints = current_setpoints.copy()
+
         if idx == len(self.layers):
             if abort_event.is_set():
                 raise RuntimeError("Sweep aborted")
-
-            data = self.measure(instr_handler, current_setpoints.copy())  # ✅ fixed
             
+            data, keys = self.measure(instr_handler, current_setpoints.copy())
+
             self.results.append({
                 "setpoints": current_setpoints.copy(),
                 "data": data
             })
 
-            # CSV write
+            row = [current_setpoints.get(p, None) for p in self.all_params]
 
-            row = [current_setpoints.get(p, None) for p in self.all_params] + [data]
+            if isinstance(data, dict):
+                for k in keys:
+                    val = data.get(k, None)
+                    row.append(float(val) if val is not None else "")
+            else:
+                try:
+                    row.append(float(data))
+                except (TypeError, ValueError):
+                    row.append("")
             self._csv_writer.writerow(row)
             self._csv_file.flush()
 
@@ -200,7 +240,7 @@ class Sweep:
 
                 instr, param = p.parameter.split('.', 1)
 
-                logger.info(f"[SWEEP] {p.parameter} -> {val}")  # ✅ fixed
+                logger.info(f"[SWEEP] {p.parameter} -> {val}")
 
                 instr_handler.set_parameter(
                     instr,
@@ -210,18 +250,20 @@ class Sweep:
 
                 step_values[p.parameter] = val
 
-            # Wait
+                # Wait
 
-            t0 = time.monotonic()
-            while time.monotonic() - t0 < layer.measurement_time:
-                if abort_event.is_set():
-                    raise RuntimeError("Sweep aborted")
-                time.sleep(0.001)
+                t0 = time.perf_counter()
 
-            logger.info("[SWEEP] Measuring...")
+                while time.perf_counter() - t0 < layer.measurement_time:
+                    if abort_event.is_set():
+                        raise RuntimeError("Sweep aborted")
+                    time.sleep(0.001)
 
             new_setpoints = current_setpoints.copy()
             new_setpoints.update(step_values)
+
+            print(f"layer_start_setpoints: {layer_start_setpoints}")
+            print(f"new_setpoints: {new_setpoints}")
 
             # Recurse
 
@@ -231,3 +273,89 @@ class Sweep:
                 abort_event,
                 new_setpoints
             )
+
+            layer_start_setpoints = current_setpoints.copy()
+
+            if idx < len(self.layers) - 1 and i < layer.num_points - 1:
+
+                reset_layers = self._build_reset_layers(
+                    idx,
+                    p.end,
+                    p.start,
+                    num_points=10
+                )
+
+                print(f"reset_layers: {reset_layers}")
+
+                # Save original layers
+                original_layers = self.layers
+
+                print(f"original_layers: {original_layers}")
+
+                try:
+                    # Swap in reset layers
+                    self.layers = reset_layers
+
+                    # Call your existing function
+                    self.set_voltage_layer(
+                        0,
+                        instr_handler,
+                        abort_event,
+                        new_setpoints
+                    )
+
+                finally:
+                    # Restore original layers
+                    self.layers = original_layers
+
+    def _build_reset_layers(self, idx, start_setpoints, end_setpoints, num_points=100):
+        
+        """
+        Build a temporary list of layers that sweep from end_setpoints back to start_setpoints
+        using the same parameter structure as self.layers[idx:].
+        """
+
+        print(f"start_setpoints inside: {start_setpoints}")
+        print(f"end_setpoints inside: {end_setpoints}")
+
+        reset_layers = []
+
+        for layer in self.layers[idx + 1:]:
+
+            new_targets = []
+
+            for p in layer.targets:
+                param = p.parameter
+
+                print(f"param: {param}")
+
+                v_start = start_setpoints
+                v_end = end_setpoints
+
+                print(f"v_start: {v_start}")
+                print(f"v_end: {v_end}")
+
+                if v_start is None or v_end is None:
+                    continue
+
+                # Create a shallow copy-like object with reversed sweep
+                new_p = type(p)(
+                    parameter=p.parameter,
+                    start=v_start,
+                    end=v_end
+                )
+
+                print(f"new_p: {new_p}")
+
+                new_targets.append(new_p)
+
+            # Recreate layer with higher resolution
+            new_layer = type(layer)(
+                targets=new_targets,
+                num_points=num_points,
+                measurement_time=layer.measurement_time
+            )
+
+            reset_layers.append(new_layer)
+
+        return reset_layers

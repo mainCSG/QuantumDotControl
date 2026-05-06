@@ -102,7 +102,7 @@ class Sweep:
         """
         A method that sets a particular voltage configuration without measurement. The intended use of this method
         is to set voltage configurations in between experiments, as well as allow for smooth resetting of voltages
-        once a layer has been completely swept.
+        once a layer has been completely swept. THIS METHOD DOES NOT RECURSE.
 
         Parameters
         ----------
@@ -120,6 +120,8 @@ class Sweep:
 
         """
 
+        if idx != 0:
+            raise ValueError("Setting a voltage layer should only have one layer!")
 
         if idx == len(self.layers):
             if abort_event.is_set():
@@ -166,15 +168,6 @@ class Sweep:
             new_setpoints = current_setpoints.copy()
             new_setpoints.update(step_values)
 
-            # Recurse
-
-            self.set_voltage_layer(
-                idx + 1,
-                instr_handler,
-                abort_event,
-                new_setpoints
-            )
-
     def run(self, instr_handler, abort_event, current_setpoints = {}):        
 
         try:
@@ -191,8 +184,6 @@ class Sweep:
             self._close_csv()
 
     def _run_layer(self, idx, instr_handler, abort_event, current_setpoints):
-
-        layer_start_setpoints = current_setpoints.copy()
 
         if idx == len(self.layers):
             if abort_event.is_set():
@@ -262,9 +253,6 @@ class Sweep:
             new_setpoints = current_setpoints.copy()
             new_setpoints.update(step_values)
 
-            print(f"layer_start_setpoints: {layer_start_setpoints}")
-            print(f"new_setpoints: {new_setpoints}")
-
             # Recurse
 
             self._run_layer(
@@ -274,18 +262,16 @@ class Sweep:
                 new_setpoints
             )
 
-            layer_start_setpoints = current_setpoints.copy()
-
             if idx < len(self.layers) - 1 and i < layer.num_points - 1:
 
-                reset_layers = self._build_reset_layers(
+                reset_layer = self._build_reset_layers(
                     idx,
                     p.end,
                     p.start,
-                    num_points=10
+                    num_points=50
                 )
 
-                print(f"reset_layers: {reset_layers}")
+                print(f"reset_layers: {reset_layer}")
 
                 # Save original layers
                 original_layers = self.layers
@@ -294,7 +280,7 @@ class Sweep:
 
                 try:
                     # Swap in reset layers
-                    self.layers = reset_layers
+                    self.layers = reset_layer
 
                     # Call your existing function
                     self.set_voltage_layer(
@@ -315,14 +301,11 @@ class Sweep:
         using the same parameter structure as self.layers[idx:].
         """
 
-        print(f"start_setpoints inside: {start_setpoints}")
-        print(f"end_setpoints inside: {end_setpoints}")
+        reset_layer = []
 
-        reset_layers = []
+        new_targets = []
 
         for layer in self.layers[idx + 1:]:
-
-            new_targets = []
 
             for p in layer.targets:
                 param = p.parameter
@@ -331,9 +314,6 @@ class Sweep:
 
                 v_start = start_setpoints
                 v_end = end_setpoints
-
-                print(f"v_start: {v_start}")
-                print(f"v_end: {v_end}")
 
                 if v_start is None or v_end is None:
                     continue
@@ -349,13 +329,13 @@ class Sweep:
 
                 new_targets.append(new_p)
 
-            # Recreate layer with higher resolution
-            new_layer = type(layer)(
-                targets=new_targets,
-                num_points=num_points,
-                measurement_time=layer.measurement_time
-            )
+        # Recreate layer with higher resolution
+        new_layer = type(layer)(
+            targets=new_targets,
+            num_points=num_points,
+            measurement_time=layer.measurement_time
+        )
 
-            reset_layers.append(new_layer)
+        reset_layer.append(new_layer)
 
-        return reset_layers
+        return reset_layer

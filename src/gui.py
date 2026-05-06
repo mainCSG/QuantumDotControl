@@ -255,7 +255,7 @@ class tuner_gui:
             layers=[
                 SweepLayer(
                     targets=[
-                        SweepParam('spi_rack.module1.dac0.voltage', 0.0, 0.3)
+                        SweepParam('spi_rack.module1.dac2.voltage', 0.0, 0.3)
                     ],
                     num_points=20,
                     measurement_time=0.05
@@ -263,6 +263,13 @@ class tuner_gui:
                 SweepLayer(
                     targets=[
                         SweepParam('spi_rack.module1.dac1.voltage', 0.0, 0.3)
+                    ],
+                    num_points=20,
+                    measurement_time=0.05
+                ),
+                SweepLayer(
+                    targets=[
+                        SweepParam('spi_rack.module1.dac0.voltage', 0.0, 0.3)
                     ],
                     num_points=20,
                     measurement_time=0.05

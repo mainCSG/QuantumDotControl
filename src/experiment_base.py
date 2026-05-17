@@ -15,14 +15,8 @@ import os
 from datetime import datetime
 
 import time
-import threading
 import numpy as np
 from dataclasses import dataclass
-from collections.abc import Callable
-from typing import Any
-from qcodes.station import Station
-from instrument_handler import TunerFuture
-from experiment_handler import ExperimentThread, experiment_job
 from tunerlog import TunerLog
 
 logger = TunerLog('Exp. Base')
@@ -310,8 +304,6 @@ class Sweep:
             for p in layer.targets:
                 param = p.parameter
 
-                print(f"param: {param}")
-
                 v_start = start_setpoints
                 v_end = end_setpoints
 
@@ -325,11 +317,10 @@ class Sweep:
                     end=v_end
                 )
 
-                print(f"new_p: {new_p}")
-
                 new_targets.append(new_p)
 
-        # Recreate layer with higher resolution
+        # Recreate layer
+        
         new_layer = type(layer)(
             targets=new_targets,
             num_points=num_points,

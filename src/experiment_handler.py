@@ -158,8 +158,7 @@ class experiment_handler:
                 instrument_handler,
                 current_setpoints = {},
                 wait: bool = True,
-                timeout: float = 60,
-                filename: str = "sweep.csv"):
+                timeout: float = 60):
 
         future = TunerFuture()
 

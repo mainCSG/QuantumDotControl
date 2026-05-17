@@ -26,6 +26,8 @@ import random
 import os, sys
 from tunerlog import TunerLog
 from experiment_base import SweepParam, SweepLayer, Sweep
+from autotuning_protocol import Protocol
+
 
 class RandomDummy(DummyInstrument):
     '''
@@ -65,7 +67,7 @@ class tuner_gui:
         self.logger = TunerLog("TunerGUI")
         self.start_time = time.monotonic()
 
-        self.station = Station(config_file = "../configs/test_station.yaml")
+        self.station = Station(config_file = "../configs/dummy_station.yaml")
         self.station_lock = threading.Lock()
 
         self.instrument_handler = create_buffer_instance(self.station, self.station_lock) 
@@ -83,12 +85,12 @@ class tuner_gui:
             args[0].instrument_snapshot(instrument.module1.dac0)
             return
 
-        self.instrument_handler.add_instrument("agilent_left", init_agilent)
+        """ self.instrument_handler.add_instrument("agilent_left", init_agilent)
         self.instrument_handler.add_instrument("agilent_right", init_agilent)
         self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
 
         self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
-        self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
+        self.instrument_handler.monitor_parameter('agilent_right', ['volt']) """
 
         self.abort_signal = threading.Event()
         
@@ -129,13 +131,10 @@ class tuner_gui:
             
                     with ui.tab_panel('Setup'):
 
-                        self.results_plot_panel()
-
-                        self.instr = ui.button('Connect to instruments', on_click = self.experiment_progress_bar)
-                        self.autotune = ui.button('Autotune')
-                        
-                        config_files = os.listdir('../configs')
-                        config_dict = {i : config_files[i] for i in range(len(config_files))}
+                        self.autotune = ui.button(
+                                            'Autotune',
+                                            on_click = Protocol(device_config = '../configs/Intel_Config.yaml')
+                                                 )
 
                     with ui.tab_panel('Bootstrapping'):
 

@@ -26,7 +26,7 @@ import random
 import os, sys
 from tunerlog import TunerLog
 from experiment_base import SweepParam, SweepLayer, Sweep
-from autotuning_protocol import Protocol
+from autotuning_protocol import Protocol, Bootstrapping, GlobalChargeTuning, VirtualGating, ChargeStateTuning
 
 
 class RandomDummy(DummyInstrument):
@@ -67,7 +67,7 @@ class tuner_gui:
         self.logger = TunerLog("TunerGUI")
         self.start_time = time.monotonic()
 
-        self.station = Station(config_file = "../configs/dummy_station.yaml")
+        self.station = Station(config_file = "../configs/Intel_Config_Test.yaml")
         self.station_lock = threading.Lock()
 
         self.instrument_handler = create_buffer_instance(self.station, self.station_lock) 
@@ -178,6 +178,11 @@ class tuner_gui:
                         ui.button(
                             'Run Test Sweep 3',
                             on_click=self.run_test_sweep_3
+                        )
+
+                        ui.button(
+                            'Run Bootstrapping',
+                            on_click = self.run_bootstrapping
                         )
 
                         self.debug_status = ui.label('Idle')
@@ -352,6 +357,20 @@ class tuner_gui:
                 self.debug_status.set_text(f"Sweep complete!")
 
         check_result()
+
+    def run_bootstrapping(self):
+
+        self.debug_status.set_text("Running Bootstrapping...")
+        self.logger.info("Bootstrapping Jobs queued")
+
+        protocol = Protocol(device_config = r"C:\Users\bennt\OneDrive\Documents\GitHub\QuantumDotControl\configs\Intel_Config_Test.yaml")
+
+        self.logger.info("Protocol Object Created")
+
+        bootstrapping = Bootstrapping(device_config = r"C:\Users\bennt\OneDrive\Documents\GitHub\QuantumDotControl\configs\Intel_Config_Test.yaml")
+
+        self.logger.info("Bootstrapping Completed!")
+
 
     def header(self):
         

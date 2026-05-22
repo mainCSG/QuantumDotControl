@@ -60,6 +60,8 @@ class Protocol:
 
             self.gates_to_dacs[i] = self.device_gates[i]['channel']
 
+        print(self.gates_to_dacs)
+
     def _load_config_file(self, device_config):
         
         # Read the tuner config information

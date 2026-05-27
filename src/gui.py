@@ -83,14 +83,15 @@ class tuner_gui:
             instrument.add_spi_module(8, 'D5a', 'module1')
             instrument.add_spi_module(7, 'D5a', 'module2')
             args[0].instrument_snapshot(instrument.module1.dac0)
+            instrument.module2.dac14(0.01)
             return
 
-        """ self.instrument_handler.add_instrument("agilent_left", init_agilent)
+        self.instrument_handler.add_instrument("agilent_left", init_agilent)
         self.instrument_handler.add_instrument("agilent_right", init_agilent)
         self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
 
         self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
-        self.instrument_handler.monitor_parameter('agilent_right', ['volt']) """
+        self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
 
         self.abort_signal = threading.Event()
         

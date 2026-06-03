@@ -1,0 +1,58 @@
+device:
+
+  characteristics:
+    name: 3D1S_w151_1
+    charge_carrier: e
+    operation_mode: acc
+
+  constraints:
+    abs_max_current_triple_dot: 20e-9
+    abs_max_current_SET_dot: 10e-9
+    abs_max_gate_differential: 1.5
+    abs_max_gate_voltage: 1.5
+    abs_max_ohmic_bias: 1e-3
+
+  gates:
+    S3:
+      label: Right Sensor Ohmic
+      type: Sensor Ohmic
+      channel: module1.dac11
+    SG1:
+      label: Horizontal Screening Gate
+      type: Central Screening
+      channel: module1.dac12
+    CG0b:
+      label: Sensor Screening Gate
+      type: Sensor Screening
+      channel: module1.dac13
+    AC2:
+      label: Right Sensor Accumulation Gate
+      type:  Sensor Accumulation
+      channel: module1.dac14
+    F1 + AC3:
+      label: Left Sensor Accumulation Gate and Flanking Gates
+      type: Sensor Accumulation
+      channel: module1.dac15
+    B20:
+      label: Left Sensor Barrier Gate
+      type: Sensor Barrier
+      channel: module1.dac16
+    B21:
+      label: Right Sensor Barrier Gate
+      type: Sensor Barrier
+      channel: module2.dac14
+    P20:
+      label: Sensor Plunger
+      type: Sensor Plunger
+      channel: module2.dac15
+setup:
+  triple_dot_preamp:
+    preamp_bias: 0.0
+    preamp_sensitivity: 1.0e-8
+  SET_dot_preamp:
+    preamp_bias: 0.0
+    preamp_sensitivity: 1.0e-8
+  voltage_dividers:
+    voltage_divider_triple_dot: 1.0e-3
+    voltage_divider_SET_dot: 1.0e-3
+

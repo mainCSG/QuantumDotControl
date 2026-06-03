@@ -1,0 +1,74 @@
+device:
+
+  characteristics:
+    name: 3D1S_w151_1
+    charge_carrier: e
+    operation_mode: acc
+
+  constraints:
+    abs_max_current_triple_dot: 20e-9
+    abs_max_current_SET_dot: 10e-9
+    abs_max_gate_differential: 1.5
+    abs_max_gate_voltage: 1.5
+    abs_max_ohmic_bias: 1e-3
+
+  gates:
+    S0:
+      label: Left Dot Ohmic
+      type: Dot Ohmic
+      channel: module1.dac7
+    SG1:
+      label: Horizontal Screening Gate
+      type: Central Screening
+      channel: module1.dac11
+    CG0a:
+      label: Dot Screening Gate
+      type:  Dot Screening
+      channel: module1.dac12
+    AC0:
+      label: Left Dot Accumulation Gate
+      type:  Dot Accumulation
+      channel: module1.dac13
+    AC1:
+      label: Right Dot Accumulation Gate
+      type:  Dot Accumulation
+      channel: module1.dac14
+    B0:
+      label: Left Barrier Gate
+      type: Dot Barrier
+      channel: module1.dac15
+    B1:
+      label: Dot 1-2 Barrier Gate
+      type: Dot Barrier
+      channel: module1.dac16
+    B2:
+      label: Dot 2-3 Barrier Gate
+      type: Dot Barrier
+      channel: module2.dac12
+    B3:
+      label: Right Barrier Gate
+      type: Dot Barrier
+      channel: module2.dac13
+    P0:
+      label: Left Dot Plunger
+      type: Dot Plunger
+      channel: module2.dac14
+    P1:
+      label: Middle Dot Plunger
+      type: Dot Plunger
+      channel: module2.dac15
+    P2:
+      label: Right Dot Plunger
+      type: Dot Plunger
+      channel: module2.dac16
+setup:
+  triple_dot_preamp:
+    preamp_bias: 0.0
+    preamp_sensitivity: 1.0e-8
+  SET_dot_preamp:
+    preamp_bias: 0.0
+    preamp_sensitivity: 1.0e-8
+  voltage_dividers:
+    voltage_divider_triple_dot: 1.0e-3
+    voltage_divider_SET_dot: 1.0e-3
+

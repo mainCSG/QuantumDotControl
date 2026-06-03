@@ -17,15 +17,16 @@ import numpy as np
 import numpy.typing as npt
 import pandas as pd
 import cv2
-import signal
+import scipy.signal as signal
 
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 from matplotlib.ticker import AutoMinorLocator
-from matplotlib.patches import ConnectionPatch
+from matplotlib.patches import ConnectionPatch, Rectangle
 
 from scipy.optimize import curve_fit
+from scipy.special import expit
 from scipy.ndimage import convolve, map_coordinates, gaussian_filter1d
 
 import skimage
@@ -46,140 +47,376 @@ from qcodes.parameters import ParameterBase
 from nicegui import ui
   
 def logarithmic(x, a, b, x0, y0):
+    """Logarithmic model used for curve fitting.
+
+    Parameters:
+        x: independent variable array
+        a, b, x0, y0: fit parameters
+    """
     return a * np.log(b*(x-x0)) + y0
 
 def exponential(x, a, b, x0, y0):
+    """Exponential model used for curve fitting.
+
+    Parameters:
+        x: independent variable array
+        a, b, x0, y0: fit parameters
+    """
     return a * np.exp(b * (x-x0)) + y0
 
 def sigmoid(x, a, b, x0, y0):
-    return a/(1+np.exp(b * (x-x0))) + y0
+    """Sigmoid model used for turn-on / pinch-off fitting.
+
+    Parameters:
+        x: independent variable array
+        a, b, x0, y0: fit parameters
+    """
+    return a * expit(-b * (x - x0)) + y0
 
 def linear(x, m, b):
+    """Simple linear model for fitting straight-line behavior."""
     return m * x + b         
 
-def relu(x, a, x0, b):
-    return np.maximum(0, a * (x - x0) + b)
+def relu(x, a, x0):
+    """ReLU-style model that is zero below x0 and linear above it."""
+    return np.maximum(0, a * (x - x0))
 
 def fit_to_function(x_data, 
                     y_data, 
-                    function: Callable):
-    
-    popt, pcov = curve_fit(function, x_data, y_data)
-    perr = np.sqrt(np.diag(pcov))
+                    function: Callable,
+                    p0: list[float] = None,
+                    print_results: bool = True):
+    """Fit a provided model function to x/y data using nonlinear least squares.
 
+    Parameters:
+        x_data: independent variable values
+        y_data: dependent variable values
+        function: callable model to fit (e.g. sigmoid)
+        p0: optional initial guess for model parameters
+        print_results: whether to print fitted parameter values
+
+    Returns:
+        params: model parameter names
+        popt: optimized parameter values
+        pcov: covariance matrix of parameter estimates
+    """
+
+    if p0 is None:
+        popt, pcov = curve_fit(function, x_data, y_data)
+        perr = np.sqrt(np.diag(pcov))
+    else:
+        popt, pcov = curve_fit(function, x_data, y_data, p0=p0)
+        perr = np.sqrt(np.diag(pcov))
+    
     params = list(inspect.signature(function).parameters.keys())[1:]
 
-    for name, val, err in zip(params, popt, perr):
-        print(f"{name} = {val:.3f} ± {err:.3f}")
+    if print_results:
+        for name, val, err in zip(params, popt, perr):
+            print(f"{name} = {val:.3f} ± {err:.3f}")
 
     return params, popt, pcov
 
-def pinch_off_curve_ranges(x_data, y_data):
+def extract_turn_on_voltage(x_data: np.array,
+                            y_data: np.array,
+                            noisefloor: float,
+                            plot_results: bool = True):
+    """Estimate the turn-on voltage from a gate-sweep current curve.
+
+    This routine baseline-corrects the current, then finds the first
+    voltage where the current rises above the provided threshold.
+    """
 
     # --- Data definitions ---
     
     x1 = np.array(x_data)
     y1 = np.array(y_data)
 
-    # --- Fit sigmoids ---
+    if y1[-1] < 0:
+        y1 = -y1
+
+    # --- Finding Turn-On Voltage ---
+    turnon_voltage = 0
+    turnon_current = 0
+
+    for val in y1:
+        if val > noisefloor:
+            idx_turnon = np.where(y1 == val)[0][0]  # get the index of the turn-on point
+            turnon_voltage = x1[idx_turnon]
+            turnon_current = y1[idx_turnon]
+            break
     
-    p0_1 = [min(y1), max(y1), np.median(x1), 0.05]
-    params, popt, pcov = fit_to_function(x1, y1, sigmoid)
+    # --- Plot data ---
+    
+    if plot_results:
+
+        fig, ax = plt.subplots(figsize=(8,6))
+        ax.plot(x1, y1, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
+        ax.scatter(turnon_voltage, turnon_current, color='red', s=100, zorder=5, label='Turn-On Point')
+        ax.legend(fontsize=24, frameon=False, loc='upper left')
+
+        # --- Labels and formatting ---
+
+        ax.set_xlabel(r'V$_{gate}$ (V)', fontsize=35)
+        ax.set_ylabel('I (nA)', fontsize=35)
+
+        ax.minorticks_on()
+        ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
+        ax.tick_params(direction='in', length=5, width=1.2, labelsize=18, top=True, right=True)
+
+        xticks_span = np.linspace(x1.min(), x1.max(), 5)
+
+        ax.set_xticks(xticks_span)
+        ax.set_xticklabels([f'{xticks_span[0]:.1f}', '', f'{xticks_span[2]:.1f}', '', f'{xticks_span[-1]:.1f}'], fontsize=25)
+
+        yticks_span = np.linspace(y1.min(), y1.max(), 5)
+
+        ax.set_yticks(yticks_span)
+        ax.set_yticklabels([f'{np.abs(yticks_span[0]):.1f}', '', '', '', f'{yticks_span[-1]:.4f}'], fontsize=25)
+
+        plt.tight_layout()
+        plt.close(fig)
+
+    # --- Print summary ---
+    print(f"  Turn-on Voltage:  {turnon_voltage:.3f} V")
+
+    return turnon_voltage, fig  # Turn-on calculated by thresholding
+
+def pinch_off_curve_ranges(x_data: np.array,
+                           y_data: np.array,
+                           threshold: float,
+                           debug: bool = False,
+                           plot_results: bool = True):
+    """Identify pinch-off and saturation voltage ranges for a sweep.
+
+    This function normalizes the sign of the current, selects the scan
+    direction from the zero-voltage point, finds the pinch-off position
+    using slope detection, and then locates the saturation region.
+    """
+
+    # --- Data definitions ---
+    
+    x1 = np.array(x_data)
+    y1 = np.array(y_data)
+
+    if y1[0] < 0:
+        y1 = -y1
+
+    # --- Check if we are pinch-offed ---
+
+    if y1[0] < threshold:
+        raise ValueError("Current at the end of the sweep is above the pinch-off noisefloor, indicating the device may not be fully pinch-offed. Please check the data or adjust the threshold.")
+
+    # --- Finding Pinch-off Voltage ---
+
+    start_idx = int(np.argmin(np.abs(x1)))
+    if start_idx == 0:
+        step = 1
+    elif start_idx == len(x1) - 1:
+        step = -1
+    else:
+        left_abs = abs(x1[start_idx - 1])
+        right_abs = abs(x1[start_idx + 1])
+        step = 1 if right_abs >= left_abs else -1
+
+    scan_indices = np.arange(start_idx, len(x1), step) if step > 0 else np.arange(start_idx, -1, -1)
+    x_scan = x1[scan_indices]
+    y_scan = y1[scan_indices]
+    
+    # 1. Use the first 5% of data points (closest to 0V) to characterize the noise floor
+    baseline_window = max(5, int(0.05 * len(y_scan)))
+    baseline_data = y_scan[:baseline_window]
+    baseline_mean = np.mean(baseline_data)
+    baseline_std = np.std(baseline_data)
+    total_signal_range = np.max(y_scan) - np.min(y_scan)
+
+    # If the start already exhibits heavy oscillations relative to the total range,
+    # it means the device turn-on is active right from the initial gate voltage.
+    if baseline_std > 0.02 * total_signal_range:
+        pinch_off_pos = 0
+    else:
+        # Otherwise, find where it cleanly breaks away from a quiet noise floor
+        departure_threshold = baseline_mean + max(3.0 * baseline_std, 0.008 * total_signal_range)
+        pinch_off_pos = 0
+        consecutive_points_needed = 3
+        for i in range(len(y_scan) - consecutive_points_needed):
+            if all(y_scan[i + j] > departure_threshold for j in range(consecutive_points_needed)):
+                pinch_off_pos = i
+                break
+
+    early_rise_threshold = max(3, int(0.05 * len(x_scan)))
+    if pinch_off_pos <= early_rise_threshold or pinch_off_pos >= len(x_scan) - 1:
+        idx_pinch_off = int(scan_indices[0])
+        pinch_off_pos = 0  # Sync position
+    else:
+        idx_pinch_off = int(scan_indices[pinch_off_pos])
+
+    # Local peak adjustment fallback (kept from your original architecture)
+    if 0 < pinch_off_pos < len(y_scan) - 1:
+        if y_scan[pinch_off_pos] >= y_scan[pinch_off_pos - 1] and y_scan[pinch_off_pos] >= y_scan[pinch_off_pos + 1]:
+            look_ahead = min(len(y_scan), pinch_off_pos + max(3, int(0.05 * len(y_scan))))
+            post_peak = y_scan[pinch_off_pos + 1:look_ahead]
+            if post_peak.size > 0:
+                min_rel = np.argmin(post_peak)
+                min_pos = pinch_off_pos + 1 + min_rel
+                if y_scan[pinch_off_pos] - y_scan[min_pos] > max(1e-6, 0.05 * abs(y_scan[pinch_off_pos])):
+                    pinch_off_pos = min_pos
+                    idx_pinch_off = int(scan_indices[pinch_off_pos])
+
+    pinch_off_voltage = x1[idx_pinch_off]
+    pinch_off_current = y1[idx_pinch_off]
+    
+    # --- Finding Saturation Voltage using Smooth Derivatives ---
+
+    after_pinch = y_scan[pinch_off_pos:]
+    if len(after_pinch) < 5:
+        idx_sat = int(scan_indices[-1])
+        sat_voltage = x1[idx_sat]
+        sat_current = y1[idx_sat]
+        sat_threshold = None
+        sat_plateau_start = None
+    else:
+        dx = np.abs(np.diff(x_scan))
+        dx_mean = np.mean(dx) if len(dx) > 0 else 1.0
+        
+        window_length = min(15, len(after_pinch) // 3)
+        if window_length % 2 == 0:
+            window_length = max(3, window_length - 1)
+        window_length = max(3, window_length)
+
+        # Compute smooth 1st derivative
+        y_der = signal.savgol_filter(after_pinch, window_length=window_length, polyorder=2, deriv=1, delta=dx_mean)
+
+        # Characterize terminal tail behavior
+        tail_size = min(15, len(y_der) // 4)
+        end_slopes = y_der[-tail_size:]
+        mean_end_slope = np.mean(end_slopes)
+        std_end_slope = np.std(end_slopes)
+
+        # Use the 90th percentile of the derivative instead of the absolute maximum.
+        # This completely filters out the impact of an isolated giant climbing spike.
+        robust_max_slope = np.percentile(np.abs(y_der), 90)
+        slope_threshold = max(mean_end_slope + 3.0 * std_end_slope, 0.08 * robust_max_slope)
+
+        # Trace backward from the end point
+        suffix_start = len(after_pinch) - 1
+        while suffix_start > 0 and np.abs(y_der[suffix_start]) <= slope_threshold:
+            suffix_start -= 1
+
+        # Safeguard to prevent tracing back into the pinch-off region
+        if suffix_start <= 2:
+            suffix_start = len(after_pinch) - 1
+
+        sat_idx_scan = pinch_off_pos + suffix_start
+        idx_sat = int(scan_indices[sat_idx_scan])
+        
+        sat_voltage = x1[idx_sat]
+        sat_current = y1[idx_sat]
+        sat_threshold = y1[idx_sat]
+        sat_plateau_start = sat_voltage
+
+    # --- Fit sigmoids ---
+    params, popt, pcov = fit_to_function(x1, y1, sigmoid, print_results=False)
 
     # --- Extract key points ---
    
     A, B, V0, dV = popt
 
-    # Define the characteristic voltage range as (V0 ± √8 * dV)
-   
-    range_factor = np.sqrt(8)
-
-    pinch_off = V0 - range_factor * dV
-    sat       = V0 + range_factor * dV
-    
     # --- Plot data ---
-    
-    fig, ax = plt.subplots(figsize=(8,6))
-    ax.plot(x1, y1, '-', color='C0', linewidth=2, label='I ($V_{B1}$)')
-    ax.legend(fontsize=24, frameon=False, loc='upper right')
 
-    # --- Double-sided arrows showing full range (swapped positions) ---
+    if plot_results:
 
-    # Define arrow y-positions (swap positions)
+        fig, ax = plt.subplots(figsize=(8,6))
+        ax.plot(x1, y1, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
+        ax.scatter(pinch_off_voltage, pinch_off_current, color='red', s=100, zorder=5, label='Pinch-off Point')
+        ax.scatter(sat_voltage, sat_current, color='green', s=100, zorder=5, label='Saturation Point')
 
-    y_arrow1 = ax.get_ylim()[1] + 0.05  # Device 1 arrow ABOVE
-    y_arrow2 = ax.get_ylim()[0] - 0.01  # Device 2 arrow BELOW
+        if debug == True:
 
-    # Device 1 arrow (now above)
-    
-    ax.annotate(
-        '', xy=(sat, y_arrow1), xytext=(pinch_off, y_arrow1),
-        arrowprops=dict(arrowstyle='<->', color='C0', lw=3.0, shrinkA=0, shrinkB=0),
-        annotation_clip=False
-    )
-    ax.text((sat + pinch_off)/2, y_arrow1 - 0.05*(ax.get_ylim()[1]-ax.get_ylim()[0]),
-            s='', color='C0', ha='center', va='top', fontsize=20)
+            if sat_plateau_start is not None and sat_threshold is not None:
+                ax.axhline(sat_threshold, color='tab:green', linestyle='--', linewidth=1.25, alpha=0.85, label='Saturation Threshold')
+                ax.axvspan(sat_plateau_start, x1[scan_indices[-1]], color='tab:green', alpha=0.12)
+                ax.scatter(sat_plateau_start, sat_threshold, color='tab:green', marker='x', s=80, zorder=6, label='Saturation Start')
 
-    # --- Characteristic vertical lines extending exactly to the data points ---
+        ax.legend(fontsize=20, frameon=False, loc='upper left')
 
-    # Compute corresponding y-values from the *fitted sigmoid* (smooth, reliable)
+        # --- Double-sided arrows showing full range (swapped positions) ---
 
-    y_pinch1 = sigmoid(pinch_off, *popt)
-    y_sat1   = sigmoid(sat, *popt)
+        # Define arrow y-positions (swap positions)
 
-    for color, po, sat, label, y_arrow, direction, y_pinch, y_sat in [
-        # Device 1 → arrow above, extend down to data
-        ('C0', pinch_off, sat, 'Device 1', y_arrow1, 'down', y_pinch1, y_sat1)
-    ]:
-        if direction == 'up':
-            # Extend upward from arrow to the y-values of the fitted curve
-            ax.vlines(po, ymin=y_arrow, ymax=y_pinch - 0.01, colors=color, linestyles='--', alpha=0.6)
-            ax.vlines(sat, ymin=y_arrow, ymax=y_sat - 0.025, colors=color, linestyles='--', alpha=0.6)
-        else:
-            # Extend downward from arrow to the y-values of the fitted curve
-            ax.vlines(po, ymin=y_pinch + 0.02, ymax=y_arrow, colors=color, linestyles='--', alpha=0.6)
-            ax.vlines(sat, ymin=y_sat - 0.015, ymax=y_arrow, colors=color, linestyles='--', alpha=0.6)
+        y_arrow1 = ax.get_ylim()[1] + 0.05  # Device 1 arrow ABOVE
+        # y_arrow2 = ax.get_ylim()[0] - 0.01  # Device 2 arrow BELOW
 
-    # --- Overlay fitted sigmoid curves ---
+        # Device 1 arrow (now above)
+        
+        ax.annotate(
+            '', xy=(sat_voltage, y_arrow1), xytext=(pinch_off_voltage, y_arrow1),
+            arrowprops=dict(arrowstyle='<->', color='C0', lw=3.0, shrinkA=0, shrinkB=0),
+            annotation_clip=False
+        )
+        ax.text((sat_voltage + pinch_off_voltage)/2, y_arrow1 - 0.05*(ax.get_ylim()[1]-ax.get_ylim()[0]),
+                s='', color='C0', ha='center', va='top', fontsize=20)
 
-    V_fit = np.linspace(x1.min(), x1.max(), 500)
+        # --- Characteristic vertical lines extending exactly to the data points ---
 
-    # Fitted curves for each device
+        y_pinch1 = y1[np.where(x1 == pinch_off_voltage)][0]
+        y_sat1   = y1[np.where(x1 == sat_voltage)][0]
 
-    y_fit1 = sigmoid(V_fit, *popt)
-    y_fit2 = sigmoid(V_fit, *popt)
+        for color, po, sat, label, y_arrow, direction, y_pinch, y_sat in [
+            # Device 1 → arrow above, extend down to data
+            ('C0', pinch_off_voltage, sat_voltage, 'Device 1', y_arrow1, 'down', y_pinch1, y_sat1)
+        ]:
+            if direction == 'up':
+                # Extend upward from arrow to the y-values of the fitted curve
+                ax.vlines(po, ymin=y_arrow, ymax=y_pinch - 0.01, colors=color, linestyles='--', alpha=0.6)
+                ax.vlines(sat, ymin=y_arrow, ymax=y_sat - 0.025, colors=color, linestyles='--', alpha=0.6)
+            else:
+                # Extend downward from arrow to the y-values of the fitted curve
+                ax.vlines(po, ymin=y_pinch + 0.02, ymax=y_arrow, colors=color, linestyles='--', alpha=0.6)
+                ax.vlines(sat, ymin=y_sat - 0.015, ymax=y_arrow, colors=color, linestyles='--', alpha=0.6)
 
-    # --- Labels and formatting ---
+        # --- Labels and formatting ---
 
-    ax.set_xlabel(r'V$_{B1}$, V$_{B2}$ (V)', fontsize=45)
-    ax.set_ylabel('I (nA)', fontsize=55)
+        ax.set_xlabel(r'V$_{gate}$ (V)', fontsize=35)
+        ax.set_ylabel('I (nA)', fontsize=35)
 
-    ax.minorticks_on()
-    ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
-    ax.tick_params(direction='in', length=5, width=1.2, labelsize=18, top=True, right=True)
+        ax.minorticks_on()
+        ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
+        ax.tick_params(direction='in', length=5, width=1.2, labelsize=18, top=True, right=True)
 
-    ax.set_xticks([-2.5, -2.0, -1.5, -1.0, -0.5])
-    ax.set_xticklabels(['-2.5', '', '', '', '-0.5'], fontsize=45)
+        xticks_span = np.linspace(x1.min(), x1.max(), 5)
 
-    ax.set_yticks([0.0, 0.4, 0.8, 1.2])
-    ax.set_yticklabels(['0.0', '', '', '1.2'], fontsize=45)
+        ax.set_xticks(xticks_span)
+        ax.set_xticklabels([f'{xticks_span[0]:.2f}', '', f'{xticks_span[2]:.2f}', '', f'{xticks_span[-1]:.2f}'], fontsize=25)
 
-    # Extend y-limits slightly to make space for arrows
+        yticks_span = np.linspace(y1.min(), y1.max(), 5)
 
-    ax.set_ylim(-0.1, ax.get_ylim()[1])
+        ax.set_yticks(yticks_span)
+        ax.set_yticklabels([f'{yticks_span[0]:.2f}', '', '', '', f'{yticks_span[-1]:.3f}'], fontsize=25)
 
-    plt.tight_layout()
-    plt.show()
+        # Extend y-limits slightly to make space for arrows
+
+        ax.set_xlim(ax.get_xlim()[0], ax.get_xlim()[1])
+        ax.set_ylim(ax.get_ylim()[0], ax.get_ylim()[1])
+
+        plt.tight_layout()
+        plt.close(fig)
 
     # --- Print summary ---
 
-    print(f"  Saturation Voltage: {sat:.3f} V")
+    print(f"  Saturation Voltage: {sat_voltage:.3f} V")
     print(f"  Midpoint Voltage:   {V0:.3f} V")
-    print(f"  Pinch-off Voltage:  {pinch_off:.3f} V\n")
+    print(f"  Pinch-off Voltage:  {pinch_off_voltage:.3f} V\n")
 
-    pass
+    voltage_window = (pinch_off_voltage, sat_voltage)
+
+    return voltage_window, fig
 
 def extract_max_conductance_points(self, x_data, y_data):
+    """Analyze current data to identify the largest conductance features.
+
+    This function plots the current and its derivative, then highlights
+    the most extreme conductance peaks and valleys.
+    """
 
     x1 = np.array(x_data)
     y1 = np.array(y_data)
@@ -284,22 +521,38 @@ def extract_max_conductance_points(self, x_data, y_data):
     plt.subplots_adjust(hspace=0.40)
     plt.show()
 
-def extract_bias_point(
-        lb_data: np.array,
-        rb_data: np.array,
-        current_data: np.array,
-        minAngleDeg: float = -55,
-        maxAngleDeg: float = -35,
-        minLineLength: int = 50,
-        maxLineGap: int = 250,
-        debug: bool = False,
-        plot_results: bool = True) -> list[tuple]:
+def extract_working_point(lb_data: np.array,
+                          rb_data: np.array,
+                          current_data: np.array,
+                          gates: list[str],
+                          DotTuning: str,
+                          barrier_pinch_offs: list[float],
+                          minAngleDeg: float = -60,
+                          maxAngleDeg: float = -30,
+                          minLineLength: int = 60,
+                          maxLineGap: int = 200,
+                          debug: bool = False,
+                          plot_results: bool = True) -> list[tuple]:
+    """Find working-point lines in a 2D barrier sweep image.
+
+    This function converts raw barrier voltage and current data into an image,
+    applies ridge detection and Hough transform filtering, and returns the
+    extracted working-point lines that correspond to relevant device ridges.
+    """
 
     # We start by ensuring our inputs are numpy arrays
 
     lb_data = np.array(lb_data)
     rb_data = np.array(rb_data)
     current_data = np.array(current_data)
+    device_type = 'hole'
+
+    if current_data[0] < 0:
+        current_data = -current_data
+
+    if np.average(lb_data) > 0 and np.average(rb_data) > 0:
+        current_data = np.flip(current_data, axis=None)
+        device_type = 'electron'
 
     # Now, we reshape the data into an array
 
@@ -344,41 +597,156 @@ def extract_bias_point(
 
     ridge = sato(band_passed, sigmas=[1, 2, 3], black_ridges=False)
     ridge_norm = (ridge - ridge.min()) / (np.ptp(ridge) + epsilon)
-    ridge_filtered = ridge_norm > 0.20
+    ridge_filtered = ridge_norm > 0.18
 
-    # Now, we limit our analysis to the bottom left-quadrant
+    # Close very small gaps in the ridge image so the Hough transform sees longer continuous lines.
+    ridge_filtered = cv2.morphologyEx(
+        ridge_filtered.astype(np.uint8),
+        cv2.MORPH_CLOSE,
+        np.ones((3, 3), np.uint8)
+    ).astype(bool)
 
+    # Now, we limit our analysis to the red zone based on device type
+    # Convert barrier_pinch_offs to pixel coordinates
+    
+    # pixel index arrays (needed for interpolation)
+    x_index_arr = np.arange(nx)
+    y_index_arr = np.arange(ny)
+
+    # enlarge region by adding 0.1 V to pinch-off values
+    x_idx_mid = np.interp(barrier_pinch_offs[0] + 0.05, lb_voltages, x_index_arr)
+    y_idx_mid = np.interp(barrier_pinch_offs[1] + 0.05, rb_voltages, y_index_arr)
+    x_idx_mid = int(np.clip(x_idx_mid, 0, nx - 1))
+    y_idx_mid = int(np.clip(y_idx_mid, 0, ny - 1))
+    
     ridge_masked = np.zeros_like(ridge_filtered)
-    ridge_masked[:ny // 2, :nx // 2] = ridge_filtered[:ny // 2, :nx // 2]
+    
+    if device_type == 'electron':
+        # Electron: analyze bottom-left, top-left, bottom-right (exclude top-right)
+        ridge_masked[:y_idx_mid, :x_idx_mid] = ridge_filtered[:y_idx_mid, :x_idx_mid]
+        ridge_masked[y_idx_mid:, :x_idx_mid] = ridge_filtered[y_idx_mid:, :x_idx_mid]
+        ridge_masked[:y_idx_mid, x_idx_mid:] = ridge_filtered[:y_idx_mid, x_idx_mid:]
+    else:  # hole
+        # Hole: analyze top-right, top-left, bottom-right (exclude bottom-left)
+        ridge_masked[y_idx_mid:, x_idx_mid:] = ridge_filtered[y_idx_mid:, x_idx_mid:]
+        ridge_masked[y_idx_mid:, :x_idx_mid] = ridge_filtered[y_idx_mid:, :x_idx_mid]
+        ridge_masked[:y_idx_mid, x_idx_mid:] = ridge_filtered[:y_idx_mid, x_idx_mid:]
 
-    # From these edges, we detect lines using a probabilistic hough transform 
+    # From these edges, we detect lines using a probabilistic hough transform.
+    # Use a slightly lower threshold and tune the minimum required segment length so long bottom-left lines are prioritized.
+    hough_threshold = max(5, int(0.02 * max(nx, ny)))
+    hough_length = max(12, int(minLineLength * 0.15))
+    hough_gap = max(1, int(maxLineGap * 0.03))
 
     lines = transform.probabilistic_hough_line(
         ridge_masked,
-        threshold=15,
-        line_length=max(2, int(minLineLength * 0.1)),
-        line_gap=max(1, int(maxLineGap * 0.02))
+        threshold=hough_threshold,
+        line_length=hough_length,
+        line_gap=hough_gap
     )
 
-    if not lines:
-        return []
+    roi = None
+    roi_offset = (0, 0)
+    if device_type == 'electron' and x_idx_mid > 5 and y_idx_mid > 5:
+        roi = ridge_masked[:y_idx_mid, :x_idx_mid]
+        roi_offset = (0, 0)
+    elif device_type != 'electron' and x_idx_mid < nx - 5 and y_idx_mid < ny - 5:
+        roi = ridge_masked[y_idx_mid:, x_idx_mid:]
+        roi_offset = (x_idx_mid, y_idx_mid)
+
+    if roi is not None and roi.size > 0:
+        extra_lines = transform.probabilistic_hough_line(
+            roi,
+            threshold=max(5, hough_threshold - 3),
+            line_length=max(8, int(minLineLength * 0.12)),
+            line_gap=max(1, int(maxLineGap * 0.05))
+        )
+        for p0, p1 in extra_lines:
+            lines.append((
+                (p0[0] + roi_offset[0], p0[1] + roi_offset[1]),
+                (p1[0] + roi_offset[0], p1[1] + roi_offset[1])
+            ))
+
+    # if not lines:
+    #     return []
 
     # Now, we filter for lines within a certain angle range
 
-    filtered_lines = []
+    line_candidates = []
+    min_length = max(0.10 * max(nx, ny), 15)
     for p0, p1 in lines:
         dx, dy = p1[0] - p0[0], p1[1] - p0[1]
         angle = np.degrees(np.arctan2(dy, dx))
-        if minAngleDeg <= angle <= maxAngleDeg:
-            filtered_lines.append((*p0, *p1))
+        length = np.hypot(dx, dy)
+        if minAngleDeg <= angle <= maxAngleDeg and length >= min_length:
+            midx = 0.5 * (p0[0] + p1[0])
+            midy = 0.5 * (p0[1] + p1[1])
+            if device_type == 'electron':
+                score = length - 0.35 * (midx + midy)
+            else:
+                score = length - 0.35 * ((nx - midx) + (ny - midy))
+            line_candidates.append((score, (*p0, *p1)))
+
+    line_candidates.sort(key=lambda item: -item[0])
+    filtered_lines = [entry[1] for entry in line_candidates]
 
     if not filtered_lines:
-        return []
+        # Relax angle range slightly if no good long line was found.
+        for p0, p1 in lines:
+            dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+            angle = np.degrees(np.arctan2(dy, dx))
+            length = np.hypot(dx, dy)
+            if (minAngleDeg - 10) <= angle <= (maxAngleDeg + 10) and length >= min_length:
+                midx = 0.5 * (p0[0] + p1[0])
+                midy = 0.5 * (p0[1] + p1[1])
+                if device_type == 'electron':
+                    score = length - 0.35 * (midx + midy)
+                else:
+                    score = length - 0.35 * ((nx - midx) + (ny - midy))
+                line_candidates.append((score, (*p0, *p1)))
+        line_candidates.sort(key=lambda item: -item[0])
+        filtered_lines = [entry[1] for entry in line_candidates]
+
+    if not filtered_lines and roi is not None and roi.size > 0:
+        for alt_img in [band_passed, G_uint, ridge_norm]:
+            alt_roi = alt_img[:y_idx_mid, :x_idx_mid] if device_type == 'electron' else alt_img[y_idx_mid:, x_idx_mid:]
+            extra_lines = transform.probabilistic_hough_line(
+                alt_roi,
+                threshold=max(4, hough_threshold - 4),
+                line_length=max(8, int(minLineLength * 0.12)),
+                line_gap=max(1, int(maxLineGap * 0.05))
+            )
+            for p0, p1 in extra_lines:
+                lines.append((
+                    (p0[0] + roi_offset[0], p0[1] + roi_offset[1]),
+                    (p1[0] + roi_offset[0], p1[1] + roi_offset[1])
+                ))
+
+        line_candidates = []
+        for p0, p1 in lines:
+            dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+            angle = np.degrees(np.arctan2(dy, dx))
+            length = np.hypot(dx, dy)
+            if (minAngleDeg - 10) <= angle <= (maxAngleDeg + 10) and length >= min_length:
+                midx = 0.5 * (p0[0] + p1[0])
+                midy = 0.5 * (p0[1] + p1[1])
+                if device_type == 'electron':
+                    score = length - 0.35 * (midx + midy)
+                else:
+                    score = length - 0.35 * ((nx - midx) + (ny - midy))
+                line_candidates.append((score, (*p0, *p1)))
+        line_candidates.sort(key=lambda item: -item[0])
+        filtered_lines = [entry[1] for entry in line_candidates]
+
+    # if not filtered_lines:
+    #     return []
 
     # Previously, we limited analysis to the bottom left quadrant, here we're defining the voltage range for that quadrant
+    # Using the pinch-off voltages from barrier_pinch_offs parameter
 
-    lb_mid_volt = 0.5 * (lb_data.min() + lb_data.max())
-    rb_mid_volt = 0.5 * (rb_data.min() + rb_data.max())
+    # enlarge region by adding 0.1 V to pinch-off values
+    lb_mid_volt = barrier_pinch_offs[0] + 0.05  # First value: x-axis (left/bottom gate)
+    rb_mid_volt = barrier_pinch_offs[1] + 0.05  # Second value: y-axis (right/bottom gate)
 
     perp_candidates = []
     perp_traces_for_plot = []
@@ -387,8 +755,7 @@ def extract_bias_point(
     perp_samples = 400
     smooth_sigma = 2.0
 
-    x_index_arr = np.arange(nx)
-    y_index_arr = np.arange(ny)
+    
 
     # Now, for each filtered line, we define a line perpendicular to it, then find the peaks in current along them
 
@@ -443,9 +810,9 @@ def extract_bias_point(
         }
 
         # find local maxima of current
-        noise_sigma = 1.4826 * np.median(np.abs(trace_smooth - np.median(trace_smooth)))
+        noise_sigma = 1.4826 * np.median(np.abs(conductance - np.median(conductance)))
         prominence_thresh = 4.0 * noise_sigma
-        peaks, _ = signal.find_peaks(trace_smooth,
+        peaks, _ = signal.find_peaks(conductance,
                                      prominence=prominence_thresh,
                                      distance=15)
 
@@ -460,8 +827,11 @@ def extract_bias_point(
         vx = np.interp(px, x_index_arr, lb_voltages)
         vy = np.interp(py, y_index_arr, rb_voltages)
 
-        # bottom-left quadrant restriction
-        valid = (vx < lb_mid_volt) & (vy < rb_mid_volt)
+        # restrict to red zone based on device type
+        if device_type == 'electron':
+            valid = (vx < lb_mid_volt) | (vy < rb_mid_volt)
+        else:  # hole
+            valid = (vx > lb_mid_volt) | (vy > rb_mid_volt)
         peak_idx = peak_idx[valid]
         px = px[valid]
         py = py[valid]
@@ -493,8 +863,8 @@ def extract_bias_point(
 
         perp_traces_for_plot.append(trace_info)
 
-    if not perp_candidates:
-        return []
+    # if not perp_candidates:
+    #     return []
 
 
     # ---------- Selecting Final Bias Points ----------
@@ -525,6 +895,30 @@ def extract_bias_point(
         for (_, vx, vy, _, _, _) in top_candidates
     ]
 
+    # Compute selected working points. For Triple Dot, shift each point 0.1 V in the
+    # opposite yellow trace direction instead of perpendicular to it.
+    selected_working_points = []
+    traces_by_id = {tr["trace_id"]: tr for tr in perp_traces_for_plot}
+    for cand in top_candidates:
+        _, vx_c, vy_c, px_c, py_c, tid = cand
+        tr = traces_by_id.get(tid, None)
+        if tr is not None and str(DotTuning).strip().lower() == 'triple dot':
+            try:
+                vx_trace = np.interp(tr["px"], x_index_arr, lb_voltages)
+                vy_trace = np.interp(tr["py"], y_index_arr, rb_voltages)
+                direction = np.array([vx_trace[-1] - vx_trace[0], vy_trace[-1] - vy_trace[0]])
+                norm_dir = np.hypot(direction[0], direction[1])
+                if norm_dir > 0:
+                    unit_dir = direction / norm_dir
+                    shift_vec = -unit_dir * 0.1
+                    selected_working_points.append((float(round(vx_c + shift_vec[0], 3)), float(round(vy_c + shift_vec[1], 3))))
+                else:
+                    selected_working_points.append((round(vx_c, 3), round(vy_c, 3)))
+            except Exception:
+                selected_working_points.append((round(vx_c, 3), round(vy_c, 3)))
+        else:
+            selected_working_points.append((round(vx_c, 3), round(vy_c, 3)))
+
     perp_traces_for_plot = [
         tr for tr in perp_traces_for_plot
         if tr["trace_id"] in selected_trace_ids
@@ -536,7 +930,10 @@ def extract_bias_point(
         vx = np.interp(tr["px"], x_index_arr, lb_voltages)
         vy = np.interp(tr["py"], y_index_arr, rb_voltages)
 
-        in_quad = (vx < lb_mid_volt) & (vy < rb_mid_volt)
+        if device_type == 'electron':
+            in_quad = (vx < lb_mid_volt) | (vy < rb_mid_volt)
+        else:  # hole
+            in_quad = (vx > lb_mid_volt) | (vy > rb_mid_volt)
         if not np.any(in_quad):
             continue
 
@@ -547,10 +944,15 @@ def extract_bias_point(
         peak_idx = tr.get("peak_idx", None)
         chosen_block = None
         if peak_idx is not None:
+            best_count = -1
+            best_block = None
             for b in blocks:
-                if np.intersect1d(peak_idx, b).size > 0:
-                    chosen_block = b
-                    break
+                count = np.intersect1d(peak_idx, b).size
+                if count > best_count:
+                    best_count = count
+                    best_block = b
+            if best_count > 0:
+                chosen_block = best_block
         if chosen_block is None:
             chosen_block = blocks[0]
 
@@ -585,10 +987,10 @@ def extract_bias_point(
         x0, x1 = round_to_step(lb_data.min(), step), round_to_step(lb_data.max(), step)
         y0, y1 = round_to_step(rb_data.min(), step), round_to_step(rb_data.max(), step)
         
-        ax.set_xticks([0.65, 0.85])
-        ax.set_yticks([0.60, 0.70])
-        ax.set_xticklabels(["0.65", "0.85"], fontsize=40)
-        ax.set_yticklabels(["0.60", "0.70"], fontsize=40)
+        ax.set_xticks([lb_data.min(), lb_data.max()])
+        ax.set_yticks([rb_data.min(), rb_data.max()])
+        ax.set_xticklabels([str(lb_data.min()), str(lb_data.max())], fontsize=30)
+        ax.set_yticklabels([str(rb_data.min()), str(rb_data.max())], fontsize=30)
 
         ax.tick_params(
             which="major",
@@ -613,10 +1015,10 @@ def extract_bias_point(
             top=True,
             right=True
         )
-
+        
         # Axis labels
-        ax.set_xlabel(r'V$_{B2}$ (V)', fontsize=45, labelpad = -35)
-        ax.set_ylabel(r'V$_{B1}$ (V)', fontsize=45)
+        ax.set_xlabel(rf'V$_{{{gates[0]}}}$ (V)', fontsize=35, labelpad = -25)
+        ax.set_ylabel(rf'V$_{{{gates[1]}}}$ (V)', fontsize=35)
 
         ax.yaxis.set_label_coords(-0.025, 0.40)
 
@@ -635,9 +1037,10 @@ def extract_bias_point(
         cbar.set_label("I (nA)", fontsize=35, labelpad=10)
         cbar.ax.xaxis.set_ticks_position("bottom")
         cbar.ax.xaxis.set_label_position("top")
-        cbar.set_ticks([0.0, 0.25, 0.50, 0.75, 1.0])
-        cbar.set_ticklabels(['0', '', '', '', '1'])
-        cbar.ax.tick_params(labelsize=30, direction="in", length=6)
+        cbar_ticks = np.linspace(0, current_data.max(), 5)
+        cbar.set_ticks(cbar_ticks)
+        cbar.set_ticklabels([f'{tick:.2f}' for tick in cbar_ticks])
+        cbar.ax.tick_params(labelsize=25, direction="in", length=6)
 
         cbar.ax.minorticks_on()
 
@@ -651,39 +1054,123 @@ def extract_bias_point(
             width=1.0
         )
 
-        # Block Boundary
+        # Block Boundary and shaded region based on device type
+        
+        if device_type == 'electron':
+            # Electron: exclude top-right quadrant
+            # Top side: horizontal line from center to right edge
+            ax.plot(
+                [lb_mid_volt, lb_data.max()],  # x: center → right
+                [rb_mid_volt, rb_mid_volt],    # y constant at middle
+                linestyle='--',
+                color='red',
+                linewidth=1.2,
+                alpha=0.9
+            )
 
-        # Top side: horizontal line from left-mid to right-mid
-        ax.plot(
-            [lb_mid_volt, lb_data.min()],  # x: left → right
-            [rb_mid_volt, rb_mid_volt],    # y constant at top
-            linestyle='--',
-            color='red',
-            linewidth=1.2,
-            alpha=0.9
+            # Right side: vertical line from center to top edge
+            ax.plot(
+                [lb_mid_volt, lb_mid_volt],    # x constant at center
+                [rb_mid_volt, rb_data.max()],  # y: middle → top
+                linestyle='--',
+                color='red',
+                linewidth=1.2,
+                alpha=0.9
+            )
+
+            # Bottom-left quadrant
+            rect1 = Rectangle(
+            (lb_data.min(), rb_data.min()),                 # bottom-left corner
+            lb_mid_volt - lb_data.min(),                   # width
+            rb_mid_volt - rb_data.min(),                   # height
+            facecolor='red',
+            alpha=0.2,
+            edgecolor=None,
+            zorder=2
         )
+            ax.add_patch(rect1)
 
-        # Right side: vertical line from bottom-mid to top-mid
-        ax.plot(
-            [lb_mid_volt, lb_mid_volt],    # x constant at right
-            [rb_data.min(), rb_mid_volt],  # y: bottom → top
-            linestyle='--',
-            color='red',
-            linewidth=1.2,
-            alpha=0.9
+            # Top-left quadrant
+            rect2 = Rectangle(
+            (lb_data.min(), rb_mid_volt),                 # top-left corner
+            lb_mid_volt - lb_data.min(),                   # width
+            rb_data.max() - rb_mid_volt,                   # height
+            facecolor='red',
+            alpha=0.2,
+            edgecolor=None,
+            zorder=2
         )
+            ax.add_patch(rect2)
 
-        rect = Rectangle(
-        (lb_data.min(), rb_data.min()),                 # bottom-left corner
-        lb_mid_volt - lb_data.min(),                   # width
-        rb_mid_volt - rb_data.min(),                   # height
-        facecolor='red',
-        alpha=0.2,                          # set opacity here (1.0 = fully opaque)
-        edgecolor=None,
-        zorder=2
-    )
+            # Bottom-right quadrant
+            rect3 = Rectangle(
+            (lb_mid_volt, rb_data.min()),                 # bottom-right corner
+            lb_data.max() - lb_mid_volt,                   # width
+            rb_mid_volt - rb_data.min(),                   # height
+            facecolor='red',
+            alpha=0.2,
+            edgecolor=None,
+            zorder=2
+        )
+            ax.add_patch(rect3)
+        
+        else:  # hole
+            # Hole: exclude bottom-left quadrant
+            # Bottom side: horizontal line from left edge to center
+            ax.plot(
+                [lb_data.min(), lb_mid_volt],  # x: left → center
+                [rb_mid_volt, rb_mid_volt],    # y constant at middle
+                linestyle='--',
+                color='red',
+                linewidth=1.2,
+                alpha=0.9
+            )
 
-        ax.add_patch(rect)
+            # Left side: vertical line from bottom edge to center
+            ax.plot(
+                [lb_mid_volt, lb_mid_volt],    # x constant at center
+                [rb_data.min(), rb_mid_volt],  # y: bottom → middle
+                linestyle='--',
+                color='red',
+                linewidth=1.2,
+                alpha=0.9
+            )
+
+            # Top-right quadrant
+            rect1 = Rectangle(
+            (lb_mid_volt, rb_mid_volt),                 # top-right corner
+            lb_data.max() - lb_mid_volt,                   # width
+            rb_data.max() - rb_mid_volt,                   # height
+            facecolor='red',
+            alpha=0.2,
+            edgecolor=None,
+            zorder=2
+        )
+            ax.add_patch(rect1)
+
+            # Top-left quadrant
+            rect2 = Rectangle(
+            (lb_data.min(), rb_mid_volt),                 # top-left corner
+            lb_mid_volt - lb_data.min(),                   # width
+            rb_data.max() - rb_mid_volt,                   # height
+            facecolor='red',
+            alpha=0.2,
+            edgecolor=None,
+            zorder=2
+        )
+            ax.add_patch(rect2)
+
+            # Bottom-right quadrant
+            rect3 = Rectangle(
+            (lb_mid_volt, rb_data.min()),                 # bottom-right corner
+            lb_data.max() - lb_mid_volt,                   # width
+            rb_mid_volt - rb_data.min(),                   # height
+            facecolor='red',
+            alpha=0.2,
+            edgecolor=None,
+            zorder=2
+        )
+            ax.add_patch(rect3)
 
         # Hough lines
         for x1, y1, x2, y2 in filtered_lines:
@@ -694,9 +1181,13 @@ def extract_bias_point(
             v2y = np.interp(y2, y_index_arr, rb_voltages)
             
             # Uncomment below to see the detected Hough lines
-            ax.plot([v1x, v2x], [v1y, v2y], c='black', lw=1.2) 
+            # ax.plot([v1x, v2x], [v1y, v2y], c='black', lw=1.2) 
 
         # Perpendicular traces and peaks
+        dot_tuning_shift = 0.1 if str(DotTuning).strip().lower() == 'triple dot' else 0.0
+
+        shifted_points = []
+
         for tr in perp_traces_for_plot:
             idx = tr.get("chosen_block", None)
             if idx is None or len(idx) == 0: continue
@@ -704,12 +1195,73 @@ def extract_bias_point(
             vy = np.interp(tr["py"], np.arange(ny), rb_voltages)
             ax.plot(vx[idx], vy[idx], c='yellow', lw=1.5, alpha=0.9)
             valid_peaks = np.intersect1d(tr.get("peak_idx", []), idx)
-            ax.scatter(vx[valid_peaks], vy[valid_peaks], s=150, c='white',
-                    marker='*', edgecolors='black', zorder=10)
+
+            if valid_peaks.size > 0:
+                # Plot each peak and shift it along the perpendicular normal towards origin
+                try:
+                    for p in np.atleast_1d(valid_peaks):
+                        i = int(p)
+                        vx_p = float(vx[i])
+                        vy_p = float(vy[i])
+
+                                # compute a local tangent along the yellow trace and shift along it
+                        if 1 <= i < (len(vx) - 1):
+                            ddx = float(vx[i + 1]) - float(vx[i - 1])
+                            ddy = float(vy[i + 1]) - float(vy[i - 1])
+                        else:
+                            # fallback to using the chosen block endpoints
+                            ddx = float(vx[idx][-1]) - float(vx[idx][0])
+                            ddy = float(vy[idx][-1]) - float(vy[idx][0])
+
+                        norm_dir = np.hypot(ddx, ddy)
+                        if norm_dir > 0:
+                            shift_dir = np.array([ddx / norm_dir, ddy / norm_dir])
+                            shift_vec = -shift_dir * dot_tuning_shift
+                        else:
+                            shift_dir = np.array([0.0, 1.0])
+                            shift_vec = shift_dir * dot_tuning_shift
+
+                        sx = vx_p + float(shift_vec[0])
+                        sy = vy_p + float(shift_vec[1])
+
+                        # Debug: report computed shift direction and shift vector
+                        if debug:
+                            try:
+                                print(f"DEBUG_SHIFT peak={i} vx={vx_p:.6f} vy={vy_p:.6f} dir=({shift_dir[0]:.6f},{shift_dir[1]:.6f}) shift_vec=({shift_vec[0]:.6f},{shift_vec[1]:.6f})")
+                                # draw a cyan debug line showing the shift direction
+                                ax.plot([vx_p, sx], [vy_p, sy], c='cyan', lw=1.5, alpha=0.9, zorder=9)
+                            except Exception:
+                                pass
+
+                        # shifted star (exactly dot_tuning_shift along the yellow perp)
+                        ax.scatter(sx, sy, s=200, c='white', marker='*', edgecolors='black', zorder=10)
+                        shifted_points.append((sx, sy))
+                        # hollow red circle at original peak position
+                        ax.scatter(vx_p, vy_p, s=80, c='none', edgecolors='red', linewidths=1.5, zorder=11)
+                        # arrow from original to shifted star
+                        ax.annotate('', xy=(sx, sy), xytext=(vx_p, vy_p),
+                                    arrowprops=dict(arrowstyle='->', color='black', lw=1.0), zorder=12)
+                except Exception:
+                    pass
 
         ax.set_box_aspect(0.775)
 
-        plt.show()
+        # If any shifted points lie outside current axis limits, expand limits slightly
+        # if len(shifted_points) > 0:
+        #     sx_vals = [p[0] for p in shifted_points]
+        #     sy_vals = [p[1] for p in shifted_points]
+        #     xmin, xmax = ax.get_xlim()
+        #     ymin, ymax = ax.get_ylim()
+        #     pad_x = 0.02 * (xmax - xmin) if (xmax - xmin) != 0 else 0.01
+        #     pad_y = 0.02 * (ymax - ymin) if (ymax - ymin) != 0 else 0.01
+        #     new_xmin = min(xmin, min(sx_vals) - pad_x)
+        #     new_xmax = max(xmax, max(sx_vals) + pad_x)
+        #     new_ymin = min(ymin, min(sy_vals) - pad_y)
+        #     new_ymax = max(ymax, max(sy_vals) + pad_y)
+        #     ax.set_xlim(new_xmin, new_xmax)
+        #     ax.set_ylim(new_ymin, new_ymax)
+
+        plt.close(fig)
 
         # These are 1D perpendicular trace plots
 
@@ -733,17 +1285,7 @@ def extract_bias_point(
                     f"Perpendicular trace {tr['trace_id']}"
                 )
 
-                # Mark current peaks
                 
-                if len(peak_idx) > 0:
-                    axs[0].scatter(
-                        s[peak_idx],
-                        I[peak_idx],
-                        c="red",
-                        s=40,
-                        zorder=5,
-                        label="Current peaks"
-                    )
 
                 # Shade chosen block (if present)
                 
@@ -764,12 +1306,22 @@ def extract_bias_point(
                 axs[1].set_xlabel("Arc length s (pixels)")
                 axs[1].set_ylabel("dI/ds")
 
+                # Mark current peaks
+                
+                if len(peak_idx) > 0:
+                    axs[1].scatter(
+                        s[peak_idx],
+                        dIds[peak_idx],
+                        c="red",
+                        s=40,
+                        zorder=5,
+                        label="Current peaks"
+                    )
+
                 plt.tight_layout()
                 plt.show()
 
-
     # ---------- Debugging Code ----------
-
 
     if debug:
         
@@ -782,8 +1334,8 @@ def extract_bias_point(
             aspect='auto',
             cmap='coolwarm'
         )
-        plt.xlabel(r'V$_{B2}$ (V)', fontsize=45)
-        plt.ylabel(r'V$_{B1}$ (V)', fontsize=45)
+        plt.xlabel(rf'V$_{{{gates[0]}}}$ (V)', fontsize=45)
+        plt.ylabel(rf'V$_{{{gates[1]}}}$ (V)', fontsize=45)
         plt.title("Original Current Data") 
         plt.show()
         
@@ -1293,12 +1845,21 @@ def extract_bias_point(
         plt.title("Hough Transform Lines from Filtered Ridges")
         plt.show()
 
-    return perp_bias_points, perp_traces_for_plot
+    if DotTuning == 'Triple Dot':
+        return shifted_points, perp_traces_for_plot, fig
+    elif DotTuning == 'SET':
+        return perp_bias_points, perp_traces_for_plot, fig
 
 def extract_lever_arms(data: pd.DataFrame,
                        plot_process: bool = False) -> dict:
+    """Estimate lever arms from a 2D transconductance map.
+
+    This function pivots the input dataframe to a grid, computes the
+    gradient in the current data, applies filtering, and optionally plots
+    the intermediate transconductance results.
+    """
     
-    # Load in data and seperate 
+    # Load in data and separate 
     X_name, Y_name, Z_name = data.columns
     Xdata, Ydata = np.unique(data[X_name]), np.unique(data[Y_name])
 

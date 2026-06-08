@@ -321,6 +321,8 @@ def pinch_off_curve_ranges(x_data: np.array,
    
     A, B, V0, dV = popt
 
+    y_fit = sigmoid(x1, *popt)
+
     # --- Plot data ---
 
     if plot_results:
@@ -329,6 +331,7 @@ def pinch_off_curve_ranges(x_data: np.array,
         ax.plot(x1, y1, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
         ax.scatter(pinch_off_voltage, pinch_off_current, color='red', s=100, zorder=5, label='Pinch-off Point')
         ax.scatter(sat_voltage, sat_current, color='green', s=100, zorder=5, label='Saturation Point')
+        ax.plot(x1, y_fit, '--', color='red', linewidth=2, label='Fitted Sigmoid')
 
         if debug == True:
 
@@ -545,8 +548,30 @@ def extract_working_point(lb_data: np.array,
     lb_data = np.array(lb_data)
     rb_data = np.array(rb_data)
     current_data = np.array(current_data)
+    barrier_pinch_offs = np.array(barrier_pinch_offs)
     device_type = 'hole'
 
+    # 2. Establish uniform coordinate grids
+    # (Assumes original data represents a regular mesh grid)
+    ux = np.unique(lb_data)
+    uy = np.unique(rb_data)
+
+    # Define your clipping thresholds here (adjust values as needed)
+    lb_min, lb_max = barrier_pinch_offs[0], ux.max()  # Replace with specific limits if desired
+    rb_min, rb_max = barrier_pinch_offs[1], uy.max()  # Replace with specific limits if desired
+
+    # 3. Create a boolean mask matching the original 1D data structure
+    clip_mask = (
+        (lb_data >= lb_min) & (lb_data <= lb_max) & 
+        (rb_data >= rb_min) & (rb_data <= rb_max)
+    )
+
+    # 4. Apply the clipping mask to all arrays
+    lb_data = lb_data[clip_mask]
+    rb_data = rb_data[clip_mask]
+    current_data = current_data[clip_mask]
+
+    # 5. Handle polarity and device typing
     if current_data[0] < 0:
         current_data = -current_data
 
@@ -554,12 +579,17 @@ def extract_working_point(lb_data: np.array,
         current_data = np.flip(current_data, axis=None)
         device_type = 'electron'
 
-    # Now, we reshape the data into an array
+    # 6. Calculate new dimensions based on unique clipped values
+    nx_new = len(np.unique(lb_data))
+    ny_new = len(np.unique(rb_data))
 
+    # 7. Reshape the 1D clipped data into a 2D grid
     if current_data.ndim == 1:
-        nx = len(np.unique(lb_data))
-        ny = len(np.unique(rb_data))
-        current_data = current_data.reshape((ny, nx))
+        # Verify the clipped size matches the expected 2D grid dimensions
+        if current_data.size == nx_new * ny_new:
+            current_data = current_data.reshape((ny_new, nx_new))
+        else:
+            raise ValueError("Clipped data size does not form a perfect rectangular grid.")
 
     ny, nx = current_data.shape
 
@@ -613,24 +643,20 @@ def extract_working_point(lb_data: np.array,
     x_index_arr = np.arange(nx)
     y_index_arr = np.arange(ny)
 
-    # enlarge region by adding 0.1 V to pinch-off values
-    x_idx_mid = np.interp(barrier_pinch_offs[0] + 0.05, lb_voltages, x_index_arr)
-    y_idx_mid = np.interp(barrier_pinch_offs[1] + 0.05, rb_voltages, y_index_arr)
+    # Selects mid point of x and y axes
+    x_idx_mid = np.interp((lb_voltages.min() + lb_voltages.max()) / 2, lb_voltages, x_index_arr)
+    y_idx_mid = np.interp((rb_voltages.min() + rb_voltages.max()) / 2, rb_voltages, y_index_arr)
     x_idx_mid = int(np.clip(x_idx_mid, 0, nx - 1))
     y_idx_mid = int(np.clip(y_idx_mid, 0, ny - 1))
     
     ridge_masked = np.zeros_like(ridge_filtered)
     
     if device_type == 'electron':
-        # Electron: analyze bottom-left, top-left, bottom-right (exclude top-right)
+        # Electron: analyze bottom-left
         ridge_masked[:y_idx_mid, :x_idx_mid] = ridge_filtered[:y_idx_mid, :x_idx_mid]
-        ridge_masked[y_idx_mid:, :x_idx_mid] = ridge_filtered[y_idx_mid:, :x_idx_mid]
-        ridge_masked[:y_idx_mid, x_idx_mid:] = ridge_filtered[:y_idx_mid, x_idx_mid:]
     else:  # hole
-        # Hole: analyze top-right, top-left, bottom-right (exclude bottom-left)
+        # Hole: analyze top-right
         ridge_masked[y_idx_mid:, x_idx_mid:] = ridge_filtered[y_idx_mid:, x_idx_mid:]
-        ridge_masked[y_idx_mid:, :x_idx_mid] = ridge_filtered[y_idx_mid:, :x_idx_mid]
-        ridge_masked[:y_idx_mid, x_idx_mid:] = ridge_filtered[:y_idx_mid, x_idx_mid:]
 
     # From these edges, we detect lines using a probabilistic hough transform.
     # Use a slightly lower threshold and tune the minimum required segment length so long bottom-left lines are prioritized.
@@ -645,27 +671,27 @@ def extract_working_point(lb_data: np.array,
         line_gap=hough_gap
     )
 
-    roi = None
-    roi_offset = (0, 0)
-    if device_type == 'electron' and x_idx_mid > 5 and y_idx_mid > 5:
-        roi = ridge_masked[:y_idx_mid, :x_idx_mid]
-        roi_offset = (0, 0)
-    elif device_type != 'electron' and x_idx_mid < nx - 5 and y_idx_mid < ny - 5:
-        roi = ridge_masked[y_idx_mid:, x_idx_mid:]
-        roi_offset = (x_idx_mid, y_idx_mid)
+    # roi = None
+    # roi_offset = (0, 0)
+    # if device_type == 'electron' and x_idx_mid > 5 and y_idx_mid > 5:
+    #     roi = ridge_masked[y_idx_mid:, :x_idx_mid]
+    #     roi_offset = (0, y_idx_mid)
+    # elif device_type == 'hole' and x_idx_mid < nx - 5 and y_idx_mid < ny - 5:
+    #     roi = ridge_masked[:y_idx_mid, x_idx_mid:]
+    #     roi_offset = (x_idx_mid, 0)
 
-    if roi is not None and roi.size > 0:
-        extra_lines = transform.probabilistic_hough_line(
-            roi,
-            threshold=max(5, hough_threshold - 3),
-            line_length=max(8, int(minLineLength * 0.12)),
-            line_gap=max(1, int(maxLineGap * 0.05))
-        )
-        for p0, p1 in extra_lines:
-            lines.append((
-                (p0[0] + roi_offset[0], p0[1] + roi_offset[1]),
-                (p1[0] + roi_offset[0], p1[1] + roi_offset[1])
-            ))
+    # if roi is not None and roi.size > 0:
+    #     extra_lines = transform.probabilistic_hough_line(
+    #         roi,
+    #         threshold=max(5, hough_threshold - 3),
+    #         line_length=max(8, int(minLineLength * 0.12)),
+    #         line_gap=max(1, int(maxLineGap * 0.05))
+    #     )
+    #     for p0, p1 in extra_lines:
+    #         lines.append((
+    #             (p0[0] + roi_offset[0], p0[1] + roi_offset[1]),
+    #             (p1[0] + roi_offset[0], p1[1] + roi_offset[1])
+    #         ))
 
     # if not lines:
     #     return []
@@ -707,20 +733,20 @@ def extract_working_point(lb_data: np.array,
         line_candidates.sort(key=lambda item: -item[0])
         filtered_lines = [entry[1] for entry in line_candidates]
 
-    if not filtered_lines and roi is not None and roi.size > 0:
-        for alt_img in [band_passed, G_uint, ridge_norm]:
-            alt_roi = alt_img[:y_idx_mid, :x_idx_mid] if device_type == 'electron' else alt_img[y_idx_mid:, x_idx_mid:]
-            extra_lines = transform.probabilistic_hough_line(
-                alt_roi,
-                threshold=max(4, hough_threshold - 4),
-                line_length=max(8, int(minLineLength * 0.12)),
-                line_gap=max(1, int(maxLineGap * 0.05))
-            )
-            for p0, p1 in extra_lines:
-                lines.append((
-                    (p0[0] + roi_offset[0], p0[1] + roi_offset[1]),
-                    (p1[0] + roi_offset[0], p1[1] + roi_offset[1])
-                ))
+    # if not filtered_lines and roi is not None and roi.size > 0:
+    #     for alt_img in [band_passed, G_uint, ridge_norm]:
+    #         alt_roi = alt_img[:y_idx_mid, :x_idx_mid] if device_type == 'electron' else alt_img[y_idx_mid:, x_idx_mid:]
+    #         extra_lines = transform.probabilistic_hough_line(
+    #             alt_roi,
+    #             threshold=max(4, hough_threshold - 4),
+    #             line_length=max(8, int(minLineLength * 0.12)),
+    #             line_gap=max(1, int(maxLineGap * 0.05))
+    #         )
+    #         for p0, p1 in extra_lines:
+    #             lines.append((
+    #                 (p0[0] + roi_offset[0], p0[1] + roi_offset[1]),
+    #                 (p1[0] + roi_offset[0], p1[1] + roi_offset[1])
+    #             ))
 
         line_candidates = []
         for p0, p1 in lines:
@@ -745,8 +771,8 @@ def extract_working_point(lb_data: np.array,
     # Using the pinch-off voltages from barrier_pinch_offs parameter
 
     # enlarge region by adding 0.1 V to pinch-off values
-    lb_mid_volt = barrier_pinch_offs[0] + 0.05  # First value: x-axis (left/bottom gate)
-    rb_mid_volt = barrier_pinch_offs[1] + 0.05  # Second value: y-axis (right/bottom gate)
+    lb_mid_volt = (lb_voltages.min() + lb_voltages.max()) / 2  # First value: x-axis (left/bottom gate)
+    rb_mid_volt = (rb_voltages.min() + rb_voltages.max()) / 2  # Second value: y-axis (right/bottom gate)
 
     perp_candidates = []
     perp_traces_for_plot = []
@@ -754,8 +780,6 @@ def extract_working_point(lb_data: np.array,
     perp_length_pixels = max(40, int(min(nx, ny) * 0.5))
     perp_samples = 400
     smooth_sigma = 2.0
-
-    
 
     # Now, for each filtered line, we define a line perpendicular to it, then find the peaks in current along them
 
@@ -829,9 +853,9 @@ def extract_working_point(lb_data: np.array,
 
         # restrict to red zone based on device type
         if device_type == 'electron':
-            valid = (vx < lb_mid_volt) | (vy < rb_mid_volt)
+            valid = (vx < lb_mid_volt) & (vy < rb_mid_volt)
         else:  # hole
-            valid = (vx > lb_mid_volt) | (vy > rb_mid_volt)
+            valid = (vx > lb_mid_volt) & (vy > rb_mid_volt)
         peak_idx = peak_idx[valid]
         px = px[valid]
         py = py[valid]
@@ -869,7 +893,6 @@ def extract_working_point(lb_data: np.array,
 
     # ---------- Selecting Final Bias Points ----------
 
-
     # First, we sort the points in order of increasing current
     
     perp_candidates.sort(key=lambda x: -x[0])
@@ -895,13 +918,16 @@ def extract_working_point(lb_data: np.array,
         for (_, vx, vy, _, _, _) in top_candidates
     ]
 
+    dist_to_pinch_off_corner = {}
+
     # Compute selected working points. For Triple Dot, shift each point 0.1 V in the
     # opposite yellow trace direction instead of perpendicular to it.
     selected_working_points = []
     traces_by_id = {tr["trace_id"]: tr for tr in perp_traces_for_plot}
-    for cand in top_candidates:
+    for i, cand in enumerate(top_candidates):
         _, vx_c, vy_c, px_c, py_c, tid = cand
         tr = traces_by_id.get(tid, None)
+        cand_point = np.array([vx_c, vy_c])
         if tr is not None and str(DotTuning).strip().lower() == 'triple dot':
             try:
                 vx_trace = np.interp(tr["px"], x_index_arr, lb_voltages)
@@ -918,6 +944,8 @@ def extract_working_point(lb_data: np.array,
                 selected_working_points.append((round(vx_c, 3), round(vy_c, 3)))
         else:
             selected_working_points.append((round(vx_c, 3), round(vy_c, 3)))
+        
+        dist_to_pinch_off_corner[tuple(cand_point)] = np.linalg.norm(cand_point - barrier_pinch_offs)
 
     perp_traces_for_plot = [
         tr for tr in perp_traces_for_plot
@@ -931,9 +959,9 @@ def extract_working_point(lb_data: np.array,
         vy = np.interp(tr["py"], y_index_arr, rb_voltages)
 
         if device_type == 'electron':
-            in_quad = (vx < lb_mid_volt) | (vy < rb_mid_volt)
+            in_quad = (vx < lb_mid_volt) & (vy < rb_mid_volt)
         else:  # hole
-            in_quad = (vx > lb_mid_volt) | (vy > rb_mid_volt)
+            in_quad = (vx > lb_mid_volt) & (vy > rb_mid_volt)
         if not np.any(in_quad):
             continue
 
@@ -958,9 +986,9 @@ def extract_working_point(lb_data: np.array,
 
         tr["chosen_block"] = chosen_block
 
+    closest_candidate, closest_value = min(dist_to_pinch_off_corner.items(), key=lambda kv: kv[1])
 
     # ---------- Final Plotting ----------
-
 
     if plot_results:
 
@@ -1057,120 +1085,74 @@ def extract_working_point(lb_data: np.array,
         # Block Boundary and shaded region based on device type
         
         if device_type == 'electron':
-            # Electron: exclude top-right quadrant
-            # Top side: horizontal line from center to right edge
+            # Bottom-left quadrant boundary
+
+            # Top edge of the bottom-left quadrant
             ax.plot(
-                [lb_mid_volt, lb_data.max()],  # x: center → right
-                [rb_mid_volt, rb_mid_volt],    # y constant at middle
+                [lb_data.min(), lb_mid_volt],   # left edge -> midpoint
+                [rb_mid_volt, rb_mid_volt],     # horizontal line at y midpoint
                 linestyle='--',
                 color='red',
                 linewidth=1.2,
                 alpha=0.9
             )
 
-            # Right side: vertical line from center to top edge
+            # Right edge of the bottom-left quadrant
             ax.plot(
-                [lb_mid_volt, lb_mid_volt],    # x constant at center
-                [rb_mid_volt, rb_data.max()],  # y: middle → top
+                [lb_mid_volt, lb_mid_volt],     # vertical line at x midpoint
+                [rb_data.min(), rb_mid_volt],   # bottom edge -> midpoint
                 linestyle='--',
                 color='red',
                 linewidth=1.2,
                 alpha=0.9
             )
 
-            # Bottom-left quadrant
-            rect1 = Rectangle(
-            (lb_data.min(), rb_data.min()),                 # bottom-left corner
-            lb_mid_volt - lb_data.min(),                   # width
-            rb_mid_volt - rb_data.min(),                   # height
-            facecolor='red',
-            alpha=0.2,
-            edgecolor=None,
-            zorder=2
-        )
-            ax.add_patch(rect1)
-
-            # Top-left quadrant
-            rect2 = Rectangle(
-            (lb_data.min(), rb_mid_volt),                 # top-left corner
-            lb_mid_volt - lb_data.min(),                   # width
-            rb_data.max() - rb_mid_volt,                   # height
-            facecolor='red',
-            alpha=0.2,
-            edgecolor=None,
-            zorder=2
-        )
-            ax.add_patch(rect2)
-
-            # Bottom-right quadrant
-            rect3 = Rectangle(
-            (lb_mid_volt, rb_data.min()),                 # bottom-right corner
-            lb_data.max() - lb_mid_volt,                   # width
-            rb_mid_volt - rb_data.min(),                   # height
-            facecolor='red',
-            alpha=0.2,
-            edgecolor=None,
-            zorder=2
-        )
-            ax.add_patch(rect3)
+            # Shade only the bottom-left quadrant
+            rect = Rectangle(
+                (lb_data.min(), rb_data.min()),
+                lb_mid_volt - lb_data.min(),
+                rb_mid_volt - rb_data.min(),
+                facecolor='red',
+                alpha=0.2,
+                edgecolor=None,
+                zorder=2
+            )
+            ax.add_patch(rect)
         
         else:  # hole
-            # Hole: exclude bottom-left quadrant
-            # Bottom side: horizontal line from left edge to center
+            # Top-right quadrant boundary
+
+            # Bottom edge of the top-right quadrant
             ax.plot(
-                [lb_data.min(), lb_mid_volt],  # x: left → center
-                [rb_mid_volt, rb_mid_volt],    # y constant at middle
+                [lb_mid_volt, lb_data.max()],   # midpoint -> right edge
+                [rb_mid_volt, rb_mid_volt],     # horizontal line at y midpoint
                 linestyle='--',
                 color='red',
                 linewidth=1.2,
                 alpha=0.9
             )
 
-            # Left side: vertical line from bottom edge to center
+            # Left edge of the top-right quadrant
             ax.plot(
-                [lb_mid_volt, lb_mid_volt],    # x constant at center
-                [rb_data.min(), rb_mid_volt],  # y: bottom → middle
+                [lb_mid_volt, lb_mid_volt],     # vertical line at x midpoint
+                [rb_mid_volt, rb_data.max()],   # midpoint -> top edge
                 linestyle='--',
                 color='red',
                 linewidth=1.2,
                 alpha=0.9
             )
 
-            # Top-right quadrant
-            rect1 = Rectangle(
-            (lb_mid_volt, rb_mid_volt),                 # top-right corner
-            lb_data.max() - lb_mid_volt,                   # width
-            rb_data.max() - rb_mid_volt,                   # height
-            facecolor='red',
-            alpha=0.2,
-            edgecolor=None,
-            zorder=2
-        )
-            ax.add_patch(rect1)
-
-            # Top-left quadrant
-            rect2 = Rectangle(
-            (lb_data.min(), rb_mid_volt),                 # top-left corner
-            lb_mid_volt - lb_data.min(),                   # width
-            rb_data.max() - rb_mid_volt,                   # height
-            facecolor='red',
-            alpha=0.2,
-            edgecolor=None,
-            zorder=2
-        )
-            ax.add_patch(rect2)
-
-            # Bottom-right quadrant
-            rect3 = Rectangle(
-            (lb_mid_volt, rb_data.min()),                 # bottom-right corner
-            lb_data.max() - lb_mid_volt,                   # width
-            rb_mid_volt - rb_data.min(),                   # height
-            facecolor='red',
-            alpha=0.2,
-            edgecolor=None,
-            zorder=2
-        )
-            ax.add_patch(rect3)
+            # Shade only the top-right quadrant
+            rect = Rectangle(
+                (lb_mid_volt, rb_mid_volt),
+                lb_data.max() - lb_mid_volt,
+                rb_data.max() - rb_mid_volt,
+                facecolor='red',
+                alpha=0.2,
+                edgecolor=None,
+                zorder=2
+            )
+            ax.add_patch(rect)
 
         # Hough lines
         for x1, y1, x2, y2 in filtered_lines:
@@ -1187,6 +1169,8 @@ def extract_working_point(lb_data: np.array,
         dot_tuning_shift = 0.1 if str(DotTuning).strip().lower() == 'triple dot' else 0.0
 
         shifted_points = []
+        best_shifted_point = None
+        green_circle = False
 
         for tr in perp_traces_for_plot:
             idx = tr.get("chosen_block", None)
@@ -1204,7 +1188,7 @@ def extract_working_point(lb_data: np.array,
                         vx_p = float(vx[i])
                         vy_p = float(vy[i])
 
-                                # compute a local tangent along the yellow trace and shift along it
+                        # compute a local tangent along the yellow trace and shift along it
                         if 1 <= i < (len(vx) - 1):
                             ddx = float(vx[i + 1]) - float(vx[i - 1])
                             ddy = float(vy[i + 1]) - float(vy[i - 1])
@@ -1236,8 +1220,19 @@ def extract_working_point(lb_data: np.array,
                         # shifted star (exactly dot_tuning_shift along the yellow perp)
                         ax.scatter(sx, sy, s=200, c='white', marker='*', edgecolors='black', zorder=10)
                         shifted_points.append((sx, sy))
-                        # hollow red circle at original peak position
-                        ax.scatter(vx_p, vy_p, s=80, c='none', edgecolors='red', linewidths=1.5, zorder=11)
+
+                        if vx_p == closest_candidate[0] and vy_p == closest_candidate[1]:
+                            best_shifted_point = (sx, sy)
+                            green_circle = True
+
+                        if green_circle:
+                            # hollow green  circle at original peak position for best candidate
+                            ax.scatter(vx_p, vy_p, s=80, c='none', edgecolors='white', linewidths=1.5, zorder=11)
+                            green_circle = False
+                        else:
+                            # hollow red circle at original peak position
+                            ax.scatter(vx_p, vy_p, s=80, c='none', edgecolors='red', linewidths=1.5, zorder=11)
+
                         # arrow from original to shifted star
                         ax.annotate('', xy=(sx, sy), xytext=(vx_p, vy_p),
                                     arrowprops=dict(arrowstyle='->', color='black', lw=1.0), zorder=12)
@@ -1846,9 +1841,9 @@ def extract_working_point(lb_data: np.array,
         plt.show()
 
     if DotTuning == 'Triple Dot':
-        return shifted_points, perp_traces_for_plot, fig
+        return best_shifted_point, shifted_points, perp_traces_for_plot, fig
     elif DotTuning == 'SET':
-        return perp_bias_points, perp_traces_for_plot, fig
+        return best_shifted_point, perp_bias_points, perp_traces_for_plot, fig
 
 def extract_lever_arms(data: pd.DataFrame,
                        plot_process: bool = False) -> dict:

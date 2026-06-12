@@ -18,12 +18,15 @@ import numpy.typing as npt
 import pandas as pd
 import cv2
 import scipy.signal as signal
+from scipy.interpolate import make_smoothing_spline
 
 import matplotlib.cm as cm
 import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 from matplotlib.ticker import AutoMinorLocator
 from matplotlib.patches import ConnectionPatch, Rectangle
+
+from IPython.display import display
 
 from scipy.optimize import curve_fit
 from scipy.special import expit
@@ -414,7 +417,12 @@ def pinch_off_curve_ranges(x_data: np.array,
 
     return voltage_window, fig
 
-def extract_max_conductance_points(self, x_data, y_data):
+def extract_max_conductance_points(x_data: np.array,
+                                   y_data: np.array,
+                                   peak_height: list[float] = [None, None],
+                                   peak_prominence: list[float] = [None, None],
+                                   peak_width: list[float] = [None, None]
+                                   ):
     """Analyze current data to identify the largest conductance features.
 
     This function plots the current and its derivative, then highlights
@@ -424,76 +432,93 @@ def extract_max_conductance_points(self, x_data, y_data):
     x1 = np.array(x_data)
     y1 = np.array(y_data)
 
-    # Plot
-    plt.figure(figsize=(8,6))
-    plt.plot(x1, y1)
-    plt.xlabel('V_P (V)')
-    plt.ylabel('Current (nA)')
-    plt.title('Coulomb Blockade For P-Type Device')
-
-    plt.show()
-
     # Now, we calculate the derivative and replot
 
     dIdV = np.gradient(y1, x1)
 
-    posdIdV = abs(dIdV)
+    if peak_height == [None, None]:
+        peak_height = [0.25 * np.max(dIdV), 0.25 * np.max(dIdV)]
+    if peak_prominence == [None, None]:
+        peak_prominence = [0.3 * np.max(dIdV), 0.3 * np.max(dIdV)]
 
-    # Plot
-    plt.figure(figsize=(8,6))
-    plt.plot(x1, posdIdV)
-    plt.xlabel('V_P (mV)')
-    plt.ylabel('Conductance (nS)')
-    plt.title('Conductance Peaks for P-Type Device')
-
-    plt.show()
 
     # --- Find two largest and two smallest conductance points (positive + negative extremes) ---
 
-    # Get indices of top 2 positive conductance values
-    top_idx_pos = np.argsort(dIdV)[-2:]
+    peak_idx_pos, _ = signal.find_peaks(dIdV, height = peak_height[0], prominence = peak_prominence[0], width=peak_width[0])
+    peak_idx_neg, test_props = signal.find_peaks(-dIdV, height = peak_height[1], prominence = peak_prominence[1], width=peak_width[1])
 
-    # Get indices of bottom 2 negative conductance values
-    top_idx_neg = np.argsort(dIdV)[:2]
+    # for idx, p in enumerate(peak_idx_neg):
+    #     # If the coordinate is near your dip (around V_P = 1.35 V)
+    #     if 1.30 < x1[p] < 1.39:
+    #         print(f"Negative Dip found at V_P = {x1[p]:.3f} V")
+    #         print(f" -> Measured Prominence: {test_props['prominences'][idx]:.2f}")
+    #         print(f" -> Measured Width:      {test_props['widths'][idx]:.2f}")
 
-    # Combine them and sort by x-position for consistent plotting
-    top_idx = np.sort(np.concatenate([top_idx_pos, top_idx_neg]))
+    peak_idx = np.sort(np.concatenate([peak_idx_pos, peak_idx_neg]))
 
     # Extract the corresponding data points
-    x_top = x1.iloc[top_idx]
-    I_top = y1.iloc[top_idx]
-    G_top = dIdV[top_idx]
+    x_top = x1[peak_idx]
+    I_top = y1[peak_idx]
+    G_top = dIdV[peak_idx]
+
+    max_idx = peak_idx[np.argmax(dIdV[peak_idx])]
+    min_idx = peak_idx[np.argmin(dIdV[peak_idx])]
+    
+    I_max = y1[max_idx]
+    I_min = y1[min_idx]
+    G_max = dIdV[max_idx]
+    G_min = dIdV[min_idx]
+
+    best_sens_pts = [(x1[max_idx], I_max), (x1[min_idx], I_min)]
 
     # Create two subplots that share the x-axis
     fig, (ax1, ax2) = plt.subplots(2, 1, sharex=False, figsize=(8, 6))
 
     # --- Top panel: Current ---
     ax1.plot(x1, y1, color='#2c5aa0', linewidth=1)
-    ax1.scatter(x_top, I_top, facecolors='none', edgecolors='#FF5500', s=100, linewidths=2, zorder=5, label='High Sensitivity Points')
-    ax1.set_ylabel('I (nA)', fontsize=45)
+    for i in range(len(x_top)):
+        if I_top[i] == I_max:
+            ax1.scatter(x_top[i], I_top[i], facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Max I')
+        elif I_top[i] == I_min:
+            ax1.scatter(x_top[i], I_top[i], facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Min I')
+        else:
+            ax1.scatter(x_top[i], I_top[i], facecolors='none', edgecolors="#FF5500", s=100, linewidths=2, zorder=5, label='High Sensitivity Points')
+    ax1.set_ylabel('I (nA)', fontsize=35)
     ax1.set_ylim(bottom=0)
-    ax1.set_xlim(min(x1) - 0.05, max(x1) + 0.05)
+    ax1.set_xlim(min(x1), max(x1))
     ax1.tick_params(labelbottom=True)
 
     # --- Bottom panel: Conductance ---
-    ax2.plot(x1, posdIdV, color='#2c5aa0', linewidth=1)
-    ax2.scatter(x_top, G_top, facecolors='none', edgecolors='#FF5500', s=100, linewidths=2, zorder=5, label='Max G')
-    ax2.set_xlabel(r'$V_P$ (V)', fontsize=45)
-    ax2.set_ylabel('G (nS)', fontsize=45)
-    ax2.set_xlim(min(x1) - 0.05, max(x1) + 0.05)
+    ax2.plot(x1, dIdV, color='#2c5aa0', linewidth=1)
+    for i in range(len(x_top)):
+        if G_top[i] == G_max:
+            ax2.scatter(x_top[i], G_top[i], facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Max G')
+        elif G_top[i] == G_min:
+            ax2.scatter(x_top[i], G_top[i], facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Min G')
+        else:
+            ax2.scatter(x_top[i], G_top[i], facecolors='none', edgecolors="#FF5500", s=100, linewidths=2, zorder=5, label='High Sensitivity Points')
+    ax2.set_xlabel(r'$V_P$ (V)', fontsize=35)
+    ax2.set_ylabel('G (nS)', fontsize=35)
+    ax1.set_ylim(bottom=0)
+    ax2.set_xlim(min(x1), max(x1))
 
     # --- Create the connection line ---
-    con = ConnectionPatch(
-        xyA=(x_top, I_top), coordsA=ax1.transData,
-        xyB=(x_top, G_top), coordsB=ax2.transData,
-        color='#FF5500', linestyle='--', linewidth=0.7
-    )
-    fig.add_artist(con)
+    for i in range(len(x_top)):
+        con = ConnectionPatch(
+            xyA=(x_top[i], I_top[i]), coordsA=ax1.transData,
+            xyB=(x_top[i], G_top[i]), coordsB=ax2.transData,
+            color='#FF5500', linestyle='--', linewidth=0.7
+        )
+        fig.add_artist(con)
 
     # --- Create a custom legend entry (hollow circle) ---
     legend_marker = mlines.Line2D([], [], color='#FF5500', marker='o',
                                 markerfacecolor='none', markersize=10,
                                 linewidth=0, label='High Sensitivity Points')
+    
+    legend_marker_2 = mlines.Line2D([], [], color='#01FF05', marker='o',
+                                markerfacecolor='none', markersize=10,
+                                linewidth=0, label='Best Sensitivity Points')
 
     # --- Custom tick labels: only min and max shown ---
 
@@ -506,23 +531,25 @@ def extract_max_conductance_points(self, x_data, y_data):
         xticks = ax.get_xticks()
         yticks = ax.get_yticks()
         
-    ax1.set_xticks([-0.4, 0.0, 0.4])
-    ax1.set_xticklabels(['-0.4', '0.0', '0.4'], fontsize=25)
+    ax1.set_xticks([np.round(x1.min(), 3), np.round((x1.min() + x1.max()) / 2, 3), np.round(x1.max(), 3)])
+    ax1.set_xticklabels([str(np.round(x1.min(), 3)), str(np.round((x1.min() + x1.max()) / 2, 3)), str(np.round(x1.max(), 3))], fontsize=25)
 
-    ax1.set_yticks([0.0, 0.15])
-    ax1.set_yticklabels(['0.0', '0.15'], fontsize=25)
+    ax1.set_yticks([0, np.round(y1.max(), 3)])
+    ax1.set_yticklabels(['0', str(np.round(y1.max(), 3))], fontsize=25)
 
-    ax2.set_xticks([-0.4, 0.0, 0.4])
-    ax2.set_xticklabels(['-0.4', '0.0', '0.4'], fontsize=25)
+    ax2.set_xticks([np.round(x1.min(), 3), np.round((x1.min() + x1.max()) / 2, 3),  np.round(x1.max(), 3)])
+    ax2.set_xticklabels([str(np.round(x1.min(), 3)), str(np.round((x1.min() + x1.max()) / 2, 3)), str(np.round(x1.max(), 3))], fontsize=25)
 
-    ax2.set_yticks([0.0, 10])
-    ax2.set_yticklabels(['0', '10'], fontsize=25)
+    ax2.set_yticks([np.round(dIdV.min(), 1), 0, np.round(dIdV.max(), 1)])
+    ax2.set_yticklabels([str(np.round(dIdV.min(), 1)), '0', str(np.round(dIdV.max(), 1))], fontsize=25)
 
-    ax1.legend(handles=[legend_marker], loc='upper left', fontsize=16, frameon=False)
+    ax1.legend(handles=[legend_marker, legend_marker_2], loc='upper left', fontsize=16, frameon=False)
 
     # --- Adjust layout ---
     plt.subplots_adjust(hspace=0.40)
     plt.show()
+
+    return best_sens_pts, G_top
 
 def extract_working_point(lb_data: np.array,
                           rb_data: np.array,
@@ -1015,10 +1042,10 @@ def extract_working_point(lb_data: np.array,
         x0, x1 = round_to_step(lb_data.min(), step), round_to_step(lb_data.max(), step)
         y0, y1 = round_to_step(rb_data.min(), step), round_to_step(rb_data.max(), step)
         
-        ax.set_xticks([lb_data.min(), lb_data.max()])
-        ax.set_yticks([rb_data.min(), rb_data.max()])
-        ax.set_xticklabels([str(lb_data.min()), str(lb_data.max())], fontsize=30)
-        ax.set_yticklabels([str(rb_data.min()), str(rb_data.max())], fontsize=30)
+        ax.set_xticks([np.round(lb_data.min(), 3), np.round(lb_data.max(), 3)])
+        ax.set_yticks([np.round(rb_data.min(), 3), np.round(rb_data.max(), 3)])
+        ax.set_xticklabels([str(np.round(lb_data.min(), 3)), str(np.round(lb_data.max(), 3))], fontsize=30)
+        ax.set_yticklabels([str(np.round(rb_data.min(), 3)), str(np.round(rb_data.max(), 3))], fontsize=30)
 
         ax.tick_params(
             which="major",
@@ -1844,6 +1871,145 @@ def extract_working_point(lb_data: np.array,
         return best_shifted_point, shifted_points, perp_traces_for_plot, fig
     elif DotTuning == 'SET':
         return best_shifted_point, perp_bias_points, perp_traces_for_plot, fig
+
+def extract_tunnel_barrier_latching(dp_data: np.array,
+                                    tb_data: np.array,
+                                    current_data: np.array,
+                                    peak_height: list[float] = [None, None],
+                                    peak_prominence: list[float] = [None, None],
+                                    peak_width: list[float] = [None, None]
+                                    ):
+    """Analyze current data to identify if latching is occuring during dot-lead tuning
+
+    This function plots the derivative of the current and analyzes the peaks to see if latching is occuring.
+    """
+
+    dp_data = np.array(dp_data)
+    tb_data = np.array(tb_data)
+    current_data = np.array(current_data)
+    device_type = 'electron'
+    num_traces = 25
+
+    if np.average(dp_data) < 0 and np.average(tb_data) < 0:
+        current_data = np.flip(current_data, axis=None)
+        device_type = 'hole'
+    
+    # Extract unique, sorted coordinate values for axis references
+    unique_dp = np.sort(np.unique(dp_data))
+    unique_tb = np.sort(np.unique(tb_data))
+    
+    nx = len(unique_dp)
+    ny = len(unique_tb)
+
+    if current_data.ndim == 1:
+        if current_data.size == nx * ny:
+            current_data = current_data.reshape((ny, nx))
+        else:
+            raise ValueError("Data size does not form a perfect rectangular grid.")
+        
+    ny, nx = current_data.shape
+
+    # Calculate evenly spaced indices across the Y axis (tb_data)
+    y_indices = np.linspace(0, ny - 1, num_traces, dtype=int)
+
+    # Extract the current rows corresponding to those Y indices
+    # Shape is (num_traces, nx)
+    sliced_current = current_data[y_indices, :]
+
+    # Duplicate X axis (dp_data) to pair with every extracted trace row
+    x_broadcasted = np.repeat(unique_dp[np.newaxis, :], num_traces, axis=0)
+
+    # Stack X and Current along the last axis -> shape (num_traces, nx, 2)
+    # Trace 0 matches the lowest unique_tb value, Trace -1 matches the highest.
+    final_traces = np.stack((x_broadcasted, sliced_current), axis=-1)
+
+    # =========================================================================
+    # PLOTTING BLOCK: Render the derivative subplots inside the function
+    # =========================================================================
+    cols = 5
+    rows = int(np.ceil(num_traces / cols))
+    
+    # # Adjusted sharey=False because derivative scales can vary across the map
+    # fig, axes = plt.subplots(rows, cols, figsize=(15, 12), sharex=True, sharey=False)
+    # axes = axes.flatten()  # Flatten grid into a 1D list for easy looping
+
+    # Match the exact physical tb_data coordinate value for each indexed row slice
+    trace_y_values = unique_tb[y_indices]
+
+    best_sens_pts_list = []
+    all_sens_pts_list = []
+
+    for i in range(num_traces):
+        # Extract X (dp_data) and Z (current) data for this specific trace
+        x_vals = final_traces[i, :, 0]
+        z_vals = final_traces[i, :, 1]
+
+        spline = make_smoothing_spline(x_vals, z_vals, lam=1e-9)
+        smoothed_z_vals = spline(x_vals)
+
+        deriv = np.gradient(smoothed_z_vals, x_vals)
+        neg_deriv = -deriv
+
+        if peak_height == [None, None]:
+            peak_height = [0.14 * deriv.max(), 0.3 * deriv.max()]
+        if peak_prominence == [None, None]: 
+            peak_prominence = [0.1 * deriv.max(), 0.3 * neg_deriv.max()]
+        if peak_width == [None, None]:
+            peak_width = [(0, 40), (0, None)]
+
+        print(f"Tunnel Barrier Voltage = {trace_y_values[i]:.3f} V")
+
+        best_pts, all_pts = extract_max_conductance_points(x_vals, smoothed_z_vals, peak_height=peak_height, peak_prominence=peak_prominence, peak_width=peak_width)
+        best_sens_pts_list.append(best_pts)
+        all_sens_pts_list.append(all_pts)
+
+        # # 1. Compute the derivative (dI/d_dp) using the spatial coordinate grid spacing
+        # derivative_vals = np.gradient(z_vals, x_vals)
+        
+        # # 2. Plot the derivative line to the corresponding grid cell
+        # axes[i].plot(x_vals, derivative_vals, color='tab:purple', linewidth=1.5)
+        
+        # # Place LaTeX formatted text overlay relative to the subplot viewport bounds
+        # axes[i].text(
+        #     0.05, 0.93, 
+        #     rf"$V_B$ = {trace_y_values[i]:.3f}", 
+        #     transform=axes[i].transAxes, 
+        #     fontsize=10, 
+        #     verticalalignment='top',
+        #     bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=2)
+        # )
+
+    # # Clean up empty subplots if any
+    # for j in range(num_traces, len(axes)):
+    #     fig.delaxes(axes[j])
+
+    # # Add global canvas labels and updated main title
+    # fig.supxlabel(r"$V_P$ (V)", fontsize=12)
+    # fig.supylabel("G (nS)", fontsize=12)
+    # fig.suptitle("Conductance Traces Extracted Along the Tunnel Barrier", fontsize=14, fontweight='bold')
+    
+    # plt.tight_layout()
+    # plt.show()
+
+    negative_peak_count = 0
+    negative_peak_count_list = []
+
+    for arrs in all_sens_pts_list:
+        for items in arrs:
+            if items < 0:
+                negative_peak_count += 1
+                break
+        negative_peak_count_list.append(negative_peak_count)
+    
+    if negative_peak_count == 0:
+        barrier_voltage_set_point = tb_data.min()
+        return best_sens_pts_list, all_sens_pts_list, barrier_voltage_set_point
+
+    final_number = negative_peak_count_list[-1]
+    first_index = negative_peak_count_list.index(final_number)
+    second_index = negative_peak_count_list.index(final_number, first_index + 1)
+    barrier_voltage_set_point = trace_y_values[second_index]
+    return best_sens_pts_list, all_sens_pts_list, barrier_voltage_set_point
 
 def extract_lever_arms(data: pd.DataFrame,
                        plot_process: bool = False) -> dict:

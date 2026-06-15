@@ -17,12 +17,14 @@ logger = None
 def start_tuner_gui():
     global gui, logger
 
+    print("Starting Program")
+
     logger = TunerLog("main")
     logger.info("Starting GUI...")
 
     gui = tuner_gui()
 
-    print("Gui Startup Complete! Welcome to the Quantum Device Autotuner!")
+    print("Gui Startup Complete! Welcome to QAT!")
 
 @app.on_shutdown
 def stop_tuner_gui():

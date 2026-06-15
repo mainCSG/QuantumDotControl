@@ -51,15 +51,12 @@ class Sweep:
             for p in layer.targets
         ]
 
-        self.filename = f"sweep_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
-
-        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
-        self.csv_path = os.path.join(desktop, self.filename)
+        self.directory = os.path.join(os.path.expanduser("~"), r"C:\Users\BaughLaflamme\Desktop\3d1s_W151_1 Measurements\3D1S_w151_1 - Autotuning Tests")
 
         self._csv_file = None
         self._csv_writer = None
 
-    def _open_csv(self):
+    def _open_csv(self, filename):
 
         keys = [
             'agilent_left.volt',
@@ -68,9 +65,13 @@ class Sweep:
         ap = list(self.all_params)
         
         self._header = ap + keys
-        
+
+        self.filename = filename
+
+        self.csv_path = os.path.join(self.directory, self.filename)
+
         self._csv_file = open(self.csv_path, "w", newline="")
-        
+
         self._csv_writer = csv.writer(self._csv_file)
         self._csv_writer.writerow(self._header)
 
@@ -89,7 +90,7 @@ class Sweep:
             )
 
         finally:
-            print("Voltage Configuration Set!")
+            print()
 
     def set_voltage_layer(self, idx, instr_handler, abort_event, current_setpoints):
 
@@ -162,10 +163,11 @@ class Sweep:
             new_setpoints = current_setpoints.copy()
             new_setpoints.update(step_values)
 
-    def run(self, instr_handler, abort_event, current_setpoints = {}):        
+    def run(self, instr_handler, abort_event, filename, current_setpoints = {}):        
 
         try:
-            self._open_csv()
+
+            self._open_csv(filename = filename)
 
             self._run_layer(
                 0,
@@ -176,6 +178,8 @@ class Sweep:
 
         finally:
             self._close_csv()
+
+            logger.info("Data Recorded!")
 
     def _run_layer(self, idx, instr_handler, abort_event, current_setpoints):
 
@@ -258,19 +262,27 @@ class Sweep:
 
             if idx < len(self.layers) - 1 and i < layer.num_points - 1:
 
+                reset_layer = self.layers[idx - 1]
+
+                logger.info(f"{reset_layer}")
+
+                reset_targets = reset_layer.targets[0]
+
+                reset_start = reset_targets.end
+
+                reset_end = reset_targets.start
+
+                logger.info(f"start: {reset_start}, end: {reset_end}")
+
                 reset_layer = self._build_reset_layers(
                     idx,
-                    p.end,
-                    p.start,
+                    reset_start,
+                    reset_end,
                     num_points=50
                 )
 
-                print(f"reset_layers: {reset_layer}")
-
                 # Save original layers
                 original_layers = self.layers
-
-                print(f"original_layers: {original_layers}")
 
                 try:
                     # Swap in reset layers
@@ -328,5 +340,10 @@ class Sweep:
         )
 
         reset_layer.append(new_layer)
+
+        logger.info(
+            f"RESET: {new_p.parameter} "
+            f"{new_p.start} -> {new_p.end}"
+        )
 
         return reset_layer

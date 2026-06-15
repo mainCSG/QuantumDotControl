@@ -40,8 +40,12 @@ class LogElementHandler(logging.Handler):
             level = record.levelno
             colors = {logging.DEBUG: "text-blue text-sm italic", logging.INFO: "text-sm", logging.WARNING: "text-yellow-600 text-sm", logging.ERROR: "text-red", logging.CRITICAL: "text-red font-bold underline"}
             msg = self.format(record)
+
+            client = self.element.client
+            print("CONNECT", client.id, hex(id(client)))
             self.element.push(msg, classes=colors[level])
-        except Exception:
+        except Exception as e:
+            print("UI handler failed:", repr(e))
             self.handleError(record)
 
 class TunerLog(logging.Logger):

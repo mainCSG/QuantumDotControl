@@ -48,13 +48,22 @@ from qcodes.dataset.dond.do_nd_utils import ActionsT
 from qcodes.parameters import ParameterBase
 
 from nicegui import ui
+from tunerlog import TunerLog
+
+logger = TunerLog('Data Analysis')
   
 def logarithmic(x, a, b, x0, y0):
-    """Logarithmic model used for curve fitting.
+    
+    """
+    Logarithmic model used for curve fitting.
 
-    Parameters:
-        x: independent variable array
-        a, b, x0, y0: fit parameters
+    Parameters
+    -----------
+    x : np.array
+        independent variable array
+    a, b, x0, y0 : float
+        fit parameters
+    
     """
     return a * np.log(b*(x-x0)) + y0
 
@@ -122,7 +131,10 @@ def fit_to_function(x_data,
 def extract_turn_on_voltage(x_data: np.array,
                             y_data: np.array,
                             noisefloor: float,
+                            filepath: str,
+                            filename: str,
                             plot_results: bool = True):
+    
     """Estimate the turn-on voltage from a gate-sweep current curve.
 
     This routine baseline-corrects the current, then finds the first
@@ -141,13 +153,22 @@ def extract_turn_on_voltage(x_data: np.array,
     turnon_voltage = 0
     turnon_current = 0
 
+    threshold = noisefloor * 10
+
     for val in y1:
-        if val > noisefloor:
-            idx_turnon = np.where(y1 == val)[0][0]  # get the index of the turn-on point
-            turnon_voltage = x1[idx_turnon]
-            turnon_current = y1[idx_turnon]
+
+        if val > abs(threshold):
+            idx_turnon = np.where(y1 == val)[0][0] # get the index of the turn-on point
+            
+            logger.info(f"Index: {idx_turnon}")
+            
+            turnon_voltage = x1[idx_turnon - 1]
+            
+            logger.info(f"Turn_On Voltage: {turnon_voltage}")
+            
+            turnon_current = y1[idx_turnon - 1]
             break
-    
+
     # --- Plot data ---
     
     if plot_results:
@@ -177,16 +198,23 @@ def extract_turn_on_voltage(x_data: np.array,
         ax.set_yticklabels([f'{np.abs(yticks_span[0]):.1f}', '', '', '', f'{yticks_span[-1]:.4f}'], fontsize=25)
 
         plt.tight_layout()
+
+        filepath = os.path.join(filepath, filename)
+
+        fig.savefig(filepath, dpi = 'figure', bbox_inches='tight')
+
         plt.close(fig)
 
     # --- Print summary ---
-    print(f"  Turn-on Voltage:  {turnon_voltage:.3f} V")
+    #print(f"  Turn-on Voltage:  {turnon_voltage:.3f} V")
 
-    return turnon_voltage, fig  # Turn-on calculated by thresholding
+    return turnon_voltage, fig
 
-def pinch_off_curve_ranges(x_data: np.array,
+def extract_pinch_off_curve_ranges(x_data: np.array,
                            y_data: np.array,
-                           threshold: float,
+                           noisefloor: float,
+                           filepath: str,
+                           filename: str,
                            debug: bool = False,
                            plot_results: bool = True):
     """Identify pinch-off and saturation voltage ranges for a sweep.
@@ -203,11 +231,6 @@ def pinch_off_curve_ranges(x_data: np.array,
 
     if y1[0] < 0:
         y1 = -y1
-
-    # --- Check if we are pinch-offed ---
-
-    if y1[0] < threshold:
-        raise ValueError("Current at the end of the sweep is above the pinch-off noisefloor, indicating the device may not be fully pinch-offed. Please check the data or adjust the threshold.")
 
     # --- Finding Pinch-off Voltage ---
 
@@ -405,13 +428,17 @@ def pinch_off_curve_ranges(x_data: np.array,
         ax.set_ylim(ax.get_ylim()[0], ax.get_ylim()[1])
 
         plt.tight_layout()
+
+        filepath = os.path.join(filepath, filename)
+        fig.savefig(filepath, dpi = 'figure', bbox_inches='tight')
+
         plt.close(fig)
 
     # --- Print summary ---
 
-    print(f"  Saturation Voltage: {sat_voltage:.3f} V")
+    """print(f"  Saturation Voltage: {sat_voltage:.3f} V")
     print(f"  Midpoint Voltage:   {V0:.3f} V")
-    print(f"  Pinch-off Voltage:  {pinch_off_voltage:.3f} V\n")
+    print(f"  Pinch-off Voltage:  {pinch_off_voltage:.3f} V\n") """
 
     voltage_window = (pinch_off_voltage, sat_voltage)
 
@@ -556,14 +583,18 @@ def extract_working_point(lb_data: np.array,
                           current_data: np.array,
                           gates: list[str],
                           DotTuning: str,
-                          barrier_pinch_offs: list[float],
+                          barrier_pinch_offs: list[float],                          
+                          filepath: str,
+                          filename: str,
                           minAngleDeg: float = -60,
                           maxAngleDeg: float = -30,
-                          minLineLength: int = 60,
+                          minLineLength: int = 50,
                           maxLineGap: int = 200,
                           debug: bool = False,
-                          plot_results: bool = True) -> list[tuple]:
-    """Find working-point lines in a 2D barrier sweep image.
+                          plot_results: bool = True):
+    
+    """
+    Find working-point lines in a 2D barrier sweep image.
 
     This function converts raw barrier voltage and current data into an image,
     applies ridge detection and Hough transform filtering, and returns the
@@ -624,8 +655,9 @@ def extract_working_point(lb_data: np.array,
 
     lb_voltages = np.linspace(lb_data.min(), lb_data.max(), nx)
     rb_voltages = np.linspace(rb_data.min(), rb_data.max(), ny)
-
     
+    logger.info("calculation starting...")
+
     # ---------- Gradient Calculation and Ridge Detection ----------
     
 
@@ -691,6 +723,8 @@ def extract_working_point(lb_data: np.array,
     hough_length = max(12, int(minLineLength * 0.15))
     hough_gap = max(1, int(maxLineGap * 0.03))
 
+    logger.info("hough lines drawing...")
+
     lines = transform.probabilistic_hough_line(
         ridge_masked,
         threshold=hough_threshold,
@@ -742,6 +776,8 @@ def extract_working_point(lb_data: np.array,
 
     line_candidates.sort(key=lambda item: -item[0])
     filtered_lines = [entry[1] for entry in line_candidates]
+
+    logger.info("filtering...")
 
     if not filtered_lines:
         # Relax angle range slightly if no good long line was found.
@@ -809,6 +845,8 @@ def extract_working_point(lb_data: np.array,
     smooth_sigma = 2.0
 
     # Now, for each filtered line, we define a line perpendicular to it, then find the peaks in current along them
+
+    logger.info("finding traces...")
 
     for x1, y1, x2, y2 in filtered_lines:
         
@@ -922,6 +960,11 @@ def extract_working_point(lb_data: np.array,
 
     # First, we sort the points in order of increasing current
     
+    logger.info("selecting bias points...")
+
+    logger.info(f"filtered_lines: {len(filtered_lines)}")
+    logger.info(f"perp_candidates: {len(perp_candidates)}")
+
     perp_candidates.sort(key=lambda x: -x[0])
 
     # Then, we pick the top 4 points of highest current
@@ -944,6 +987,8 @@ def extract_working_point(lb_data: np.array,
         (round(vx, 3), round(vy, 3))
         for (_, vx, vy, _, _, _) in top_candidates
     ]
+
+    logger.info("selecting working points...")
 
     dist_to_pinch_off_corner = {}
 
@@ -974,6 +1019,8 @@ def extract_working_point(lb_data: np.array,
         
         dist_to_pinch_off_corner[tuple(cand_point)] = np.linalg.norm(cand_point - barrier_pinch_offs)
 
+    logger.info("defining perp traces...")
+
     perp_traces_for_plot = [
         tr for tr in perp_traces_for_plot
         if tr["trace_id"] in selected_trace_ids
@@ -982,6 +1029,9 @@ def extract_working_point(lb_data: np.array,
     # Now, we overlay perpendicular traces (strictly clipped to BL quadrant)
     
     for tr in perp_traces_for_plot:
+
+        logger.info("for loop!")
+
         vx = np.interp(tr["px"], x_index_arr, lb_voltages)
         vy = np.interp(tr["py"], y_index_arr, rb_voltages)
 
@@ -992,9 +1042,13 @@ def extract_working_point(lb_data: np.array,
         if not np.any(in_quad):
             continue
 
+        logger.info("finding index!")
+
         idx = np.where(in_quad)[0]
         splits = np.where(np.diff(idx) > 1)[0]
         blocks = np.split(idx, splits + 1)
+
+        logger.info("getting peak!")
 
         peak_idx = tr.get("peak_idx", None)
         chosen_block = None
@@ -1013,9 +1067,16 @@ def extract_working_point(lb_data: np.array,
 
         tr["chosen_block"] = chosen_block
 
+    logger.info("finding closest candidate...")
+
+    logger.info(f"top_candidates: {len(top_candidates)}")
+    logger.info(f"dist_to_pinch_off_corner: {len(dist_to_pinch_off_corner)}")
+
     closest_candidate, closest_value = min(dist_to_pinch_off_corner.items(), key=lambda kv: kv[1])
 
     # ---------- Final Plotting ----------
+
+    logger.info("Plotting Results...")
 
     if plot_results:
 
@@ -1282,6 +1343,11 @@ def extract_working_point(lb_data: np.array,
         #     new_ymax = max(ymax, max(sy_vals) + pad_y)
         #     ax.set_xlim(new_xmin, new_xmax)
         #     ax.set_ylim(new_ymin, new_ymax)
+
+        filepath = os.path.join(filepath, filename)
+        fig.savefig(filepath, dpi = 'figure', bbox_inches='tight')
+
+        logger.info("Figure saved!")
 
         plt.close(fig)
 
@@ -1866,6 +1932,8 @@ def extract_working_point(lb_data: np.array,
             
         plt.title("Hough Transform Lines from Filtered Ridges")
         plt.show()
+
+    logger.info("Returning...")
 
     if DotTuning == 'Triple Dot':
         return best_shifted_point, shifted_points, perp_traces_for_plot, fig

@@ -18,6 +18,7 @@ import time
 from instrument_handler import create_buffer_instance
 import time
 from experiment_handler import get_experiment_handler
+from autotuning_handler import get_autotuning_handler
 from qcodes.station import Station
 from qcodes.instrument_drivers.mock_instruments import DummyInstrument
 from qcodes.instrument import Instrument
@@ -26,7 +27,10 @@ import random
 import os, sys
 from tunerlog import TunerLog
 from experiment_base import SweepParam, SweepLayer, Sweep
-from autotuning_protocol import Protocol, Bootstrapping, GlobalChargeTuning, VirtualGating, ChargeStateTuning
+from autotuning_protocol import Protocol
+from tunerlog import TunerLog
+
+logger = TunerLog('GUI')
 
 
 class RandomDummy(DummyInstrument):
@@ -67,12 +71,13 @@ class tuner_gui:
         self.logger = TunerLog("TunerGUI")
         self.start_time = time.monotonic()
 
-        self.station = Station(config_file = "../configs/Intel_Config_Test.yaml")
+        self.station = Station(config_file = "../configs/test_station.yaml")
         self.station_lock = threading.Lock()
 
         self.instrument_handler = create_buffer_instance(self.station, self.station_lock) 
 
         self.experiment_handler = get_experiment_handler()
+        self.autotuning_handler = get_autotuning_handler()
 
         def init_agilent(instrument: Instrument, *args):
             instrument.NPLC(1.0)
@@ -82,8 +87,6 @@ class tuner_gui:
             
             instrument.add_spi_module(8, 'D5a', 'module1')
             instrument.add_spi_module(7, 'D5a', 'module2')
-            args[0].instrument_snapshot(instrument.module1.dac0)
-            instrument.module2.dac14(0.01)
             return
 
         self.instrument_handler.add_instrument("agilent_left", init_agilent)
@@ -94,7 +97,6 @@ class tuner_gui:
         self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
 
         self.abort_signal = threading.Event()
-        
 
     # The below methods define the layout of the GUI
 
@@ -166,20 +168,20 @@ class tuner_gui:
 
                         ui.label('Debug / Manual Controls')
 
-                        ui.button(
+                        """ ui.button(
                             'Run Test Sweep',
                             on_click=self.run_test_sweep
-                        )
+                        ) """
                         
                         ui.button(
                             'Run Test Sweep 2',
                             on_click=self.run_test_sweep_2
                         )
 
-                        ui.button(
+                        """ ui.button(
                             'Run Test Sweep 3',
                             on_click=self.run_test_sweep_3
-                        )
+                        ) """
 
                         ui.button(
                             'Run Bootstrapping',
@@ -225,8 +227,7 @@ class tuner_gui:
                 ih.read_buffer([
                     'agilent_left.volt',
                     'agilent_right.volt'
-                ]),
-                ['agilent_left.volt', 'agilent_right.volt']
+                ])
             )
         )
 
@@ -260,21 +261,21 @@ class tuner_gui:
             layers=[
                 SweepLayer(
                     targets=[
-                        SweepParam('spi_rack.module1.dac2.voltage', 0.0, 0.3)
+                        SweepParam('spi_rack.module2.dac13.voltage', 0.0, 0.3)
                     ],
                     num_points=20,
                     measurement_time=0.05
                 ),
                 SweepLayer(
                     targets=[
-                        SweepParam('spi_rack.module1.dac1.voltage', 0.0, 0.3)
+                        SweepParam('spi_rack.module2.dac15.voltage', 0.0, 0.3)
                     ],
                     num_points=20,
                     measurement_time=0.05
                 ),
                 SweepLayer(
                     targets=[
-                        SweepParam('spi_rack.module1.dac0.voltage', 0.0, 0.3)
+                        SweepParam('spi_rack.module2.dac14.voltage', 0.0, 0.3)
                     ],
                     num_points=20,
                     measurement_time=0.05
@@ -364,14 +365,11 @@ class tuner_gui:
         self.debug_status.set_text("Running Bootstrapping...")
         self.logger.info("Bootstrapping Jobs queued")
 
-        protocol = Protocol(device_config = r"C:\Users\bennt\OneDrive\Documents\GitHub\QuantumDotControl\configs\Intel_Config_Test.yaml")
-
-        self.logger.info("Protocol Object Created")
-
-        bootstrapping = Bootstrapping(device_config = r"C:\Users\bennt\OneDrive\Documents\GitHub\QuantumDotControl\configs\Intel_Config_Test.yaml")
-
-        self.logger.info("Bootstrapping Completed!")
-
+        future = self.autotuning_handler.run_bootstrapping(device_config = r'C:\Users\BaughLaflamme\Documents\GitHub\QuantumDotControl\configs\Intel_Config.yaml',
+                                                           instrument_handler = self.instrument_handler,
+                                                           experiment_handler = self.experiment_handler,
+                                                           wait = False
+                                                          )
 
     def header(self):
         
@@ -475,7 +473,7 @@ class tuner_gui:
                 self.lines[j].set_ydata(data)
                 self.lines[j].set_xdata(times_offset)
                 self.ax.set_xlim(min(times_offset), max(times_offset))
-                self.ax.set_ylim(-0.5, 5.0)
+                self.ax.set_ylim(-0.5, 2.0)
 
             self.ax.legend(self.lines, keys, )
             self.liveplot.update()
@@ -546,6 +544,7 @@ class tuner_gui:
 
     def watchdog_timer(self):
         if not self.instrument_handler.watchdog():
+            logger.info("Watchdog Failed!")
             # Trigger a reset
             self.logger.error("Readout buffer watchdog detected a problem. Triggering a reset.")
             #python = sys.executable  # path to the Python interpreter

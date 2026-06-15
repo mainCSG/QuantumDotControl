@@ -21,12 +21,6 @@ from qcodes.dataset.dond.do_nd_utils import ActionsT
 from qcodes.parameters import ParameterBase
 import numpy.typing as npt
 
-import skimage
-from skimage.transform import probabilistic_hough_line
-from skimage.feature import canny
-from skimage.filters import threshold_otsu
-from skimage.morphology import diamond, rectangle  # noqa
-
 import logging
 from colorlog import ColoredFormatter
 import sys

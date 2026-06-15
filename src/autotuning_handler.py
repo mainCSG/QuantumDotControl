@@ -20,51 +20,53 @@ from typing import Tuple, Dict, Any, Literal, Protocol, Optional, Deque
 from qcodes.instrument import Instrument
 from tunerlog import TunerLog
 
-_ExperimentThreadInstance = None
-_ExperimentHandlerInstance = None
+from autotuning_protocol import Bootstrapping, GlobalChargeTuning, VirtualGating, ChargeStateTuning, QubitTuning
 
-logger = TunerLog('Expt. Control')
+_AutotuningThreadInstance = None
+_AutotuningHandlerInstance = None
 
-def create_experiment_thread():
-    global _ExperimentThreadInstance
+logger = TunerLog('Autotuning Handler')
 
-    if _ExperimentThreadInstance is None:
-        _ExperimentThreadInstance = ExperimentThread()
-        _ExperimentThreadInstance.run()
+def create_autotuning_thread():
+    global _AutotuningThreadInstance
 
-    return _ExperimentThreadInstance
+    if _AutotuningThreadInstance is None:
+        _AutotuningThreadInstance = AutotuningThread()
+        _AutotuningThreadInstance.run()
 
-def get_experiment_handler():
-    global _ExperimentHandlerInstance
+    return _AutotuningThreadInstance
 
-    if _ExperimentHandlerInstance is None:
-        thread = create_experiment_thread()
-        _ExperimentHandlerInstance = experiment_handler(thread)
+def get_autotuning_handler():
+    global _AutotuningHandlerInstance
 
-    return _ExperimentHandlerInstance
+    if _AutotuningHandlerInstance is None:
+        thread = create_autotuning_thread()
+        _AutotuningHandlerInstance = autotuning_handler(thread)
 
-class Expt_status(Enum):
+    return _AutotuningHandlerInstance
+
+class Auto_status(Enum):
             queued = "Queued"
             running = "Running"
             failed = "Failed"
             invalid = "Invalid"
 
-class ExperimentCallback(Protocol):
+class AutotuningCallback(Protocol):
     def __call__(self, instrument: Instrument, *args: Any) -> Any:
         ...
 
 @dataclass
-class experiment_job:
+class autotuning_job:
     future : TunerFuture
     when : float
     type : str
 
-class experiment_callback_job(experiment_job):
-    def __init__(self, future : TunerFuture, callback : ExperimentCallback, *args, when : float = -1):
+class autotuning_callback_job(autotuning_job):
+    def __init__(self, future : TunerFuture, callback : AutotuningCallback, *args, when : float = -1):
         self.callback : Callable[[Instrument], Any] = lambda inst: callback(inst, args)
         super().__init__(future, when, "instrument_callback")
 
-class ExperimentThread:
+class AutotuningThread:
 
     def __init__(self):
 
@@ -72,7 +74,7 @@ class ExperimentThread:
         self.abort_event =  threading.Event()
         self.shutdown_event = threading.Event()
         self.job_queue = PriorityQueue()
-        self.THREAD_NAME = "ExperimentThread"
+        self.THREAD_NAME = "AutotuningThread"
         self.thread = threading.Thread(target = self.__thread_loop__, name = self.THREAD_NAME)
     
     def run(self):
@@ -81,32 +83,15 @@ class ExperimentThread:
     
     def join(self):
 
-        print("Stopping the experiment thread...")
+        print("Stopping the autotuning thread...")
         self.shutdown_event.set()
         self.thread.join()
     
     def __assert_correct_thread__(self):
 
-        assert threading.current_thread().name == self.THREAD_NAME, f"The current thread, {threading.current_thread().name}, is not the Experiment Thread." 
+        assert threading.current_thread().name == self.THREAD_NAME, f"The current thread, {threading.current_thread().name}, is not the Autotuning Thread." 
 
     def add_job(self,
-            f: Callable,
-            args: tuple = (),
-            priority: int = 1,
-            wait: bool = True,
-            timeout: float = None):
-
-        future = TunerFuture()
-        self.job_queue.put((priority, (f, args, future)))
-
-        self.job_event.set()
-
-        if wait:
-            return future.result(timeout)
-
-        return future
-
-    def add_job_old(self,
             f: Callable,
             args: tuple = (),
             priority: int = 1,
@@ -131,24 +116,7 @@ class ExperimentThread:
     
     def __thread_loop__(self):
 
-        print("Starting worker")
-
-        while not self.shutdown_event.is_set():
-
-            priority, (f, args, future) = self.job_queue.get()
-
-            try:
-                result = f(*args, self.abort_event)
-
-            except Exception as e:
-                future.set_exception(e)
-
-            else:
-                future.set_result(result)
-
-            self.job_queue.task_done()
-
-    def __thread_loop__old(self):
+        print("Starting the Autotuning Thread Worker")
 
         while not self.shutdown_event.is_set():
 
@@ -160,7 +128,7 @@ class ExperimentThread:
                     while not self.job_queue.empty(): 
                         try: 
                             _, (_, _, future) = self.job_queue.get_nowait() 
-                            future.set_exception(RuntimeError("Experiment aborted")) 
+                            future.set_exception(RuntimeError("Autotuning Stage aborted")) 
                             self.job_queue.task_done() 
                         except: 
                             break 
@@ -182,45 +150,100 @@ class ExperimentThread:
             # reset event once queue is empty
             self.job_event.clear()
 
-class experiment_handler:
+        logger.info("Exiting Thread!")
 
-    def __init__(self, experiment_thread):
-        self.experiment_thread = experiment_thread
+class autotuning_handler:
 
-    def do_sweep(self,
-                sweep,
+    def __init__(self, autotuning_thread):
+        self.autotuning_thread = autotuning_thread
+
+    def run_bootstrapping(self,
+                device_config,
                 instrument_handler,
-                filename,
-                current_setpoints = {},
+                experiment_handler,
                 wait: bool = True,
-                timeout: float = 60000):
-
-        logger.info("Sweep Start!")
+                timeout: float = 6000):
 
         def sweep_fn(abort_event):
-            result = sweep.run(instrument_handler, abort_event, filename, current_setpoints)
-
+            result = Bootstrapping(device_config = device_config,
+                                   instrument_handler = instrument_handler,
+                                   experiment_handler = experiment_handler
+                                  )
             return result
 
-        return self.experiment_thread.add_job(
+        return self.autotuning_thread.add_job(
                                               sweep_fn,
                                               args=(),
                                               wait=wait,
                                               timeout=timeout
                                              )
         
-    def set_voltage_configuration(self,
+    def run_global_charge_tuning(self,
                 sweep,
                 instrument_handler,
                 current_setpoints = {},
                 wait: bool = True,
-                timeout: float = 60000):
+                timeout: float = 60):
 
         def sweep_fn(abort_event):
-            result = sweep.set_voltage_configuration(instrument_handler, abort_event, current_setpoints)
+            result = GlobalChargeTuning()
             return result
 
-        return self.experiment_thread.add_job(
+        return self.autotuning_thread.add_job(
+                                              sweep_fn,
+                                              args=(),
+                                              wait=wait,
+                                              timeout=timeout
+                                             )
+
+    def run_virtual_gating(self,
+                sweep,
+                instrument_handler,
+                current_setpoints = {},
+                wait: bool = True,
+                timeout: float = 60):
+
+        def sweep_fn(abort_event):
+            result = VirtualGating()
+            return result
+
+        return self.autotuning_thread.add_job(
+                                              sweep_fn,
+                                              args=(),
+                                              wait=wait,
+                                              timeout=timeout
+                                             )
+    
+    def run_charge_state_tuning(self,
+                sweep,
+                instrument_handler,
+                current_setpoints = {},
+                wait: bool = True,
+                timeout: float = 60):
+
+        def sweep_fn(abort_event):
+            result = ChargeStateTuning()
+            return result
+
+        return self.autotuning_thread.add_job(
+                                              sweep_fn,
+                                              args=(),
+                                              wait=wait,
+                                              timeout=timeout
+                                             )
+    
+    def run_qubit_tuning(self,
+                sweep,
+                instrument_handler,
+                current_setpoints = {},
+                wait: bool = True,
+                timeout: float = 60):
+
+        def sweep_fn(abort_event):
+            result = QubitTuning()
+            return result
+
+        return self.autotuning_thread.add_job(
                                               sweep_fn,
                                               args=(),
                                               wait=wait,

@@ -70,6 +70,7 @@ class TunerFuture:
                 raise self._exception
             return self._result
         else:
+            logger.info("Timeout Reached!")
             raise TimeoutError("Future timed out while waiting for result")
     
 @dataclass
@@ -272,7 +273,7 @@ class instrument_thread:
         while self.job_queue.qsize() > 0 and count > 0:
             curr_time = time.monotonic()
             job = self.job_queue.get()
-            logger.debug("Instrument '%s', processing job %r", self.instrument.name, job)
+            #logger.debug("Instrument '%s', processing job %r", self.instrument.name, job)
 
             if job.when > curr_time and (job.when > 0):
                 self.job_queue.put(job)

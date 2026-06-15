@@ -2004,11 +2004,15 @@ def extract_tunnel_barrier_latching(dp_data: np.array,
     if negative_peak_count == 0:
         barrier_voltage_set_point = tb_data.min()
         return best_sens_pts_list, all_sens_pts_list, barrier_voltage_set_point
+    if negative_peak_count == num_traces:
+        barrier_voltage_set_point = tb_data.max()
+        return best_sens_pts_list, all_sens_pts_list, barrier_voltage_set_point
 
     final_number = negative_peak_count_list[-1]
     first_index = negative_peak_count_list.index(final_number)
     second_index = negative_peak_count_list.index(final_number, first_index + 1)
     barrier_voltage_set_point = trace_y_values[second_index]
+
     return best_sens_pts_list, all_sens_pts_list, barrier_voltage_set_point
 
 def extract_lever_arms(data: pd.DataFrame,

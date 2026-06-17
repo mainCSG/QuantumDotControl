@@ -50,7 +50,7 @@ from qcodes.parameters import ParameterBase
 from nicegui import ui
 from tunerlog import TunerLog
 
-logger = TunerLog('Data Analysis')
+# logger = TunerLog('Data Analysis')
   
 def logarithmic(x, a, b, x0, y0):
     
@@ -93,6 +93,20 @@ def relu(x, a, x0):
     """ReLU-style model that is zero below x0 and linear above it."""
     return np.maximum(0, a * (x - x0))
 
+def gompertz(x, a, b, c):
+    """
+    Gompertz model used for curve fitting. Type of sigmoid used for asymmetry.
+
+    Parameters
+    -----------
+    x : np.array
+        independent variable array
+    a, b, c : float
+        fit parameters
+    
+    """
+    return a * np.exp(-b * np.exp(-c * x))
+
 def fit_to_function(x_data, 
                     y_data, 
                     function: Callable,
@@ -110,14 +124,14 @@ def fit_to_function(x_data,
     Returns:
         params: model parameter names
         popt: optimized parameter values
-        pcov: covariance matrix of parameter estimates
+        perr: Error of parameter estimates (square root of covariances)
     """
 
     if p0 is None:
-        popt, pcov = curve_fit(function, x_data, y_data)
+        popt, pcov = curve_fit(function, x_data, y_data, maxfev=10000)
         perr = np.sqrt(np.diag(pcov))
     else:
-        popt, pcov = curve_fit(function, x_data, y_data, p0=p0)
+        popt, pcov = curve_fit(function, x_data, y_data, p0=p0, maxfev=10000)
         perr = np.sqrt(np.diag(pcov))
     
     params = list(inspect.signature(function).parameters.keys())[1:]
@@ -126,7 +140,7 @@ def fit_to_function(x_data,
         for name, val, err in zip(params, popt, perr):
             print(f"{name} = {val:.3f} ± {err:.3f}")
 
-    return params, popt, pcov
+    return params, popt, perr
 
 def extract_turn_on_voltage(x_data: np.array,
                             y_data: np.array,
@@ -175,6 +189,11 @@ def extract_turn_on_voltage(x_data: np.array,
 
         fig, ax = plt.subplots(figsize=(8,6))
         ax.plot(x1, y1, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
+
+        filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+
+        fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
         ax.scatter(turnon_voltage, turnon_current, color='red', s=100, zorder=5, label='Turn-On Point')
         ax.legend(fontsize=24, frameon=False, loc='upper left')
 
@@ -199,23 +218,23 @@ def extract_turn_on_voltage(x_data: np.array,
 
         plt.tight_layout()
 
-        filepath = os.path.join(filepath, filename)
+        filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
 
-        fig.savefig(filepath, dpi = 'figure', bbox_inches='tight')
+        fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
         plt.close(fig)
 
     # --- Print summary ---
     #print(f"  Turn-on Voltage:  {turnon_voltage:.3f} V")
 
-    return turnon_voltage, fig
+    return turnon_voltage
 
 def extract_pinch_off_curve_ranges(x_data: np.array,
                            y_data: np.array,
                            noisefloor: float,
+                           gate_type: str,
                            filepath: str,
                            filename: str,
-                           debug: bool = False,
                            plot_results: bool = True):
     """Identify pinch-off and saturation voltage ranges for a sweep.
 
@@ -226,14 +245,19 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
 
     # --- Data definitions ---
     
+    # Converts to numpy array 
     x1 = np.array(x_data)
     y1 = np.array(y_data)
 
     if y1[0] < 0:
+        # Flips current sign if SD bias was inversed
         y1 = -y1
+
+    y1_norm = y1/np.max(y1) # Normalizes the data
 
     # --- Finding Pinch-off Voltage ---
 
+    # Ensures we scan the data from x-values closest to 0V to values away from it
     start_idx = int(np.argmin(np.abs(x1)))
     if start_idx == 0:
         step = 1
@@ -244,15 +268,15 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
         right_abs = abs(x1[start_idx + 1])
         step = 1 if right_abs >= left_abs else -1
 
-    scan_indices = np.arange(start_idx, len(x1), step) if step > 0 else np.arange(start_idx, -1, -1)
+    scan_indices = np.arange(start_idx, len(x1), step) if step > 0 else np.arange(start_idx, -1, -1) # mask to scan over
     x_scan = x1[scan_indices]
     y_scan = y1[scan_indices]
     
-    # 1. Use the first 5% of data points (closest to 0V) to characterize the noise floor
+    # Selects the first 5% of data points, closest to 0V, to see if there are oscillations from pinch-off
     baseline_window = max(5, int(0.05 * len(y_scan)))
     baseline_data = y_scan[:baseline_window]
-    baseline_mean = np.mean(baseline_data)
     baseline_std = np.std(baseline_data)
+    epsilon = 0.3
     total_signal_range = np.max(y_scan) - np.min(y_scan)
 
     # If the start already exhibits heavy oscillations relative to the total range,
@@ -260,8 +284,8 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
     if baseline_std > 0.02 * total_signal_range:
         pinch_off_pos = 0
     else:
-        # Otherwise, find where it cleanly breaks away from a quiet noise floor
-        departure_threshold = baseline_mean + max(3.0 * baseline_std, 0.008 * total_signal_range)
+        # Otherwise, find where the current goes above the noise floor
+        departure_threshold = noisefloor + epsilon
         pinch_off_pos = 0
         consecutive_points_needed = 3
         for i in range(len(y_scan) - consecutive_points_needed):
@@ -272,11 +296,11 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
     early_rise_threshold = max(3, int(0.05 * len(x_scan)))
     if pinch_off_pos <= early_rise_threshold or pinch_off_pos >= len(x_scan) - 1:
         idx_pinch_off = int(scan_indices[0])
-        pinch_off_pos = 0  # Sync position
+        pinch_off_pos = 0
     else:
         idx_pinch_off = int(scan_indices[pinch_off_pos])
 
-    # Local peak adjustment fallback (kept from your original architecture)
+    # Local peak adjustment fallback
     if 0 < pinch_off_pos < len(y_scan) - 1:
         if y_scan[pinch_off_pos] >= y_scan[pinch_off_pos - 1] and y_scan[pinch_off_pos] >= y_scan[pinch_off_pos + 1]:
             look_ahead = min(len(y_scan), pinch_off_pos + max(3, int(0.05 * len(y_scan))))
@@ -288,92 +312,74 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
                     pinch_off_pos = min_pos
                     idx_pinch_off = int(scan_indices[pinch_off_pos])
 
+    # Finds the voltage and current
     pinch_off_voltage = x1[idx_pinch_off]
-    pinch_off_current = y1[idx_pinch_off]
-    
-    # --- Finding Saturation Voltage using Smooth Derivatives ---
+    pinch_off_current = y1_norm[idx_pinch_off]
 
-    after_pinch = y_scan[pinch_off_pos:]
-    if len(after_pinch) < 5:
-        idx_sat = int(scan_indices[-1])
-        sat_voltage = x1[idx_sat]
-        sat_current = y1[idx_sat]
-        sat_threshold = None
-        sat_plateau_start = None
-    else:
-        dx = np.abs(np.diff(x_scan))
-        dx_mean = np.mean(dx) if len(dx) > 0 else 1.0
-        
-        window_length = min(15, len(after_pinch) // 3)
-        if window_length % 2 == 0:
-            window_length = max(3, window_length - 1)
-        window_length = max(3, window_length)
+    # --- Fit sigmoids (Gompertz function) ---
 
-        # Compute smooth 1st derivative
-        y_der = signal.savgol_filter(after_pinch, window_length=window_length, polyorder=2, deriv=1, delta=dx_mean)
-
-        # Characterize terminal tail behavior
-        tail_size = min(15, len(y_der) // 4)
-        end_slopes = y_der[-tail_size:]
-        mean_end_slope = np.mean(end_slopes)
-        std_end_slope = np.std(end_slopes)
-
-        # Use the 90th percentile of the derivative instead of the absolute maximum.
-        # This completely filters out the impact of an isolated giant climbing spike.
-        robust_max_slope = np.percentile(np.abs(y_der), 90)
-        slope_threshold = max(mean_end_slope + 3.0 * std_end_slope, 0.08 * robust_max_slope)
-
-        # Trace backward from the end point
-        suffix_start = len(after_pinch) - 1
-        while suffix_start > 0 and np.abs(y_der[suffix_start]) <= slope_threshold:
-            suffix_start -= 1
-
-        # Safeguard to prevent tracing back into the pinch-off region
-        if suffix_start <= 2:
-            suffix_start = len(after_pinch) - 1
-
-        sat_idx_scan = pinch_off_pos + suffix_start
-        idx_sat = int(scan_indices[sat_idx_scan])
-        
-        sat_voltage = x1[idx_sat]
-        sat_current = y1[idx_sat]
-        sat_threshold = y1[idx_sat]
-        sat_plateau_start = sat_voltage
-
-    # --- Fit sigmoids ---
-    params, popt, pcov = fit_to_function(x1, y1, sigmoid, print_results=False)
+    params, popt, pcov = fit_to_function(x1, y1_norm, gompertz, p0=[y1_norm.max() * 0.9, 1e5, 10], print_results=False) # For plotting
+    params2, popt2, pcov2 = fit_to_function(x1, y1, gompertz, p0=[y1_norm.max() * 0.9, 1e5, 10], print_results=False) # For fit calculations
 
     # --- Extract key points ---
    
-    A, B, V0, dV = popt
+    A, B, C = popt
+    A2, B2, C2 = popt2
 
-    y_fit = sigmoid(x1, *popt)
+    # Calculate parameters from fit
+    factor = np.log((3 + np.sqrt(5)) / 2)
+    fit_midpoint_voltage = np.log(B2) / C2
+    fit_pinch_off_voltage = fit_midpoint_voltage - (factor / C2)
+    fit_saturation_voltage = fit_midpoint_voltage + (factor / C2)
+    sat_voltage = None
+    sat_current = None
+
+    y_fit = gompertz(x1, *popt) # fit data for plotting
+
+    # Saturation voltage and current determination based on Gate type
+    if gate_type == 'Accumulation':
+        sat_voltage = fit_saturation_voltage
+        sat_current = y1_norm[np.argmax(np.isclose(x1, sat_voltage, atol=1e-3, rtol=1e-3))]
+        sat_label = 'Saturation Point'
+
+    elif gate_type == 'Plunger':
+        for y in np.flip(y1):
+            if np.isclose(y, A2, atol=1e-2, rtol=1e-2):
+                sat_idx = np.argmax(y1 == y)
+                sat_voltage = x1[sat_idx]
+                sat_current = y1_norm[sat_idx]
+                sat_label = 'Saturation Point'
+                break
+
+    elif gate_type == 'Barrier':
+        sat_voltage = fit_midpoint_voltage
+        sat_current = y1_norm[np.argmax(np.isclose(x1, sat_voltage, atol=1e-3, rtol=1e-3))]
+        sat_label = 'Midpoint'
+
+    else:
+        raise TypeError("The gate_type given isn't one of the following: 'Accumulation', 'Plunger', 'Barrier'")
 
     # --- Plot data ---
 
     if plot_results:
 
         fig, ax = plt.subplots(figsize=(8,6))
-        ax.plot(x1, y1, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
+        ax.plot(x1, y1_norm, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
+
+        filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+        fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
         ax.scatter(pinch_off_voltage, pinch_off_current, color='red', s=100, zorder=5, label='Pinch-off Point')
-        ax.scatter(sat_voltage, sat_current, color='green', s=100, zorder=5, label='Saturation Point')
+        ax.scatter(sat_voltage, sat_current, color='green', s=100, zorder=5, label=sat_label)
         ax.plot(x1, y_fit, '--', color='red', linewidth=2, label='Fitted Sigmoid')
-
-        if debug == True:
-
-            if sat_plateau_start is not None and sat_threshold is not None:
-                ax.axhline(sat_threshold, color='tab:green', linestyle='--', linewidth=1.25, alpha=0.85, label='Saturation Threshold')
-                ax.axvspan(sat_plateau_start, x1[scan_indices[-1]], color='tab:green', alpha=0.12)
-                ax.scatter(sat_plateau_start, sat_threshold, color='tab:green', marker='x', s=80, zorder=6, label='Saturation Start')
 
         ax.legend(fontsize=20, frameon=False, loc='upper left')
 
-        # --- Double-sided arrows showing full range (swapped positions) ---
+        # --- Double-sided arrows showing full range ---
 
         # Define arrow y-positions (swap positions)
 
-        y_arrow1 = ax.get_ylim()[1] + 0.05  # Device 1 arrow ABOVE
-        # y_arrow2 = ax.get_ylim()[0] - 0.01  # Device 2 arrow BELOW
+        y_arrow1 = ax.get_ylim()[1] + 0.05  # Device 1 arrow
 
         # Device 1 arrow (now above)
         
@@ -385,14 +391,13 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
         ax.text((sat_voltage + pinch_off_voltage)/2, y_arrow1 - 0.05*(ax.get_ylim()[1]-ax.get_ylim()[0]),
                 s='', color='C0', ha='center', va='top', fontsize=20)
 
-        # --- Characteristic vertical lines extending exactly to the data points ---
+        # --- Characteristic vertical lines extending to the data points ---
 
-        y_pinch1 = y1[np.where(x1 == pinch_off_voltage)][0]
-        y_sat1   = y1[np.where(x1 == sat_voltage)][0]
+        y_pinch1 = y1_norm[np.argmax(np.isclose(x1, pinch_off_voltage, atol=1e-3))]
 
         for color, po, sat, label, y_arrow, direction, y_pinch, y_sat in [
             # Device 1 → arrow above, extend down to data
-            ('C0', pinch_off_voltage, sat_voltage, 'Device 1', y_arrow1, 'down', y_pinch1, y_sat1)
+            ('C0', pinch_off_voltage, sat_voltage, 'Device 1', y_arrow1, 'down', y_pinch1, sat_current)
         ]:
             if direction == 'up':
                 # Extend upward from arrow to the y-values of the fitted curve
@@ -405,7 +410,15 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
 
         # --- Labels and formatting ---
 
-        ax.set_xlabel(r'V$_{gate}$ (V)', fontsize=35)
+        if gate_type == 'Plunger':
+            ax.set_xlabel(r'V$_{Plunger}$ (V)', fontsize=35)
+
+        elif gate_type == 'Accumulation':
+            ax.set_xlabel(r'V$_{Accumulation}$ (V)', fontsize=35)
+
+        elif gate_type == 'Barrier':
+            ax.set_xlabel(r'V$_{Barrier}$ (V)', fontsize=35)
+        
         ax.set_ylabel('I (nA)', fontsize=35)
 
         ax.minorticks_on()
@@ -417,10 +430,10 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
         ax.set_xticks(xticks_span)
         ax.set_xticklabels([f'{xticks_span[0]:.2f}', '', f'{xticks_span[2]:.2f}', '', f'{xticks_span[-1]:.2f}'], fontsize=25)
 
-        yticks_span = np.linspace(y1.min(), y1.max(), 5)
+        yticks_span = np.linspace(y1_norm.min(), y1_norm.max(), 5)
 
         ax.set_yticks(yticks_span)
-        ax.set_yticklabels([f'{yticks_span[0]:.2f}', '', '', '', f'{yticks_span[-1]:.3f}'], fontsize=25)
+        ax.set_yticklabels([f'{y1.min():.2f}', '', '', '', f'{y1.max():.3f}'], fontsize=25)
 
         # Extend y-limits slightly to make space for arrows
 
@@ -429,20 +442,14 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
 
         plt.tight_layout()
 
-        filepath = os.path.join(filepath, filename)
-        fig.savefig(filepath, dpi = 'figure', bbox_inches='tight')
+        filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+        fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
         plt.close(fig)
 
-    # --- Print summary ---
-
-    """print(f"  Saturation Voltage: {sat_voltage:.3f} V")
-    print(f"  Midpoint Voltage:   {V0:.3f} V")
-    print(f"  Pinch-off Voltage:  {pinch_off_voltage:.3f} V\n") """
-
     voltage_window = (pinch_off_voltage, sat_voltage)
 
-    return voltage_window, fig
+    return voltage_window
 
 def extract_max_conductance_points(x_data: np.array,
                                    y_data: np.array,
@@ -472,14 +479,7 @@ def extract_max_conductance_points(x_data: np.array,
     # --- Find two largest and two smallest conductance points (positive + negative extremes) ---
 
     peak_idx_pos, _ = signal.find_peaks(dIdV, height = peak_height[0], prominence = peak_prominence[0], width=peak_width[0])
-    peak_idx_neg, test_props = signal.find_peaks(-dIdV, height = peak_height[1], prominence = peak_prominence[1], width=peak_width[1])
-
-    # for idx, p in enumerate(peak_idx_neg):
-    #     # If the coordinate is near your dip (around V_P = 1.35 V)
-    #     if 1.30 < x1[p] < 1.39:
-    #         print(f"Negative Dip found at V_P = {x1[p]:.3f} V")
-    #         print(f" -> Measured Prominence: {test_props['prominences'][idx]:.2f}")
-    #         print(f" -> Measured Width:      {test_props['widths'][idx]:.2f}")
+    peak_idx_neg, _ = signal.find_peaks(-dIdV, height = peak_height[1], prominence = peak_prominence[1], width=peak_width[1])
 
     peak_idx = np.sort(np.concatenate([peak_idx_pos, peak_idx_neg]))
 
@@ -732,28 +732,6 @@ def extract_working_point(lb_data: np.array,
         line_gap=hough_gap
     )
 
-    # roi = None
-    # roi_offset = (0, 0)
-    # if device_type == 'electron' and x_idx_mid > 5 and y_idx_mid > 5:
-    #     roi = ridge_masked[y_idx_mid:, :x_idx_mid]
-    #     roi_offset = (0, y_idx_mid)
-    # elif device_type == 'hole' and x_idx_mid < nx - 5 and y_idx_mid < ny - 5:
-    #     roi = ridge_masked[:y_idx_mid, x_idx_mid:]
-    #     roi_offset = (x_idx_mid, 0)
-
-    # if roi is not None and roi.size > 0:
-    #     extra_lines = transform.probabilistic_hough_line(
-    #         roi,
-    #         threshold=max(5, hough_threshold - 3),
-    #         line_length=max(8, int(minLineLength * 0.12)),
-    #         line_gap=max(1, int(maxLineGap * 0.05))
-    #     )
-    #     for p0, p1 in extra_lines:
-    #         lines.append((
-    #             (p0[0] + roi_offset[0], p0[1] + roi_offset[1]),
-    #             (p1[0] + roi_offset[0], p1[1] + roi_offset[1])
-    #         ))
-
     # if not lines:
     #     return []
 
@@ -795,21 +773,6 @@ def extract_working_point(lb_data: np.array,
                 line_candidates.append((score, (*p0, *p1)))
         line_candidates.sort(key=lambda item: -item[0])
         filtered_lines = [entry[1] for entry in line_candidates]
-
-    # if not filtered_lines and roi is not None and roi.size > 0:
-    #     for alt_img in [band_passed, G_uint, ridge_norm]:
-    #         alt_roi = alt_img[:y_idx_mid, :x_idx_mid] if device_type == 'electron' else alt_img[y_idx_mid:, x_idx_mid:]
-    #         extra_lines = transform.probabilistic_hough_line(
-    #             alt_roi,
-    #             threshold=max(4, hough_threshold - 4),
-    #             line_length=max(8, int(minLineLength * 0.12)),
-    #             line_gap=max(1, int(maxLineGap * 0.05))
-    #         )
-    #         for p0, p1 in extra_lines:
-    #             lines.append((
-    #                 (p0[0] + roi_offset[0], p0[1] + roi_offset[1]),
-    #                 (p1[0] + roi_offset[0], p1[1] + roi_offset[1])
-    #             ))
 
         line_candidates = []
         for p0, p1 in lines:
@@ -1092,6 +1055,9 @@ def extract_working_point(lb_data: np.array,
             cmap='coolwarm'
         )
 
+        filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+        fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
         # Set axis limits
         ax.set_xlim(lb_data.min(), lb_data.max())
         ax.set_ylim(rb_data.min(), rb_data.max())
@@ -1329,23 +1295,8 @@ def extract_working_point(lb_data: np.array,
 
         ax.set_box_aspect(0.775)
 
-        # If any shifted points lie outside current axis limits, expand limits slightly
-        # if len(shifted_points) > 0:
-        #     sx_vals = [p[0] for p in shifted_points]
-        #     sy_vals = [p[1] for p in shifted_points]
-        #     xmin, xmax = ax.get_xlim()
-        #     ymin, ymax = ax.get_ylim()
-        #     pad_x = 0.02 * (xmax - xmin) if (xmax - xmin) != 0 else 0.01
-        #     pad_y = 0.02 * (ymax - ymin) if (ymax - ymin) != 0 else 0.01
-        #     new_xmin = min(xmin, min(sx_vals) - pad_x)
-        #     new_xmax = max(xmax, max(sx_vals) + pad_x)
-        #     new_ymin = min(ymin, min(sy_vals) - pad_y)
-        #     new_ymax = max(ymax, max(sy_vals) + pad_y)
-        #     ax.set_xlim(new_xmin, new_xmax)
-        #     ax.set_ylim(new_ymin, new_ymax)
-
-        filepath = os.path.join(filepath, filename)
-        fig.savefig(filepath, dpi = 'figure', bbox_inches='tight')
+        filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+        fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
         logger.info("Figure saved!")
 
@@ -1936,9 +1887,9 @@ def extract_working_point(lb_data: np.array,
     logger.info("Returning...")
 
     if DotTuning == 'Triple Dot':
-        return best_shifted_point, shifted_points, perp_traces_for_plot, fig
+        return best_shifted_point, shifted_points, perp_traces_for_plot
     elif DotTuning == 'SET':
-        return best_shifted_point, perp_bias_points, perp_traces_for_plot, fig
+        return best_shifted_point, perp_bias_points, perp_traces_for_plot
 
 def extract_tunnel_barrier_latching(dp_data: np.array,
                                     tb_data: np.array,

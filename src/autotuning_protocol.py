@@ -599,24 +599,26 @@ class Bootstrapping(Protocol):
 
                 if self.device_gates[i]['type'].startswith('Dot'):
 
-                    result = self.pinch_off_iterative(gate_voltage = gate_voltage, 
-                                                      final_voltage = triple_dot_turn_on,
-                                                      gate_name = self.device_gates[i]['label'],
-                                                      gate_type = self.device_gates[i]['type'], 
-                                                      channel = self.device_gates[i]['channel'],
-                                                      num_points = num_points)
+                    result = self.pinch_off_individual(gate_voltage = gate_voltage, 
+                                                       final_voltage = 0.0,
+                                                       gate_name = self.device_gates[i]['label'],
+                                                       gate_type = self.device_gates[i]['type'], 
+                                                       channel = self.device_gates[i]['channel'],
+                                                       num_points = num_points
+                                                      )
 
                     pinch_off_voltages.append(result[0])
                     saturation_voltages.append(result[1])
 
                 elif self.device_gates[i]['type'].startswith('Sensor'):
 
-                    result = self.pinch_off_iterative(gate_voltage = gate_voltage, 
-                                                      final_voltage = SET_turn_on, 
-                                                      gate_name = self.device_gates[i]['label'],
-                                                      gate_type = self.device_gates[i]['type'],
-                                                      channel = self.device_gates[i]['channel'],
-                                                      num_points = num_points)
+                    result = self.pinch_off_individual(gate_voltage = gate_voltage, 
+                                                       final_voltage = 0.0, 
+                                                       gate_name = self.device_gates[i]['label'],
+                                                       gate_type = self.device_gates[i]['type'],
+                                                       channel = self.device_gates[i]['channel'],
+                                                       num_points = num_points
+                                                      )
 
                     pinch_off_voltages.append(result[0])
                     saturation_voltages.append(result[1])
@@ -724,24 +726,26 @@ class Bootstrapping(Protocol):
 
                 if self.device_gates[i]['type'].startswith('Dot'):
 
-                    result = self.pinch_off_iterative(gate_voltage = gate_voltage, 
-                                                      final_voltage = triple_dot_turn_on,
-                                                      gate_name = self.device_gates[i]['label'],
-                                                      gate_type = self.device_gates[i]['type'], 
-                                                      channel = self.device_gates[i]['channel'],
-                                                      num_points = num_points)
+                    result = self.pinch_off_individual(gate_voltage = gate_voltage, 
+                                                       final_voltage = 0.0,
+                                                       gate_name = self.device_gates[i]['label'],
+                                                       gate_type = self.device_gates[i]['type'], 
+                                                       channel = self.device_gates[i]['channel'],
+                                                       num_points = num_points
+                                                      )
 
                     barrier_pinch_off_voltages.append(result[0])
                     barrier_saturation_voltages.append(result[1])
 
                 elif self.device_gates[i]['type'].startswith('Sensor'):
 
-                    result = self.pinch_off_iterative(gate_voltage = gate_voltage, 
-                                                      final_voltage = SET_turn_on, 
-                                                      gate_name = self.device_gates[i]['label'],
-                                                      gate_type = self.device_gates[i]['type'],
-                                                      channel = self.device_gates[i]['channel'],
-                                                      num_points = num_points)
+                    result = self.pinch_off_individual(gate_voltage = gate_voltage, 
+                                                       final_voltage = 0.0, 
+                                                       gate_name = self.device_gates[i]['label'],
+                                                       gate_type = self.device_gates[i]['type'],
+                                                       channel = self.device_gates[i]['channel'],
+                                                       num_points = num_points
+                                                      )
 
                     barrier_pinch_off_voltages.append(result[0])
                     barrier_saturation_voltages.append(result[1])        
@@ -750,144 +754,125 @@ class Bootstrapping(Protocol):
 
         return barrier_pinch_off_voltages, barrier_saturation_voltages
 
-    def pinch_off_iterative(self, gate_voltage, final_voltage, gate_name, gate_type, channel, num_points):
+    def pinch_off_individual(self, gate_voltage, final_voltage, gate_name, gate_type, channel, num_points):
 
         """
-        Iteratively sweeps a single gate, stepping the endpoint lower by `step` volts
-        on each failed attempt, until pinch-off is confirmed or lower_bound is reached.
+        Sweeps a single gate to determine pinch-off.
 
         Returns a (pinch_off_voltage, saturation_voltage) tuple on success, or (None, None) on failure.
         """
 
-        while final_voltage >= 0.0:
+        sparam = SweepParam(parameter = channel, 
+                            start = gate_voltage, 
+                            end = final_voltage
+        )
 
-            sparam = SweepParam(parameter = channel, 
-                                start = gate_voltage, 
-                                end = final_voltage
+        sweep_layer = SweepLayer(targets = [sparam], 
+                                    num_points = num_points, 
+                                    measurement_time = 0.2
+        )
+        
+        measure = lambda ih, sp: (
+            ih.read_buffer([
+                'agilent_left.volt',
+                'agilent_right.volt'
+            ]),
+            ['agilent_left.volt', 'agilent_right.volt']
+        
+        )
+
+        sweep = Sweep([sweep_layer], measure)
+
+        time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        filename = f"{gate_name}_Pinch_Off_{time_str}.csv"
+        filename2 = f"{gate_name}_Pinch_Off_{time_str}.png"
+
+        logger.info(f"{gate_name} sweeping to {final_voltage} V...")
+
+        self.experiment_handler.do_sweep(sweep = sweep,
+                                            instrument_handler = self.instrument_handler,
+                                            filename = filename)
+        
+        logger.info(f"{gate_name} Pinch-Off Complete! Confirming Pinch-Off...")
+
+        pinch_off_measurement = self.measure_noise_floor()
+        
+        names = list(self.instrument_handler.read_buffer(
+            ['agilent_left.volt', 'agilent_right.volt']
+        ).keys())
+
+        """ 
+        Now, we compare the means of each measurement. 
+        If the mean measured after Pinch_Off is comparable the noise floor mean, 
+        then we say that the device has Pinched Off.
+        
+        """
+
+        noise_floor_idx = None
+
+        if gate_type.startswith('Dot'):
+
+            mean = pinch_off_measurement[names[0] + "_mean"]
+            noise_floor_idx = 0
+        
+        else:
+            
+            mean = pinch_off_measurement[names[1] + "_mean"]
+            noise_floor_idx = 1
+
+        # The pinched condition translates to the difference in the means being less than 300 pA.
+
+        pinched = abs(mean - abs(self.means[noise_floor_idx])) < 3e-2
+
+        sparam_return = SweepParam(parameter = channel, 
+                                    start = final_voltage, 
+                                    end = gate_voltage)
+        
+        sweep_layer_return = SweepLayer(targets = [sparam_return], 
+                                        num_points = num_points, 
+                                        measurement_time = 0.1)
+        
+        measure_return = lambda ih, sp: (
+            ih.read_buffer([
+                'agilent_left.volt',
+                'agilent_right.volt'
+            ]),
+            ['agilent_left.volt', 'agilent_right.volt']
+        
+        )
+        
+        self.experiment_handler.set_voltage_configuration(sweep = Sweep([sweep_layer_return], measure_return),
+                                                            instrument_handler = self.instrument_handler)
+        
+        logger.info(f"{gate_name} returned to {gate_voltage} V.")
+
+        if pinched:
+
+            logger.info(f"{gate_name} Pinch-Off confirmed! Finding Pinch-Off Window...")
+
+            filepath = os.path.join(self.directory, filename)
+            df = pd.read_csv(filepath, delimiter=",", header=None, skiprows=1)
+
+            pinch_off_sweep = df.iloc[:, 0]
+            data = [df.iloc[:, -2] * self.triple_dot_preamp_sensitivity * 1e9, df.iloc[:, -1] * self.SET_preamp_sensitivity * 1e9]
+
+            pinch_off_window, fig = extract_pinch_off_curve_ranges(
+                x_data = pinch_off_sweep,
+                y_data = data[noise_floor_idx],
+                noisefloor = self.means[noise_floor_idx],
+                filepath = self.directory,
+                filename = filename2
             )
 
-            sweep_layer = SweepLayer(targets = [sparam], 
-                                     num_points = num_points, 
-                                     measurement_time = 0.2
-            )
-            
-            measure = lambda ih, sp: (
-                ih.read_buffer([
-                    'agilent_left.volt',
-                    'agilent_right.volt'
-                ]),
-                ['agilent_left.volt', 'agilent_right.volt']
-            
-            )
+            logger.info(f"{pinch_off_window}")
 
-            sweep = Sweep([sweep_layer], measure)
+            return pinch_off_window
 
-            time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"{gate_name}_Pinch_Off_{time_str}.csv"
-            filename2 = f"{gate_name}_Pinch_Off_{time_str}.png"
+        else:
 
-            logger.info(f"{gate_name} sweeping to {final_voltage} V...")
+            logger.info(f"{gate_name} did not pinch off at {final_voltage} V. Pinch-Off Failed. Returning None...")
 
-            self.experiment_handler.do_sweep(sweep = sweep,
-                                             instrument_handler = self.instrument_handler,
-                                             filename = filename)
-            
-            logger.info(f"{gate_name} Pinch-Off Complete! Confirming Pinch-Off...")
-
-            pinch_off_measurement = self.measure_noise_floor()
-            
-            names = list(self.instrument_handler.read_buffer(
-                ['agilent_left.volt', 'agilent_right.volt']
-            ).keys())
-
-            """ 
-            Now, we compare the means of each measurement. 
-            If the mean measured after Pinch_Off is comparable the noise floor mean, 
-            then we say that the device has Pinched Off.
-            
-            """
-
-            noise_floor_idx = None
-
-            if gate_type.startswith('Dot'):
-
-                mean = pinch_off_measurement[names[0] + "_mean"]
-                noise_floor_idx = 0
-            
-            else:
-                
-                mean = pinch_off_measurement[names[1] + "_mean"]
-                noise_floor_idx = 1
-
-            # The pinched condition translates to the difference in the means being less than 300 pA.
-
-            pinched = abs(mean - abs(self.means[noise_floor_idx])) < 3e-2
-
-            sparam_return = SweepParam(parameter = channel, 
-                                       start = final_voltage, 
-                                       end = gate_voltage)
-            
-            sweep_layer_return = SweepLayer(targets = [sparam_return], 
-                                            num_points = num_points, 
-                                            measurement_time = 0.1)
-            
-            measure_return = lambda ih, sp: (
-                ih.read_buffer([
-                    'agilent_left.volt',
-                    'agilent_right.volt'
-                ]),
-                ['agilent_left.volt', 'agilent_right.volt']
-            
-            )
-            
-            self.experiment_handler.set_voltage_configuration(sweep = Sweep([sweep_layer_return], measure_return),
-                                                              instrument_handler = self.instrument_handler)
-            
-            logger.info(f"{gate_name} returned to {gate_voltage} V.")
-
-            if pinched:
-
-                logger.info(f"{gate_name} Pinch-Off confirmed! Finding Pinch-Off Window...")
-
-                filepath = os.path.join(self.directory, filename)
-                df = pd.read_csv(filepath, delimiter=",", header=None, skiprows=1)
-
-                pinch_off_sweep = df.iloc[:, 0]
-                data = [df.iloc[:, -2] * self.triple_dot_preamp_sensitivity * 1e9, df.iloc[:, -1] * self.SET_preamp_sensitivity * 1e9]
-
-                pinch_off_window, fig = extract_pinch_off_curve_ranges(
-                    x_data = pinch_off_sweep,
-                    y_data = data[noise_floor_idx],
-                    noisefloor = self.means[noise_floor_idx],
-                    filepath = self.directory,
-                    filename = filename2
-                )
-
-                logger.info(f"{pinch_off_window}")
-
-                return pinch_off_window
-
-            else:
-
-                if final_voltage == 0.0:
-
-                    logger.info(f"{gate_name} did not pinch off at {final_voltage} V. Pinch-Off Failed. Returning None...")
-
-                    return (None, None)
-
-                logger.info(f"{gate_name} did not pinch off at {final_voltage} V. Stepping down by 200 mV...")
-
-                final_voltage -= 0.2
-
-                # We also need to check if the final voltage has dipped below 0.0. If yes, we set the final voltage to 0.0.
-
-                if final_voltage < 0.0:
-
-                    final_voltage = 0.0
-
-        logger.info(f"{gate_name} did not pinch off before reaching lower bound 0.0 V. Returning None...")
-
-        return (None, None)
+            return (None, None)
 
     def SET_current_check(self, minimum_current, maximum_current):
 
@@ -1104,7 +1089,7 @@ class Bootstrapping(Protocol):
         logger.info("Setting Initial Barrier Voltages...")
 
         future = self.experiment_handler.set_voltage_configuration(sweep = sweep,
-                                                                  instrument_handler = self.instrument_handler)
+                                                                   instrument_handler = self.instrument_handler)
 
         logger.info("Initial Barrier Voltages Set!")
 
@@ -1473,7 +1458,7 @@ class Bootstrapping(Protocol):
         logger.info("Setting Sensor Barriers to Working Point...")
 
         future = self.experiment_handler.set_voltage_configuration(sweep = sweep,
-                                                                  instrument_handler = self.instrument_handler)
+                                                                   instrument_handler = self.instrument_handler)
 
         logger.info("Sensor Barriers Set!")         
 
@@ -1533,7 +1518,7 @@ class Bootstrapping(Protocol):
         logger.info("Setting Initial Charge Sensor Plunger Voltages...")
 
         future = self.experiment_handler.set_voltage_configuration(sweep = sweep,
-                                                                  instrument_handler = self.instrument_handler)
+                                                                   instrument_handler = self.instrument_handler)
 
         logger.info("Initial Charge Sensor Plunger Voltages Set!")
 
@@ -1561,26 +1546,41 @@ class Bootstrapping(Protocol):
         
         logger.info(f"{sensor_plunger_targets}")
 
-        sweep_layer = SweepLayer(
-            targets = sensor_plunger_targets,
-            num_points = num_points,
-            measurement_time = 0.05
-        )
+        sensor_plunger_idx = 0
 
-        measure = lambda ih, sp: (
-                ih.read_buffer([
-                    'agilent_left.volt',
-                    'agilent_right.volt'
-                ]),
-                ['agilent_left.volt', 'agilent_right.volt']
-        )
+        for i in self.gates_to_dacs:
 
-        sweep = Sweep([sweep_layer], measure)
+            if self.device_gates[i]['type'] == 'Sensor Plunger':
+                
+                sweep_layer = SweepLayer(
+                    targets = sensor_plunger_targets[sensor_plunger_idx],
+                    num_points = num_points,
+                    measurement_time = 0.05
+                )
 
-        logger.info("Charge Sensor Plunger Sweep Starting...")
+                sensor_plunger_idx += 1
 
-        future = self.experiment_handler.do_sweep(sweep = sweep,
-                                                                  instrument_handler = self.instrument_handler)
+                measure = lambda ih, sp: (
+                        ih.read_buffer([
+                            'agilent_left.volt',
+                            'agilent_right.volt'
+                        ]),
+                        ['agilent_left.volt', 'agilent_right.volt']
+                )
+
+                sweep = Sweep([sweep_layer], measure)
+
+                logger.info("Charge Sensor Plunger Sweep Starting...")
+
+                gate_name = self.device_gates[i]['label']
+
+                time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                filename = f"{gate_name}_Sweep_{time_str}.csv"
+
+                future = self.experiment_handler.do_sweep(sweep = sweep,
+                                                          instrument_handler = self.instrument_handler,
+                                                          filename = filename
+                                                         )
         
         logger.info("Charge Sensor Plunger Sweep Complete! Finding Sensing Point...")
 
@@ -1609,7 +1609,7 @@ class Bootstrapping(Protocol):
 
     def coulomb_diamonds(self, lower_sd_voltages, upper_sd_voltages, lower_plunger_voltages, upper_plunger_voltages, num_points):
         
-        # First, we set our S/D biases to their lower thresholds
+        # First, we get our S/D biases to their lower thresholds
 
         sd_dacs_and_vals = {}
 
@@ -1626,6 +1626,8 @@ class Bootstrapping(Protocol):
                                             param,
                                             wait=True
                                             )
+
+        # We also get our plunger voltages to set them to their lower voltages
 
         plunger_dacs_and_vals = {}
 
@@ -1727,12 +1729,12 @@ class Bootstrapping(Protocol):
 
         sweep = Sweep([sweep_layer], measure)
 
-        logger.info("Setting Sensor Ohmics to Initial Points...")
+        logger.info("Setting Sensor Plungers to Initial Points...")
 
         future = self.experiment_handler.set_voltage_configuration(sweep = sweep,
                                                                    instrument_handler = self.instrument_handler)
 
-        logger.info("Sensor Ohmics Set!")
+        logger.info("Sensor Plungers Set!")
 
         # Now, we make the Coulomb Diamond Sweeps
 
@@ -1820,11 +1822,70 @@ class GlobalChargeTuning(Protocol):
     def __init__(self, device_config):
         super().__init__(device_config = device_config) 
 
-    def confirm_charge_transitions(self):
+    def confirm_charge_transitions(self, lower_plunger_voltages, upper_plunger_voltages, num_points):
 
         # First, we create our plunger sweeps
 
+        dot_plunger_dacs_and_vals = {}
+
+        for i in self.gates_to_dacs:
+
+            if self.device_gates[i]['type'] == 'Dot Plunger':
+
+                p = self.device_gates[i]['channel']
+
+                instr, param = p.split('.', 1)
+
+                dot_plunger_dacs_and_vals[i] = self.instrument_handler.get_parameter(
+                                            instr,
+                                            param,
+                                            wait=True
+                                            )   
+
+        logger.info(f"{dot_plunger_dacs_and_vals}")
+
         # Now, we sweep our plungers and read the SET current to determine if we can sense charge transitions
+
+        sensor_plunger_idx = 0
+
+        for i in self.gates_to_dacs:
+
+            if self.device_gates[i]['type'] == 'Dot Plunger':
+
+                p = self.device_gates[i]['channel']
+
+                sparam = SweepParam(
+                    parameter = p,
+                    start = lower_plunger_voltages[sensor_plunger_idx],
+                    end = upper_plunger_voltages[sensor_plunger_idx]
+                )
+
+                sweep_layer = SweepLayer(
+                targets = [sparam],
+                num_points = num_points,
+                measurement_time = 0.2
+                )
+
+                measure = lambda ih, sp: (
+                        ih.read_buffer([
+                            'agilent_left.volt',
+                            'agilent_right.volt'
+                        ]),
+                        ['agilent_left.volt', 'agilent_right.volt']
+                )
+
+                sweep = Sweep([sweep_layer], measure)
+
+                logger.info("Setting Sensor Plungers to Initial Points...")
+
+
+
+                future = self.experiment_handler.do_sweep(sweep = sweep,
+                                                          instrument_handler = self.instrument_handler,
+                                                          filename = filename
+                                                         )
+
+                logger.info("Sensor Plungers Set!")
 
         return
 

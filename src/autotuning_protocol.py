@@ -204,7 +204,7 @@ class Bootstrapping(Protocol):
             i += 0.1
             new_sat_voltages.append(i)
 
-        working_point = self.barrier_barrier_sweep(lower_voltages = pinch_off_voltages,
+        working_point, dot_barrier_set_points = self.barrier_barrier_sweep(lower_voltages = pinch_off_voltages,
                                                    upper_voltages = new_sat_voltages,
                                                    num_points = 200)
         
@@ -222,6 +222,14 @@ class Bootstrapping(Protocol):
                               lower_plunger_voltages = [0.7],
                               upper_plunger_voltages = [1.5], 
                               num_points = 100) """
+        
+        self.dot_plunger_lower_voltages = []
+
+        for i in dot_barrier_set_points:
+            
+            voltage = sum(i) / len(i)
+
+            self.dot_plunger_lower_voltages.append(voltage)
 
     def ground_device(self, instr_handler, exp_handler):
         
@@ -1400,7 +1408,7 @@ class Bootstrapping(Protocol):
             logger.info(f"Best: {best_point}")
             logger.info(f"{working_points}")
 
-            return best_point
+            return best_point, best_points
 
     def coulomb_blockade_sweep(self, sensor_barrier_voltages, lower_voltages, upper_voltages, num_points):
 
@@ -1606,6 +1614,8 @@ class Bootstrapping(Protocol):
                 conductance_points = extract_max_conductance_points(x_data = plunger_data, y_data = current_data)
 
         logger.info(f"{conductance_points}")
+
+        return conductance_points
 
     def coulomb_diamonds(self, lower_sd_voltages, upper_sd_voltages, lower_plunger_voltages, upper_plunger_voltages, num_points):
         
@@ -1817,16 +1827,218 @@ class Bootstrapping(Protocol):
             
             logger.info("Coulomb Diamond Sweep Complete! Finding Diamonds...")
 
-class GlobalChargeTuning(Protocol):
+class GlobalChargeTuning(Protocol, Bootstrapping):
 
-    def __init__(self, device_config):
-        super().__init__(device_config = device_config) 
+    def __init__(self, device_config, instrument_handler, experiment_handler):
+        
+        super().__init__(device_config = device_config, instrument_handler = instrument_handler, experiment_handler = experiment_handler) 
 
-    def confirm_charge_transitions(self, lower_plunger_voltages, upper_plunger_voltages, num_points):
+        confirmation = self.confirm_charge_transitions(lower_plunger_voltages = self.dot_plunger_lower_voltages, upper_plunger_voltages = [1.5, 1.5, 1.5], num_points = 200)
 
-        # First, we create our plunger sweeps
+        logger.info(f"{confirmation}")
+
+    def calibrate_countersweeping(self, lower_dot_plunger_voltages, upper_dot_plunger_voltages, lower_sensor_plunger_voltages, upper_sensor_plunger_voltages, num_points): 
+
+        # First, we get the current plunger gate voltages
 
         dot_plunger_dacs_and_vals = {}
+
+        sensor_plunger_dacs_and_vals = {}
+
+        for i in self.gates_to_dacs:
+
+            if self.device_gates[i]['type'] == 'Dot Plunger':
+
+                p = self.device_gates[i]['channel']
+
+                instr, param = p.split('.', 1)
+
+                dot_plunger_dacs_and_vals[i] = self.instrument_handler.get_parameter(
+                                            instr,
+                                            param,
+                                            wait=True
+                                            )
+
+            elif self.device_gates[i]['type'] == "Sensor Plunger":
+
+                p = self.device_gates[i]['channel']
+
+                instr, param = p.split('.', 1)
+
+                sensor_plunger_dacs_and_vals[i] = self.instrument_handler.get_parameter(
+                                            instr,
+                                            param,
+                                            wait=True
+                                            )
+
+        logger.info(f"{dot_plunger_dacs_and_vals}")
+
+        logger.info(f"{sensor_plunger_dacs_and_vals}")
+
+        # Now, we set our dot and sensor plungers to their initial values
+                
+        dot_plunger_targets = []
+
+        sensor_plunger_targets = []
+
+        endpoint_iter_dot = iter(lower_dot_plunger_voltages)
+
+        endpoint_iter_sensor = iter(lower_sensor_plunger_voltages)
+
+        for gate, dac_and_val in dot_plunger_dacs_and_vals.items():
+            for dac, starting_val in dac_and_val.items():
+
+                p = "spi_rack." + dac
+
+                dot_plunger_val = next(endpoint_iter_dot)
+
+                sparam = SweepParam(
+                    parameter = p,
+                    start = starting_val,
+                    end = dot_plunger_val
+                )
+
+                dot_plunger_targets.append(sparam)            
+
+        for gate, dac_and_val in sensor_plunger_dacs_and_vals.items():
+            for dac, starting_val in dac_and_val.items():
+
+                p = "spi_rack." + dac
+
+                dot_plunger_val = next(endpoint_iter_sensor)
+
+                sparam = SweepParam(
+                    parameter = p,
+                    start = starting_val,
+                    end = dot_plunger_val
+                )
+
+                sensor_plunger_targets.append(sparam)
+
+        sweep_layer = SweepLayer(
+            targets = dot_plunger_targets + sensor_plunger_targets,
+            num_points = num_points,
+            measurement_time = 0.1
+        )
+
+        measure = lambda ih, sp: (
+                ih.read_buffer([
+                    'agilent_left.volt',
+                    'agilent_right.volt'
+                ]),
+                ['agilent_left.volt', 'agilent_right.volt']
+        )
+
+        sweep = Sweep([sweep_layer], measure)
+
+        logger.info("Setting Initial Plunger Voltages...")
+
+        future = self.experiment_handler.set_voltage_configuration(sweep = sweep,
+                                                                   instrument_handler = self.instrument_handler)
+
+        logger.info("Initial Plunger Voltages Set!")
+
+        # Now, we construct 2D scans, in which the Sensor plunger is swept and the dot plungers are stepped
+
+        dot_plunger_targets = []
+
+        sensor_plunger_targets = []
+
+        dot_plunger_idx = 0
+
+        sensor_plunger_idx = 0
+
+        dot_plunger_names = []
+
+        sensor_plunger_names = []
+
+        for i in self.gates_to_dacs:
+
+            if self.device_gates[i]['type'] == 'Dot Plunger':
+
+                p = self.device_gates[i]['channel']
+
+                gate_name = self.device_gates[i]['label']
+
+                dot_plunger_names.append(gate_name)
+
+                sparam = SweepParam(
+                    parameter = p,
+                    start = lower_dot_plunger_voltages[dot_plunger_idx],
+                    end = upper_dot_plunger_voltages[dot_plunger_idx]
+                )
+
+                dot_plunger_idx += 1
+
+            elif self.device_gates[i]['type'] == 'Sensor Plunger':
+
+                p = self.device_gates[i]['channel']
+
+                gate_name = self.device_gates[i]['label']
+
+                sensor_plunger_names.append(gate_name)
+
+                sparam = SweepParam(
+                    parameter = p,
+                    start = lower_sensor_plunger_voltages[sensor_plunger_idx],
+                    end = upper_sensor_plunger_voltages[sensor_plunger_idx]
+                )
+
+                sensor_plunger_idx += 1
+
+        crosstalk_vals = []
+
+        for i, sensor in enumerate(sensor_plunger_targets):
+
+            sensor_layer = SweepLayer(targets = [sensor],
+                                      num_points = num_points,
+                                      measurement_time = 0.1
+                                     )
+
+            sensor_name = sensor_plunger_names[i]
+
+            for j, dot in enumerate(dot_plunger_targets):
+
+                dot_layer = SweepLayer(targets = [dot],
+                                       num_points = num_points,
+                                       measurement_time = 0.1
+                                      )
+
+                dot_name = dot_plunger_names[j]
+
+                measure = lambda ih, sp: (
+                        ih.read_buffer([
+                            'agilent_left.volt',
+                            'agilent_right.volt'
+                        ]),
+                        ['agilent_left.volt', 'agilent_right.volt']
+                )
+
+                sweep = Sweep([dot_layer, sensor_layer], measure)
+
+                time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                filename = f"{sensor_name}_{dot_name}_Scan_{time_str}.csv"
+
+                logger.info(f"Determining coupling between {sensor_name} and {dot_name}...")
+
+                future = self.experiment_handler.do_sweep(sweep = sweep,
+                                                          instrument_handler = self.instrument_handler,
+                                                          filename = filename
+                                                         )
+        
+                logger.info("Scan Complete! Finding cross-talk coefficient...")
+
+
+
+        return crosstalk_vals
+
+    def confirm_charge_transitions(self, lower_plunger_voltages, upper_plunger_voltages, sensing_points, num_points):
+
+        # First, we get the currnet plunger gate voltages
+
+        dot_plunger_dacs_and_vals = {}
+
+        sensor_plunger_dacs_and_vals = {}
 
         for i in self.gates_to_dacs:
 
@@ -1842,11 +2054,90 @@ class GlobalChargeTuning(Protocol):
                                             wait=True
                                             )   
 
+            elif self.device_gates[i]['type'] == 'Sensor Plunger':
+
+                p = self.device_gates[i]['channel']
+
+                instr, param = p.split('.', 1)
+
+                sensor_plunger_dacs_and_vals[i] = self.instrument_handler.get_parameter(
+                                            instr,
+                                            param,
+                                            wait=True
+                                            )
+
         logger.info(f"{dot_plunger_dacs_and_vals}")
+
+        logger.info(f"{sensor_plunger_dacs_and_vals}")
+
+        # Now, we set our plungers to their initial values
+                
+        dot_plunger_targets = []
+
+        sensor_plunger_targets = []
+
+        endpoint_iter_dot = iter(lower_plunger_voltages)
+
+        endpoint_iter_sensor = iter(sensing_points) 
+
+        for gate, dac_and_val in dot_plunger_dacs_and_vals.items():
+            for dac, starting_val in dac_and_val.items():
+
+                p = "spi_rack." + dac
+
+                dot_plunger_val = next(endpoint_iter_dot)
+
+                sparam = SweepParam(
+                    parameter = p,
+                    start = starting_val,
+                    end = dot_plunger_val
+                )
+
+                dot_plunger_targets.append(sparam)            
+
+        for gate, dac_and_val in sensor_plunger_dacs_and_vals.items():
+            for dac, starting_val in dac_and_val.items():
+
+                p = "spi_rack." + dac
+
+                sensor_plunger_val = next(endpoint_iter_sensor)
+
+                sparam = SweepParam(
+                    parameter = p,
+                    start = starting_val,
+                    end = sensor_plunger_val
+                )
+
+                sensor_plunger_targets.append(sparam)  
+
+        sweep_layer = SweepLayer(
+            targets = dot_plunger_targets + sensor_plunger_targets,
+            num_points = num_points,
+            measurement_time = 0.1
+        )
+
+        measure = lambda ih, sp: (
+                ih.read_buffer([
+                    'agilent_left.volt',
+                    'agilent_right.volt'
+                ]),
+                ['agilent_left.volt', 'agilent_right.volt']
+        )
+
+        sweep = Sweep([sweep_layer], measure)
+
+        logger.info("Setting Initial Plunger Voltages...")
+
+        future = self.experiment_handler.set_voltage_configuration(sweep = sweep,
+                                                                   instrument_handler = self.instrument_handler)
+
+        logger.info("Initial Plunger Voltages Set!")
 
         # Now, we sweep our plungers and read the SET current to determine if we can sense charge transitions
 
-        sensor_plunger_idx = 0
+        confirmations = []
+
+        dot_plunger_idx = 0
 
         for i in self.gates_to_dacs:
 
@@ -1854,11 +2145,15 @@ class GlobalChargeTuning(Protocol):
 
                 p = self.device_gates[i]['channel']
 
+                gate_name = self.device_gates[i]['label']
+
                 sparam = SweepParam(
                     parameter = p,
-                    start = lower_plunger_voltages[sensor_plunger_idx],
-                    end = upper_plunger_voltages[sensor_plunger_idx]
+                    start = lower_plunger_voltages[dot_plunger_idx],
+                    end = upper_plunger_voltages[dot_plunger_idx]
                 )
+
+                dot_plunger_idx += 1
 
                 sweep_layer = SweepLayer(
                 targets = [sparam],
@@ -1876,22 +2171,244 @@ class GlobalChargeTuning(Protocol):
 
                 sweep = Sweep([sweep_layer], measure)
 
-                logger.info("Setting Sensor Plungers to Initial Points...")
+                logger.info(f"Confirming Charge Transition detection for {gate_name}...")
 
-
+                time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                filename = f"{gate_name}_Sweep_{time_str}.csv"
 
                 future = self.experiment_handler.do_sweep(sweep = sweep,
                                                           instrument_handler = self.instrument_handler,
                                                           filename = filename
                                                          )
 
-                logger.info("Sensor Plungers Set!")
+                logger.info(f"{gate_name} Sweep Complete! Confirming Transition Detection...")
 
-        return
+                
+                confirmations.append()
 
-    def tune_lead_dot_tunneling(self):
+
+        return confirmations
+
+    def tune_lead_dot_tunneling(self, lower_barrier_voltages, upper_barrier_voltages, lower_plunger_voltages, upper_plunger_voltages, num_points):
         
-        # First, we need to 
+        # First, get the lead-barrier voltages, and the dot plunger voltages
+
+        outer_plunger_dacs_and_vals = {}
+
+        lead_barrier_dacs_and_vals = {}
+
+        plunger_idx = 0
+
+        barrier_idx = 0
+
+        for i in self.gates_to_dacs:
+
+            if self.device_gates[i]['type'] == 'Dot Plunger':
+
+                if plunger_idx == 0 or plunger_idx == 2:
+
+                    p = self.device_gates[i]['channel']
+
+                    instr, param = p.split('.', 1)
+
+                    outer_plunger_dacs_and_vals[i] = self.instrument_handler.get_parameter(
+                                                instr,
+                                                param,
+                                                wait=True
+                                                )   
+            
+                plunger_idx += 1 
+
+            elif self.device_gates[i]['type'] == 'Dot Barrier':
+
+                if barrier_idx == 0 or barrier_idx == 3:
+
+                    p = self.device_gates[i]['channel']
+
+                    instr, param = p.split('.', 1)
+
+                    lead_barrier_dacs_and_vals[i] = self.instrument_handler.get_parameter(
+                                                instr,
+                                                param,
+                                                wait=True
+                                                )
+                
+                barrier_idx +=1
+
+        logger.info(f"{outer_plunger_dacs_and_vals}")
+
+        logger.info(f"{lead_barrier_dacs_and_vals}")
+
+        # Now, we set our plungers and barriers to their starting values
+
+        plunger_targets = []
+
+        barrier_targets = []
+
+        endpoint_iter_plunger = iter(lower_plunger_voltages)
+
+        endpoint_iter_barrier = iter(lower_barrier_voltages) 
+
+        for gate, dac_and_val in outer_plunger_dacs_and_vals.items():
+            for dac, starting_val in dac_and_val.items():
+
+                p = "spi_rack." + dac
+
+                plunger_val = next(endpoint_iter_plunger)
+
+                sparam = SweepParam(
+                    parameter = p,
+                    start = starting_val,
+                    end = plunger_val
+                )
+
+                plunger_targets.append(sparam)            
+
+        for gate, dac_and_val in lead_barrier_dacs_and_vals.items():
+            for dac, starting_val in dac_and_val.items():
+
+                p = "spi_rack." + dac
+
+                barrier_val = next(endpoint_iter_barrier)
+
+                sparam = SweepParam(
+                    parameter = p,
+                    start = starting_val,
+                    end = barrier_val
+                )
+
+                barrier_targets.append(sparam)  
+
+        sweep_layer = SweepLayer(
+            targets = plunger_targets + barrier_targets,
+            num_points = num_points,
+            measurement_time = 0.1
+        )
+
+        measure = lambda ih, sp: (
+                ih.read_buffer([
+                    'agilent_left.volt',
+                    'agilent_right.volt'
+                ]),
+                ['agilent_left.volt', 'agilent_right.volt']
+        )
+
+        sweep = Sweep([sweep_layer], measure)
+
+        logger.info("Setting Initial Lead Voltages...")
+
+        future = self.experiment_handler.set_voltage_configuration(sweep = sweep,
+                                                                   instrument_handler = self.instrument_handler)
+
+        logger.info("Initial Lead Voltages Set!")
+
+        # Now, we create our sweeps
+
+        plunger_targets = []
+
+        barrier_targets = []
+
+        plunger_idx = 0
+
+        barrier_idx = 0 
+
+        plunger_names = []
+
+        barrier_names = []
+
+        startpoint_iter_plunger = iter(lower_plunger_voltages)
+
+        endpoint_iter_plunger = iter(upper_plunger_voltages)
+
+        startpoint_iter_barrier = iter(lower_barrier_voltages)
+
+        endpoint_iter_barrier = iter(upper_barrier_voltages)
+
+        for i in self.gates_to_dacs:
+
+            if self.device_gates[i]['type'] == 'Dot Plunger':
+
+                if plunger_idx == 0 or plunger_idx == 2:
+
+                    p = self.device_gates[i]['channel']
+
+                    gate_name = self.device_gates[i]['label']
+
+                    plunger_names.append(gate_name)
+
+                    start_val = next(startpoint_iter_plunger)
+
+                    end_val = next(endpoint_iter_plunger)
+
+                    sparam = SweepParam(
+                        parameter = p,
+                        start = start_val,
+                        end = end_val
+                    )
+
+                    plunger_targets.append(sparam)
+
+                plunger_idx += 1    
+
+            elif self.device_gates[i]['type'] == 'Dot Barrier':
+
+                if barrier_idx == 0 or barrier_idx == 3:
+
+                    p = self.device_gates[i]['channel']
+
+                    gate_name = self.device_gates[i]['label']
+
+                    barrier_names.append(gate_name)
+
+                    start_val = next(startpoint_iter_barrier)
+
+                    end_val = next(endpoint_iter_barrier)
+
+                    sparam = SweepParam(
+                        parameter = p,
+                        start = start_val,
+                        end = end_val
+                    )
+
+                    barrier_targets.append(sparam)
+
+                plunger_idx += 1
+
+            for i, item in enumerate(plunger_targets):
+
+                plunger_layer = SweepLayer(
+                targets = [item],
+                num_points = num_points,
+                measurement_time = 0.2
+                )
+
+                barrier_layer = SweepLayer(
+                targets = [barrier_targets[i]],
+                num_points = num_points,
+                measurement_time = 0.2
+                )
+
+                measure = lambda ih, sp: (
+                        ih.read_buffer([
+                            'agilent_left.volt',
+                            'agilent_right.volt'
+                        ]),
+                        ['agilent_left.volt', 'agilent_right.volt']
+                )
+
+                sweep = Sweep([barrier_layer, plunger_layer], measure)
+
+                logger.info(f"{plunger_names[i]} vs. {barrier_names[i]} scan starting...")
+
+                time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                filename = f"{plunger_names[i]}_{barrier_names[i]}_Scan_{time_str}.csv"
+
+                future = self.experiment_handler.do_sweep(sweep = sweep,
+                                                          instrument_handler = self.instrument_handler,
+                                                          filename = filename
+                                                         )
+                
+                logger.info(f"{plunger_names[i]} vs. {barrier_names[i]} scan complete! Finding appropriate barrier voltage...")
 
         return
 

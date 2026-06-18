@@ -2374,46 +2374,50 @@ class GlobalChargeTuning(Protocol, Bootstrapping):
 
                 plunger_idx += 1
 
-            for i, item in enumerate(plunger_targets):
+        barrier_setpoints = []
 
-                plunger_layer = SweepLayer(
-                targets = [item],
-                num_points = num_points,
-                measurement_time = 0.2
-                )
+        for i, item in enumerate(plunger_targets):
 
-                barrier_layer = SweepLayer(
-                targets = [barrier_targets[i]],
-                num_points = num_points,
-                measurement_time = 0.2
-                )
+            plunger_layer = SweepLayer(
+            targets = [item],
+            num_points = num_points,
+            measurement_time = 0.2
+            )
 
-                measure = lambda ih, sp: (
-                        ih.read_buffer([
-                            'agilent_left.volt',
-                            'agilent_right.volt'
-                        ]),
-                        ['agilent_left.volt', 'agilent_right.volt']
-                )
+            barrier_layer = SweepLayer(
+            targets = [barrier_targets[i]],
+            num_points = num_points,
+            measurement_time = 0.2
+            )
 
-                sweep = Sweep([barrier_layer, plunger_layer], measure)
+            measure = lambda ih, sp: (
+                    ih.read_buffer([
+                        'agilent_left.volt',
+                        'agilent_right.volt'
+                    ]),
+                    ['agilent_left.volt', 'agilent_right.volt']
+            )
 
-                logger.info(f"{plunger_names[i]} vs. {barrier_names[i]} scan starting...")
+            sweep = Sweep([barrier_layer, plunger_layer], measure)
 
-                time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-                filename = f"{plunger_names[i]}_{barrier_names[i]}_Scan_{time_str}.csv"
+            logger.info(f"{plunger_names[i]} vs. {barrier_names[i]} scan starting...")
 
-                future = self.experiment_handler.do_sweep(sweep = sweep,
-                                                          instrument_handler = self.instrument_handler,
-                                                          filename = filename
-                                                         )
-                
-                logger.info(f"{plunger_names[i]} vs. {barrier_names[i]} scan complete! Finding appropriate barrier voltage...")
+            time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            filename = f"{plunger_names[i]}_{barrier_names[i]}_Scan_{time_str}.csv"
 
-        return
+            future = self.experiment_handler.do_sweep(sweep = sweep,
+                                                        instrument_handler = self.instrument_handler,
+                                                        filename = filename
+                                                        )
+            
+            logger.info(f"{plunger_names[i]} vs. {barrier_names[i]} scan complete! Finding appropriate barrier voltage...")
 
-
+        return barrier_setpoints
+    
     def plunger_plunger_sweep():
+        
+        # First, we get the current 
+
         pass
 
 class VirtualGating(Protocol):

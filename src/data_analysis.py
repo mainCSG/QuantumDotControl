@@ -191,7 +191,6 @@ def extract_turn_on_voltage(x_data: np.array,
         ax.plot(x1, y1, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
 
         filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
-
         fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
 
         ax.scatter(turnon_voltage, turnon_current, color='red', s=100, zorder=5, label='Turn-On Point')
@@ -219,7 +218,6 @@ def extract_turn_on_voltage(x_data: np.array,
         plt.tight_layout()
 
         filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
-
         fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
         plt.close(fig)
@@ -233,8 +231,8 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
                            y_data: np.array,
                            noisefloor: float,
                            gate_type: str,
-                           filepath: str,
-                           filename: str,
+                        #    filepath: str,
+                        #    filename: str,
                            plot_results: bool = True):
     """Identify pinch-off and saturation voltage ranges for a sweep.
 
@@ -366,8 +364,8 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
         fig, ax = plt.subplots(figsize=(8,6))
         ax.plot(x1, y1_norm, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
 
-        filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
-        fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+        # filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+        # fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
 
         ax.scatter(pinch_off_voltage, pinch_off_current, color='red', s=100, zorder=5, label='Pinch-off Point')
         ax.scatter(sat_voltage, sat_current, color='green', s=100, zorder=5, label=sat_label)
@@ -442,10 +440,11 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
 
         plt.tight_layout()
 
-        filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
-        fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+        # filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+        # fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
-        plt.close(fig)
+        # plt.close(fig)
+        plt.show()
 
     voltage_window = (pinch_off_voltage, sat_voltage)
 
@@ -490,13 +489,15 @@ def extract_max_conductance_points(x_data: np.array,
 
     max_idx = peak_idx[np.argmax(dIdV[peak_idx])]
     min_idx = peak_idx[np.argmin(dIdV[peak_idx])]
-    
+
+    x_max = x1[max_idx]
+    x_min = x1[min_idx]
     I_max = y1[max_idx]
     I_min = y1[min_idx]
     G_max = dIdV[max_idx]
     G_min = dIdV[min_idx]
 
-    best_sens_pts = [(x1[max_idx], I_max), (x1[min_idx], I_min)]
+    best_sens_pts = [(x_max, I_max), (x_min, I_min)]
 
     # Create two subplots that share the x-axis
     fig, (ax1, ax2) = plt.subplots(2, 1, sharex=False, figsize=(8, 6))
@@ -576,7 +577,7 @@ def extract_max_conductance_points(x_data: np.array,
     plt.subplots_adjust(hspace=0.40)
     plt.show()
 
-    return best_sens_pts, G_top
+    return best_sens_pts, (x_top, G_top)
 
 def extract_working_point(lb_data: np.array,
                           rb_data: np.array,
@@ -2197,3 +2198,241 @@ def extract_lever_arms(data: pd.DataFrame,
     plt.show()
     return results
 
+def extract_max_conductance_pair(x_data: np.array,
+                                 y_data: np.array,
+                                 filepath: str,
+                                 filename: str,
+                                 peak_height: list[float] = [None, None],
+                                 peak_prominence: list[float] = [None, None],
+                                 peak_width: list[float] = [None, None]
+                                ):
+    
+    """Analyze current data to identify the largest conductance peak and it's pair feature on the same peak.
+
+    This function plots the current and its derivative, then highlights
+    the most extreme conductance peak along with the pair that's on the same peak.
+    """
+
+    x1 = np.array(x_data)
+    y1 = np.array(y_data)
+
+    # Now, we calculate the derivative and replot
+
+    dIdV = np.gradient(y1, x1)
+
+    posdIdV = abs(dIdV)
+
+    if peak_height == [None, None]:
+        peak_height = [0.25 * np.max(dIdV), 0.25 * np.max(dIdV)]
+    if peak_prominence == [None, None]:
+        peak_prominence = [0.3 * np.max(dIdV), 0.3 * np.max(dIdV)]
+
+    peak_idx_pos, _ = signal.find_peaks(dIdV, height = peak_height[0], prominence = peak_prominence[0], width=peak_width[0])
+    peak_idx_neg, _ = signal.find_peaks(-dIdV, height = peak_height[1], prominence = peak_prominence[1], width=peak_width[1])
+
+    peak_idx = np.sort(np.concatenate([peak_idx_pos, peak_idx_neg]))
+
+    x_top = x1[peak_idx]
+    I_top = y1[peak_idx]
+    G_top = dIdV[peak_idx]
+
+    max_idx = peak_idx[np.argmax(posdIdV[peak_idx])]
+
+    x_max = x1[max_idx]
+    I_max = y1[max_idx]
+    G_max = dIdV[max_idx]
+
+    if G_max > 0:
+        pair_idx = peak_idx[np.where(max_idx == peak_idx)[0][0] + 1]
+    else:
+        pair_idx = peak_idx[np.where(max_idx == peak_idx)[0][0] - 1]
+
+    x_pair = x1[pair_idx]
+    I_pair = y1[pair_idx]
+    G_pair = dIdV[pair_idx]
+
+    if G_max > 0:
+        conductance_pair = (x_max, x_pair)
+    else:
+        conductance_pair = (x_pair, x_max)
+    
+    # Create two subplots that share the x-axis
+    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=False, figsize=(8, 6))
+
+    # --- Top panel: Current ---
+    ax1.plot(x1, y1, color='#2c5aa0', linewidth=1)
+
+    filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+    fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight') 
+    
+    ax1.scatter(x_max, I_max, facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Max I')
+    ax1.scatter(x_pair, I_pair, facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Max I')
+    ax1.set_ylabel('I (nA)', fontsize=35)
+    ax1.set_ylim(bottom=0)
+    ax1.set_xlim(min(x1), max(x1))
+    ax1.tick_params(labelbottom=True)
+
+    # --- Bottom panel: Conductance ---
+    ax2.plot(x1, dIdV, color='#2c5aa0', linewidth=1)
+    ax1.scatter(x_max, G_max, facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Max G')
+    ax1.scatter(x_pair, G_pair, facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Max G')
+    ax2.set_xlabel(r'$V_P$ (V)', fontsize=35)
+    ax2.set_ylabel('G (nS)', fontsize=35)
+    ax1.set_ylim(bottom=0)
+    ax2.set_xlim(min(x1), max(x1))
+
+    # --- Create the connection line ---
+    con = ConnectionPatch(
+        xyA=(x_max, I_max), coordsA=ax1.transData,
+        xyB=(x_max, G_max), coordsB=ax2.transData,
+        color='#01FF05', linestyle='--', linewidth=0.7
+    )
+    fig.add_artist(con)
+
+    con = ConnectionPatch(
+        xyA=(x_pair, I_pair), coordsA=ax1.transData,
+        xyB=(x_pair, G_pair), coordsB=ax2.transData,
+        color='#01FF05', linestyle='--', linewidth=0.7
+    )
+    fig.add_artist(con)
+
+    # --- Create a custom legend entry (hollow circle) ---
+    legend_marker = mlines.Line2D([], [], color='#01FF05', marker='o',
+                                markerfacecolor='none', markersize=10,
+                                linewidth=0, label='Best Conductance Points')
+
+    # --- Custom tick labels: only min and max shown ---
+
+    # Get existing ticks (so tick marks stay)
+    for ax in [ax1, ax2]:
+
+        ax.minorticks_on()
+        ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
+        ax.tick_params(direction='in', length=5, width=1.2, labelsize=20, top=True, right=True)
+        xticks = ax.get_xticks()
+        yticks = ax.get_yticks()
+        
+    ax1.set_xticks([np.round(x1.min(), 3), np.round((x1.min() + x1.max()) / 2, 3), np.round(x1.max(), 3)])
+    ax1.set_xticklabels([str(np.round(x1.min(), 3)), str(np.round((x1.min() + x1.max()) / 2, 3)), str(np.round(x1.max(), 3))], fontsize=25)
+
+    ax1.set_yticks([0, np.round(y1.max(), 3)])
+    ax1.set_yticklabels(['0', str(np.round(y1.max(), 3))], fontsize=25)
+
+    ax2.set_xticks([np.round(x1.min(), 3), np.round((x1.min() + x1.max()) / 2, 3),  np.round(x1.max(), 3)])
+    ax2.set_xticklabels([str(np.round(x1.min(), 3)), str(np.round((x1.min() + x1.max()) / 2, 3)), str(np.round(x1.max(), 3))], fontsize=25)
+
+    ax2.set_yticks([np.round(dIdV.min(), 1), 0, np.round(dIdV.max(), 1)])
+    ax2.set_yticklabels([str(np.round(dIdV.min(), 1)), '0', str(np.round(dIdV.max(), 1))], fontsize=25)
+
+    ax1.legend(handles=legend_marker, loc='upper left', fontsize=16, frameon=False)
+
+    # --- Adjust layout ---
+    plt.subplots_adjust(hspace=0.40)
+
+    filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+    fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+    
+    plt.close(fig)
+
+    return conductance_pair
+
+def hough_transform(x_data: np.array,
+                             y_data: np.array,
+                             current_data: np.array,
+                             filepath: str,
+                             filename: str,
+                             transform_trim: list = [0, -1]
+                             ):
+    """
+    Analyze voltage data to find the slope of the line seen by cross-talk measurements using the hough transform.
+    Can be used as regualr hough transform as well.
+
+    This function plots the voltage, then highlights
+    the slope of the cross-talk line seen.
+    The transform_trim argument allows you to remove points from the hough tranform analysis to make the fit better (mainly for debugging)
+    """
+
+    # Ensure arguments are arrays
+    x1 = np.array(x_data)
+    y1 = np.array(y_data)
+    I1 = np.array(current_data)
+
+    unique_x = np.unique(x1)
+    unique_y = np.unique(y1)
+
+    # Get x voltage spacing
+    dx = x1[1] - x1[0]
+
+    trace_len = len(unique_x)   # Number of columns (x1)
+    num_traces = len(unique_y)  # Number of rows (y1)
+
+    X_matrix, Y_matrix = np.meshgrid(unique_x, unique_y) # Get the X and Y grids to be used for analysis and plotting
+    Z_matrix = np.full((num_traces, trace_len), np.nan) # Create an empty Z matrix
+    # Fill in the Z matrix with current data for proper plotting
+    for x, y, I in zip(x1, y1, I1):
+        idx_x = np.where(unique_x == x)
+        idx_y = np.where(unique_y == y)
+        Z_matrix[idx_y, idx_x] = I
+    x_vals = []
+    y_vals = []
+
+    # Plot the 2D color map and save the raw data prior to any analysis
+
+    fig, ax = plt.subplots(figsize=(8,6))
+
+    ax.pcolormesh(
+        unique_x,
+        unique_y,
+        Z_matrix,
+        shading='auto',
+        cmap='viridis'
+    )
+    ax.colorbar(label = "I (nA)")
+    ax.xlabel("Gate X Voltage (V)")
+    ax.ylabel("Gate Y Voltage (V)")
+
+    filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+    fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
+    # Analysis using hough transform line detection
+
+    for j in range(num_traces):
+        # Go through each trace along the y-axis
+        trace_z = Z_matrix[j, :]
+        z_der = signal.savgol_filter(trace_z, window_length=11, polyorder=3, deriv=1, delta=dx)
+        der_min = np.min(z_der)
+        # if avg == True:
+        der_max = np.max(z_der)
+        idx1 = np.where(z_der == der_min)[0][0]
+        idx2 = np.where(z_der == der_max)[0][0]
+        xpt1 = float(X_matrix[j, idx1])
+        xpt2 = float(X_matrix[j, idx2])
+        ypt1 = float(Y_matrix[j, idx1])
+        ypt2 = float(Y_matrix[j, idx2])
+        x_vals.append(np.mean([xpt1, xpt2]))
+        y_vals.append(np.mean([ypt1, ypt2]))
+        # else:
+        #     idx = np.where(z_der == der_min)[0][0]
+        #     x_vals.append(float(X_matrix[j, idx]))
+        #     y_vals.append(float(Y_matrix[j, idx]))
+                
+    if len(x_vals) != len(y_vals):
+        raise ValueError("lengths of x and y values don't match")
+    else:
+        start = transform_trim[0]
+        end = transform_trim[1]
+        x_vals = x_vals[start:end]
+        y_vals = y_vals[start:end]
+        slope, intercept = np.polyfit(x_vals, y_vals, 1)
+
+    ax.plot(x_vals, np.polyval([slope, intercept], x_vals), color='r', linestyle='-')
+
+    # Set the limits and show
+    ax.ylim(min(y_vals), max(y_vals))
+
+    filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+    fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+
+    plt.close(fig)
+
+    return slope, intercept

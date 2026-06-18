@@ -50,7 +50,7 @@ from qcodes.parameters import ParameterBase
 from nicegui import ui
 from tunerlog import TunerLog
 
-# logger = TunerLog('Data Analysis')
+logger = TunerLog('Data Analysis')
   
 def logarithmic(x, a, b, x0, y0):
     
@@ -231,8 +231,8 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
                            y_data: np.array,
                            noisefloor: float,
                            gate_type: str,
-                        #    filepath: str,
-                        #    filename: str,
+                           filepath: str,
+                           filename: str,
                            plot_results: bool = True):
     """Identify pinch-off and saturation voltage ranges for a sweep.
 
@@ -364,8 +364,8 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
         fig, ax = plt.subplots(figsize=(8,6))
         ax.plot(x1, y1_norm, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
 
-        # filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
-        # fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+        filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+        fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
 
         ax.scatter(pinch_off_voltage, pinch_off_current, color='red', s=100, zorder=5, label='Pinch-off Point')
         ax.scatter(sat_voltage, sat_current, color='green', s=100, zorder=5, label=sat_label)
@@ -440,11 +440,10 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
 
         plt.tight_layout()
 
-        # filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
-        # fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+        filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+        fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
-        # plt.close(fig)
-        plt.show()
+        plt.close(fig)
 
     voltage_window = (pinch_off_voltage, sat_voltage)
 

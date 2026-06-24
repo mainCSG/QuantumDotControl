@@ -188,6 +188,11 @@ class tuner_gui:
                             on_click = self.run_bootstrapping
                         )
 
+                        ui.button(
+                            'Run Global Charge Tuning',
+                            on_click = self.run_global_charge_tuning
+                        )
+
                         self.debug_status = ui.label('Idle')
 
             with splitter1.after:
@@ -371,6 +376,17 @@ class tuner_gui:
                                                            wait = False
                                                           )
 
+    def run_global_charge_tuning(self):
+
+        self.debug_status.set_text("Running Global Charge Tuning...")
+        self.logger.info("Global Charge Tuning Jobs queued")
+
+        future = self.autotuning_handler.run_global_charge_tuning(device_config = r'C:\Users\BaughLaflamme\Documents\GitHub\QuantumDotControl\configs\Intel_Config.yaml',
+                                                                  instrument_handler = self.instrument_handler,
+                                                                  experiment_handler = self.experiment_handler,
+                                                                  wait = False
+                                                                 )
+
     def header(self):
         
         """
@@ -381,7 +397,7 @@ class tuner_gui:
         """
 
         with ui.header().classes(replace='row items-center') as header:
-            ui.label('Welcome to the Quantum Spin Qubit Device Autotuner!!!')
+            ui.label('Welcome to the QAT!!!')
 
     def footer(self):
         
@@ -473,7 +489,7 @@ class tuner_gui:
                 self.lines[j].set_ydata(data)
                 self.lines[j].set_xdata(times_offset)
                 self.ax.set_xlim(min(times_offset), max(times_offset))
-                self.ax.set_ylim(-0.5, 2.0)
+                self.ax.set_ylim(-0.1, 1.4)
 
             self.ax.legend(self.lines, keys, )
             self.liveplot.update()

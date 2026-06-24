@@ -179,15 +179,20 @@ class autotuning_handler:
                                              )
         
     def run_global_charge_tuning(self,
-                sweep,
+                device_config,
                 instrument_handler,
-                current_setpoints = {},
+                experiment_handler,
                 wait: bool = True,
-                timeout: float = 60):
+                timeout: float = 6000):
 
         def sweep_fn(abort_event):
-            result = GlobalChargeTuning()
+            result = GlobalChargeTuning(device_config = device_config,
+                                        instrument_handler = instrument_handler,
+                                        experiment_handler = experiment_handler
+                                       )
             return result
+
+        logger.info("adding job!")
 
         return self.autotuning_thread.add_job(
                                               sweep_fn,

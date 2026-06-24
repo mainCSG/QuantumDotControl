@@ -174,8 +174,6 @@ def extract_turn_on_voltage(x_data: np.array,
         if val > abs(threshold):
             idx_turnon = np.where(y1 == val)[0][0] # get the index of the turn-on point
             
-            logger.info(f"Index: {idx_turnon}")
-            
             turnon_voltage = x1[idx_turnon - 1]
             
             logger.info(f"Turn_On Voltage: {turnon_voltage}")
@@ -201,6 +199,8 @@ def extract_turn_on_voltage(x_data: np.array,
         ax.set_xlabel(r'V$_{gate}$ (V)', fontsize=35)
         ax.set_ylabel('I (nA)', fontsize=35)
 
+        logger.info("before minor ticks!")
+
         ax.minorticks_on()
         ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
         ax.tick_params(direction='in', length=5, width=1.2, labelsize=18, top=True, right=True)
@@ -215,10 +215,16 @@ def extract_turn_on_voltage(x_data: np.array,
         ax.set_yticks(yticks_span)
         ax.set_yticklabels([f'{np.abs(yticks_span[0]):.1f}', '', '', '', f'{yticks_span[-1]:.4f}'], fontsize=25)
 
+        logger.info("before tight layout!")
+
         plt.tight_layout()
+
+        logger.info("before save!")
 
         filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
         fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+
+        logger.info("before close!")
 
         plt.close(fig)
 
@@ -350,9 +356,9 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
                 break
 
     elif gate_type == 'Barrier':
-        sat_voltage = fit_midpoint_voltage
+        sat_voltage = fit_saturation_voltage
         sat_current = y1_norm[np.argmax(np.isclose(x1, sat_voltage, atol=1e-3, rtol=1e-3))]
-        sat_label = 'Midpoint'
+        sat_label = 'Saturation Point'
 
     else:
         raise TypeError("The gate_type given isn't one of the following: 'Accumulation', 'Plunger', 'Barrier'")
@@ -451,6 +457,8 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
 
 def extract_max_conductance_points(x_data: np.array,
                                    y_data: np.array,
+                                   filepath: str,
+                                   filename: str,
                                    peak_height: list[float] = [None, None],
                                    peak_prominence: list[float] = [None, None],
                                    peak_width: list[float] = [None, None]
@@ -574,7 +582,11 @@ def extract_max_conductance_points(x_data: np.array,
 
     # --- Adjust layout ---
     plt.subplots_adjust(hspace=0.40)
-    plt.show()
+    
+    filepath = os.path.join(filepath, filename)
+    fig.savefig(filepath, dpi = 'figure', bbox_inches='tight')
+    
+    #plt.show()
 
     return best_sens_pts, (x_top, G_top)
 
@@ -607,7 +619,7 @@ def extract_working_point(lb_data: np.array,
     rb_data = np.array(rb_data)
     current_data = np.array(current_data)
     barrier_pinch_offs = np.array(barrier_pinch_offs)
-    device_type = 'hole'
+    device_type = 'electron'
 
     # 2. Establish uniform coordinate grids
     # (Assumes original data represents a regular mesh grid)
@@ -2206,7 +2218,8 @@ def extract_max_conductance_pair(x_data: np.array,
                                  peak_width: list[float] = [None, None]
                                 ):
     
-    """Analyze current data to identify the largest conductance peak and it's pair feature on the same peak.
+    """
+    Analyze current data to identify the largest conductance peak and it's pair feature on the same peak.
 
     This function plots the current and its derivative, then highlights
     the most extreme conductance peak along with the pair that's on the same peak.
@@ -2263,7 +2276,7 @@ def extract_max_conductance_pair(x_data: np.array,
 
     filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
     fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight') 
-    
+
     ax1.scatter(x_max, I_max, facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Max I')
     ax1.scatter(x_pair, I_pair, facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Max I')
     ax1.set_ylabel('I (nA)', fontsize=35)
@@ -2323,25 +2336,28 @@ def extract_max_conductance_pair(x_data: np.array,
     ax2.set_yticks([np.round(dIdV.min(), 1), 0, np.round(dIdV.max(), 1)])
     ax2.set_yticklabels([str(np.round(dIdV.min(), 1)), '0', str(np.round(dIdV.max(), 1))], fontsize=25)
 
-    ax1.legend(handles=legend_marker, loc='upper left', fontsize=16, frameon=False)
+    ax1.legend(handles=[legend_marker],
+           loc='upper left',
+           fontsize=16,
+           frameon=False)
 
     # --- Adjust layout ---
     plt.subplots_adjust(hspace=0.40)
 
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
-    
+
     plt.close(fig)
 
     return conductance_pair
 
 def hough_transform(x_data: np.array,
-                             y_data: np.array,
-                             current_data: np.array,
-                             filepath: str,
-                             filename: str,
-                             transform_trim: list = [0, -1]
-                             ):
+                    y_data: np.array,
+                    current_data: np.array,
+                    filepath: str,
+                    filename: str,
+                    transform_trim: list = [0, -1]
+                    ):
     """
     Analyze voltage data to find the slope of the line seen by cross-talk measurements using the hough transform.
     Can be used as regualr hough transform as well.
@@ -2379,16 +2395,16 @@ def hough_transform(x_data: np.array,
 
     fig, ax = plt.subplots(figsize=(8,6))
 
-    ax.pcolormesh(
+    mesh = ax.pcolormesh(
         unique_x,
         unique_y,
         Z_matrix,
         shading='auto',
         cmap='viridis'
     )
-    ax.colorbar(label = "I (nA)")
-    ax.xlabel("Gate X Voltage (V)")
-    ax.ylabel("Gate Y Voltage (V)")
+    fig.colorbar(mesh, ax=ax, label="I (nA)")
+    ax.set_xlabel("Gate X Voltage (V)")
+    ax.set_ylabel("Gate Y Voltage (V)")
 
     filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
     fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
@@ -2414,7 +2430,7 @@ def hough_transform(x_data: np.array,
         #     idx = np.where(z_der == der_min)[0][0]
         #     x_vals.append(float(X_matrix[j, idx]))
         #     y_vals.append(float(Y_matrix[j, idx]))
-                
+
     if len(x_vals) != len(y_vals):
         raise ValueError("lengths of x and y values don't match")
     else:
@@ -2427,7 +2443,7 @@ def hough_transform(x_data: np.array,
     ax.plot(x_vals, np.polyval([slope, intercept], x_vals), color='r', linestyle='-')
 
     # Set the limits and show
-    ax.ylim(min(y_vals), max(y_vals))
+    ax.set_ylim(min(y_vals), max(y_vals))
 
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')

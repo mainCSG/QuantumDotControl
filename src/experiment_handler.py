@@ -14,7 +14,7 @@ import threading
 from queue import PriorityQueue
 from collections.abc import Callable
 from dataclasses import dataclass
-from instrument_handler import TunerFuture
+from instrument_handler import TunerFuture, AbortException
 from enum import Enum
 from typing import Tuple, Dict, Any, Literal, Protocol, Optional, Deque
 from qcodes.instrument import Instrument
@@ -83,6 +83,7 @@ class ExperimentThread:
 
         print("Stopping the experiment thread...")
         self.shutdown_event.set()
+        self.job_event.set()
         self.thread.join()
     
     def __assert_correct_thread__(self):
@@ -106,80 +107,55 @@ class ExperimentThread:
 
         return future
 
-    def add_job_old(self,
-            f: Callable,
-            args: tuple = (),
-            priority: int = 1,
-            wait: bool = True,
-            timeout: float = None):
-    
-        future = TunerFuture()
-
-        job = (priority, (f, args, future))
-        self.job_queue.put(job)
-
-        # Wake the thread
-        self.job_event.set()
-
-        if wait:
-            return future.result(timeout)
-        return future
-    
     def abort(self):
 
         self.abort_event.set()
-    
+        self.job_event.set()
+
+    def _drain_queue(self):
+
+        while True:
+            try:
+                priority, (f, args, future) = self.job_queue.get_nowait()
+            except Exception:
+                break
+            future.set_exception(AbortException("Experiment aborted"))
+            self.job_queue.task_done()
+
+        self.abort_event.clear()
+
     def __thread_loop__(self):
 
         print("Starting worker")
 
         while not self.shutdown_event.is_set():
 
-            priority, (f, args, future) = self.job_queue.get()
-
-            try:
-                result = f(*args, self.abort_event)
-
-            except Exception as e:
-                future.set_exception(e)
-
-            else:
-                future.set_result(result)
-
-            self.job_queue.task_done()
-
-    def __thread_loop__old(self):
-
-        while not self.shutdown_event.is_set():
-
             self.job_event.wait()
+            # safely clears all jobs in queue
+            if self.abort_event.is_set():
+                self._drain_queue()    
+                self.job_event.clear()
+                continue
 
             while self.job_queue.qsize() > 0:
 
-                if self.abort_event.is_set(): # Clear remaining jobs safely 
-                    while not self.job_queue.empty(): 
-                        try: 
-                            _, (_, _, future) = self.job_queue.get_nowait() 
-                            future.set_exception(RuntimeError("Experiment aborted")) 
-                            self.job_queue.task_done() 
-                        except: 
-                            break 
-                        self.abort_event.clear() 
-                        continue
+                if self.abort_event.is_set():
+                    self._drain_queue()   
+                    break
 
-                priority, data = self.job_queue.get()
-                f, args, future = data
+                priority, (f, args, future) = self.job_queue.get()
 
                 try:
                     result = f(*args, self.abort_event)
+
                 except Exception as e:
                     future.set_exception(e)
+
                 else:
                     future.set_result(result)
 
                 self.job_queue.task_done()
 
-            # reset event once queue is empty
             self.job_event.clear()
 
 class experiment_handler:

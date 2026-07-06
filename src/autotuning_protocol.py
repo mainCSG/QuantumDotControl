@@ -61,7 +61,8 @@ class Protocol:
 
         self._load_config_file(device_config)
 
-        self.directory = r"C:\Users\BaughLaflamme\Desktop\3d1s_W151_1 Measurements\3D1S_w151_1 - Autotuning Tests"
+        # self.directory = r"C:\Users\BaughLaflamme\Desktop\3d1s_W151_1 Measurements\3D1S_w151_1 - Autotuning Tests"
+        self.directory = rf"../Protocol_Run_{datetime.now().strftime('%m-%d-%Y')}/Data"
 
         # Now, we create a dictionary to house a map between gate names and dacs
 
@@ -150,6 +151,33 @@ class Protocol:
         self.SET_preamp_bias = self.config['setup']['SET_preamp']['preamp_bias']
         self.SET_preamp_sensitivity = self.config['setup']['SET_preamp']['preamp_sensitivity']
 
+<<<<<<< Updated upstream
+=======
+    def parameter_snapshot(self, name):
+
+        # Collect voltage parameter from all gates and capture the data in the logger. 
+
+        logger.info("Creating Snapshot...")
+
+        snapshot_dacs_and_vals = {}
+
+        for i in self.gates_to_dacs:
+
+            p = self.device_gates[i]['channel']
+
+            instr, param = p.split('.', 1)
+
+            snapshot_dacs_and_vals[i] = self.instrument_handler.get_parameter(
+                                        instr,
+                                        param,
+                                        wait=True
+                                        )
+        
+        logger.info(f"Snapshot of {name} created!")
+        logger.info(f"{snapshot_dacs_and_vals}")
+
+
+>>>>>>> Stashed changes
 class Bootstrapping(Protocol):
 
     def __init__(self, device_config, instrument_handler, experiment_handler):

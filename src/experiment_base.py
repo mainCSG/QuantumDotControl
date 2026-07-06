@@ -51,7 +51,8 @@ class Sweep:
             for p in layer.targets
         ]
 
-        self.directory = os.path.join(os.path.expanduser("~"), r"C:\Users\BaughLaflamme\Desktop\3d1s_W151_1 Measurements\3D1S_w151_1 - Autotuning Tests")
+        # self.directory = os.path.join(os.path.expanduser("~"), r"C:\Users\BaughLaflamme\Desktop\3d1s_W151_1 Measurements\3D1S_w151_1 - Autotuning Tests")
+        self.directory = os.path.join(os.path.expanduser("~"), rf"../Protocol_Run_{datetime.now().strftime('%m-%d-%Y')}/Data")
 
         self._csv_file = None
         self._csv_writer = None

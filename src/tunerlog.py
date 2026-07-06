@@ -75,7 +75,8 @@ class TunerLog(logging.Logger):
 
             if logfile is None:
                 #logfile = f"../logs/QDot_tuner_{datetime.datetime.now().strftime("%m-%d-%Y_%H-%M-%S")}.log"
-                logfile = f"../logs/QDot_tuner_{datetime.datetime.now().strftime('%m-%d-%Y')}.log"
+                #logfile = f"../logs/QDot_tuner_{datetime.datetime.now().strftime('%m-%d-%Y')}.log"
+                logfile = f"../Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}/QDot_tuner_{datetime.datetime.now().strftime('%m-%d-%Y')}.log"
 
             if fileHandler is None:
                 fileHandler = logging.FileHandler(logfile)

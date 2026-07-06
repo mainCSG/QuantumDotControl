@@ -11,6 +11,7 @@ import threading
 import time
 from pathlib import Path
 from typing import Callable, Dict, List
+from venv import logger
 
 # Third-party libraries
 import numpy as np
@@ -36,7 +37,7 @@ import skimage
 from skimage import filters, transform
 from skimage.feature import canny
 from skimage.filters import threshold_otsu, sato
-from skimage.morphology import diamond, rectangle  # noqa
+from skimage.morphology import diamond, rectangle
 from skimage.transform import probabilistic_hough_line
 
 import yaml
@@ -53,90 +54,168 @@ from tunerlog import TunerLog
 logger = TunerLog('Data Analysis')
   
 def logarithmic(x, a, b, x0, y0):
-    
     """
+    Description
+    -----------
     Logarithmic model used for curve fitting.
 
     Parameters
     -----------
     x : np.array
         independent variable array
-    a, b, x0, y0 : float
-        fit parameters
-    
+    a : float
+        vertical scale
+    b : float
+        horizontal scale
+    x0 : float
+        horizontal shift
+    y0 : float
+        vertical shift
     """
     return a * np.log(b*(x-x0)) + y0
 
 def exponential(x, a, b, x0, y0):
-    """Exponential model used for curve fitting.
-
-    Parameters:
-        x: independent variable array
-        a, b, x0, y0: fit parameters
     """
-    return a * np.exp(b * (x-x0)) + y0
-
-def sigmoid(x, a, b, x0, y0):
-    """Sigmoid model used for turn-on / pinch-off fitting.
-
-    Parameters:
-        x: independent variable array
-        a, b, x0, y0: fit parameters
-    """
-    return a * expit(-b * (x - x0)) + y0
-
-def linear(x, m, b):
-    """Simple linear model for fitting straight-line behavior."""
-    return m * x + b         
-
-def relu(x, a, x0):
-    """ReLU-style model that is zero below x0 and linear above it."""
-    return np.maximum(0, a * (x - x0))
-
-def gompertz(x, a, b, c):
-    """
-    Gompertz model used for curve fitting. Type of sigmoid used for asymmetry.
+    Description
+    -----------
+    Exponential model used for curve fitting.
 
     Parameters
     -----------
     x : np.array
         independent variable array
-    a, b, c : float
-        fit parameters
-    
+    a : float
+        vertical scale
+    b : float
+        growth/decay rate
+    x0 : float
+        horizontal shift
+    y0 : float
+        horizontal asymptote
+    """
+    return a * np.exp(b * (x-x0)) + y0
+
+def sigmoid(x, a, b, x0, y0):
+    """
+    Description
+    -----------
+    Sigmoid model used for pinch-off fitting.
+
+    Parameters
+    -----------
+    x : np.array
+        independent variable array
+    a : float
+        vertical amplitude
+    b : float
+        steepness rate
+    x0 : float
+        inflection point
+    y0 : float
+        lower horizontal asymptote
+    """
+    return a * expit(-b * (x - x0)) + y0
+
+def linear(x, m, b):
+    """
+    Description
+    -----------
+    Simple linear model for fitting straight-line behavior.
+
+    Parameters
+    -----------
+    x : np.array
+        independent variable array
+    m : float
+        slope
+    b : float
+        x-intercept
+    """
+    return m * x + b         
+
+def relu(x, a, x0):
+    """
+    Description
+    -----------
+    ReLU-style model that is zero below x0 and linear above it. Originally used for turn-on fitting.
+
+    Parameters
+    -----------
+    x : np.array
+        independent variable array
+    a : float
+        slope
+    x0 : float
+        hinge point
+    """
+    return np.maximum(0, a * (x - x0))
+
+def gompertz(x, a, b, c):
+    """
+    Description
+    -----------
+    Gompertz model used as alternative to sigmoid for pinch-off fitting. Type of sigmoid used for highly asymmetric cases.
+
+    Parameters
+    -----------
+    x : np.array
+        independent variable array
+    a : float
+        upper asymptote
+    b : float
+        horizontal shift/delay
+    c : float
+        growth rate
     """
     return a * np.exp(-b * np.exp(-c * x))
 
-def fit_to_function(x_data, 
-                    y_data, 
+def fit_to_function(x_data: np.array, 
+                    y_data: np.array, 
                     function: Callable,
                     p0: list[float] = None,
-                    print_results: bool = True):
-    """Fit a provided model function to x/y data using nonlinear least squares.
-
-    Parameters:
-        x_data: independent variable values
-        y_data: dependent variable values
-        function: callable model to fit (e.g. sigmoid)
-        p0: optional initial guess for model parameters
-        print_results: whether to print fitted parameter values
-
-    Returns:
-        params: model parameter names
-        popt: optimized parameter values
-        perr: Error of parameter estimates (square root of covariances)
+                    print_results: bool = True
+                    ):
     """
+    Description
+    -----------
+    Fit a provided model function to x/y data using nonlinear least squares.
 
+    Parameters
+    -----------
+    x_data : np.array
+        independent variable values
+    y_data : np.array
+        dependent variable values
+    function : Callable
+        callable model to fit (e.g. sigmoid)
+    p0 : list[float]
+        optional initial guess for model parameters
+    print_results : bool
+        prints fitted parameter values
+
+    Returns
+    -----------
+    params : list[str]
+        model parameter names
+    popt : np.array
+        optimized parameter values
+    perr : np.array
+        Error of parameter estimates (square root of covariances)
+    """
+    
     if p0 is None:
+        # If no initial guess for the function parameters are given by the user, apply no guess
         popt, pcov = curve_fit(function, x_data, y_data, maxfev=10000)
         perr = np.sqrt(np.diag(pcov))
     else:
+        # Otherwise use the given initial guess given by user
         popt, pcov = curve_fit(function, x_data, y_data, p0=p0, maxfev=10000)
         perr = np.sqrt(np.diag(pcov))
     
-    params = list(inspect.signature(function).parameters.keys())[1:]
+    params = list(inspect.signature(function).parameters.keys())[1:] # List of fitting parameters
 
     if print_results:
+        # For every parameter, print it's value and error
         for name, val, err in zip(params, popt, perr):
             print(f"{name} = {val:.3f} ± {err:.3f}")
 
@@ -146,75 +225,110 @@ def extract_turn_on_voltage(x_data: np.array,
                             y_data: np.array,
                             noisefloor: float,
                             filepath: str,
-                            filename: str,
-                            plot_results: bool = True):
-    
-    """Estimate the turn-on voltage from a gate-sweep current curve.
+                            filename: str
+                            ):
+    """
+    Description
+    -----------
+    Estimate the turn-on voltage from a gate-sweep current curve.
+    This routine finds the first voltage where the current rises an
+    order of magnitude above the provided noise floor.
 
-    This routine baseline-corrects the current, then finds the first
-    voltage where the current rises above the provided threshold.
+    Parameters
+    -----------
+    x_data : np.array
+        independent variable (voltage) values
+    y_data : np.array
+        dependent variable (current) values
+    noisefloor : float
+        baseline noise of the gate-sweep
+    filepath : str
+        name of directory to save turn-on plot in
+    filename : str
+        name of file to save the turn-on plot under
+
+    Returns
+    -----------
+    turnon_voltage : float
+        first voltage found an order of magnitude above the noise floor
     """
 
     # --- Data definitions ---
     
+    # Ensures numpy array 
     x1 = np.array(x_data)
     y1 = np.array(y_data)
 
     if y1[-1] < 0:
+        # Flips current sign if SD bias was inversed
         y1 = -y1
 
-    # --- Finding Turn-On Voltage ---
+    # --- Finding Turn-On Point ---
     turnon_voltage = 0
     turnon_current = 0
 
-    threshold = noisefloor * 10
+    threshold = noisefloor * 10 # When the turn-on will be detected, 10 times the noise floor
 
     for val in y1:
-
+        # Going through every value in the current data, the first value above the threshold is considered turn-on
         if val > abs(threshold):
-            idx_turnon = np.where(y1 == val)[0][0] # get the index of the turn-on point
+            idx_turnon = np.where(y1 == val)[0][0] # Get the index of the turn-on point
             
+<<<<<<< Updated upstream
             turnon_voltage = x1[idx_turnon - 1]
+=======
+            logger.info(f"Index: {idx_turnon}")
+            
+            turnon_voltage = x1[idx_turnon - 1] # Get the voltage of the turn-on point
+>>>>>>> Stashed changes
             
             logger.info(f"Turn_On Voltage: {turnon_voltage}")
             
-            turnon_current = y1[idx_turnon - 1]
+            turnon_current = y1[idx_turnon - 1] # Get the current of the turn-on point
             break
 
     # --- Plot data ---
-    
-    if plot_results:
 
-        fig, ax = plt.subplots(figsize=(8,6))
-        ax.plot(x1, y1, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
+    # Raw data
+    fig, ax = plt.subplots(figsize=(8,6))
+    ax.plot(x1, y1, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
 
-        filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
-        fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+    # Save raw data
+    filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+    fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
 
-        ax.scatter(turnon_voltage, turnon_current, color='red', s=100, zorder=5, label='Turn-On Point')
-        ax.legend(fontsize=24, frameon=False, loc='upper left')
+    # Turn-on point
+    ax.scatter(turnon_voltage, turnon_current, color='red', s=100, zorder=5, label='Turn-On Point')
+    ax.legend(fontsize=24, frameon=False, loc='upper left')
 
-        # --- Labels and formatting ---
+    # --- Labels and formatting ---
 
-        ax.set_xlabel(r'V$_{gate}$ (V)', fontsize=35)
-        ax.set_ylabel('I (nA)', fontsize=35)
+    ax.set_xlabel(r'V$_{gate}$ (V)', fontsize=35)
+    ax.set_ylabel('I (nA)', fontsize=35)
 
+<<<<<<< Updated upstream
         logger.info("before minor ticks!")
 
         ax.minorticks_on()
         ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
         ax.tick_params(direction='in', length=5, width=1.2, labelsize=18, top=True, right=True)
+=======
+    ax.minorticks_on()
+    ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
+    ax.tick_params(direction='in', length=5, width=1.2, labelsize=18, top=True, right=True)
+>>>>>>> Stashed changes
 
-        xticks_span = np.linspace(x1.min(), x1.max(), 5)
+    xticks_span = np.linspace(x1.min(), x1.max(), 5)
 
-        ax.set_xticks(xticks_span)
-        ax.set_xticklabels([f'{xticks_span[0]:.1f}', '', f'{xticks_span[2]:.1f}', '', f'{xticks_span[-1]:.1f}'], fontsize=25)
+    ax.set_xticks(xticks_span)
+    ax.set_xticklabels([f'{xticks_span[0]:.1f}', '', f'{xticks_span[2]:.1f}', '', f'{xticks_span[-1]:.1f}'], fontsize=25)
 
-        yticks_span = np.linspace(y1.min(), y1.max(), 5)
+    yticks_span = np.linspace(y1.min(), y1.max(), 5)
 
-        ax.set_yticks(yticks_span)
-        ax.set_yticklabels([f'{np.abs(yticks_span[0]):.1f}', '', '', '', f'{yticks_span[-1]:.4f}'], fontsize=25)
+    ax.set_yticks(yticks_span)
+    ax.set_yticklabels([f'{np.abs(yticks_span[0]):.1f}', '', '', '', f'{yticks_span[-1]:.4f}'], fontsize=25)
 
+<<<<<<< Updated upstream
         logger.info("before tight layout!")
 
         plt.tight_layout()
@@ -227,6 +341,15 @@ def extract_turn_on_voltage(x_data: np.array,
         logger.info("before close!")
 
         plt.close(fig)
+=======
+    plt.tight_layout()
+
+    # Save final data
+    filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+    fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+
+    plt.close(fig)
+>>>>>>> Stashed changes
 
     # --- Print summary ---
     #print(f"  Turn-on Voltage:  {turnon_voltage:.3f} V")
@@ -234,22 +357,51 @@ def extract_turn_on_voltage(x_data: np.array,
     return turnon_voltage
 
 def extract_pinch_off_curve_ranges(x_data: np.array,
-                           y_data: np.array,
-                           noisefloor: float,
-                           gate_type: str,
-                           filepath: str,
-                           filename: str,
-                           plot_results: bool = True):
-    """Identify pinch-off and saturation voltage ranges for a sweep.
+                                   y_data: np.array,
+                                   noisefloor: float,
+                                   gate_type: str,
+                                   filepath: str,
+                                   filename: str
+                                   ):
+    """
+    Description
+    -----------
+    Identify pinch-off and saturation voltage range for a gate-sweep. This function normalizes
+    the sign of the current, selects the scan direction from the zero-voltage point, finds the
+    pinch-off position using slope detection.
+    
+    The saturation voltage is found depending on the
+    type of gate. For accumulation gates, it uses the point of slowest saturation from the gompertz
+    fit. For plunger gates, it uses the upper asymptote from the gompertz fit as a threshold to
+    determine the first voltage that goes above it. For barrier gates, it uses midpoint voltage
+    calculated from the gompertz fit.
 
-    This function normalizes the sign of the current, selects the scan
-    direction from the zero-voltage point, finds the pinch-off position
-    using slope detection, and then locates the saturation region.
+    Parameters
+    -----------
+    x_data : np.array
+        independent variable (voltage) values
+    y_data : np.array
+        dependent variable (current) values
+    noisefloor : float
+        baseline noise of the gate-sweep
+    gate_type : str
+        the type of gate being pinched off, options are 'Accumulation', 'Barrier', and 'Plunger'
+    filepath : str
+        name of directory to save turn-on plot in
+    filename : str
+        name of file to save the turn-on plot under
+
+    Returns
+    -----------
+    voltage_window : tuple(float)
+        for accumulation gates: (pinch-off voltage, saturation voltage),
+        for plunger gates: (pinch-off voltage, saturation voltage),
+        for barriers gates: (pinch-off voltage, midpoint voltage)
     """
 
     # --- Data definitions ---
     
-    # Converts to numpy array 
+    # Ensures numpy array 
     x1 = np.array(x_data)
     y1 = np.array(y_data)
 
@@ -257,7 +409,7 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
         # Flips current sign if SD bias was inversed
         y1 = -y1
 
-    y1_norm = y1/np.max(y1) # Normalizes the data
+    y1_norm = y1/np.max(y1) # Normalizes the data for fitting
 
     # --- Finding Pinch-off Voltage ---
 
@@ -272,7 +424,7 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
         right_abs = abs(x1[start_idx + 1])
         step = 1 if right_abs >= left_abs else -1
 
-    scan_indices = np.arange(start_idx, len(x1), step) if step > 0 else np.arange(start_idx, -1, -1) # mask to scan over
+    scan_indices = np.arange(start_idx, len(x1), step) if step > 0 else np.arange(start_idx, -1, -1) # Mask to scan over
     x_scan = x1[scan_indices]
     y_scan = y1[scan_indices]
     
@@ -316,9 +468,15 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
                     pinch_off_pos = min_pos
                     idx_pinch_off = int(scan_indices[pinch_off_pos])
 
+    # Goes 2 indices towards pinch-off for pinch-off (offset for epsilon)
+    if idx_pinch_off == len(x1) - 1:
+        idx_reduce = 0
+    else:
+        idx_reduce = 2
+    
     # Finds the voltage and current
-    pinch_off_voltage = x1[idx_pinch_off]
-    pinch_off_current = y1_norm[idx_pinch_off]
+    pinch_off_voltage = x1[idx_pinch_off + idx_reduce]
+    pinch_off_current = y1_norm[idx_pinch_off + idx_reduce]
 
     # --- Fit sigmoids (Gompertz function) ---
 
@@ -335,122 +493,128 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
     fit_midpoint_voltage = np.log(B2) / C2
     fit_pinch_off_voltage = fit_midpoint_voltage - (factor / C2)
     fit_saturation_voltage = fit_midpoint_voltage + (factor / C2)
+
     sat_voltage = None
     sat_current = None
 
-    y_fit = gompertz(x1, *popt) # fit data for plotting
+    # Ensures saturation voltage isn't above the maximum gate voltage
+    if fit_saturation_voltage > 1.5:
+        fit_saturation_voltage = 1.5
+
+    y_fit = gompertz(x1, *popt) # Fit data for plotting
 
     # Saturation voltage and current determination based on Gate type
     if gate_type == 'Accumulation':
         sat_voltage = fit_saturation_voltage
-        sat_current = y1_norm[np.argmax(np.isclose(x1, sat_voltage, atol=1e-3, rtol=1e-3))]
-        sat_label = 'Saturation Point'
+        sat_current = y1_norm[np.abs(x1 - sat_voltage).argmin()]
 
     elif gate_type == 'Plunger':
-        for y in np.flip(y1):
-            if np.isclose(y, A2, atol=1e-2, rtol=1e-2):
-                sat_idx = np.argmax(y1 == y)
-                sat_voltage = x1[sat_idx]
-                sat_current = y1_norm[sat_idx]
-                sat_label = 'Saturation Point'
-                break
+        sat_voltage = x1[np.abs(y1 - A2).argmin()]
+        sat_current = y1_norm[np.abs(y1 - A2).argmin()]
 
     elif gate_type == 'Barrier':
         sat_voltage = fit_saturation_voltage
+<<<<<<< Updated upstream
         sat_current = y1_norm[np.argmax(np.isclose(x1, sat_voltage, atol=1e-3, rtol=1e-3))]
         sat_label = 'Saturation Point'
+=======
+        sat_current = y1_norm[np.abs(x1 - sat_voltage).argmin()]
+>>>>>>> Stashed changes
 
     else:
+        # Switch to Logging error so protocol doesn't crash
         raise TypeError("The gate_type given isn't one of the following: 'Accumulation', 'Plunger', 'Barrier'")
 
     # --- Plot data ---
 
-    if plot_results:
+    # Raw data
+    fig, ax = plt.subplots(figsize=(8,6))
+    ax.plot(x1, y1_norm, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
 
-        fig, ax = plt.subplots(figsize=(8,6))
-        ax.plot(x1, y1_norm, '-', color='C0', linewidth=2, label='I ($V_{gate}$)')
+    # Save raw data
+    filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+    fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
 
-        filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
-        fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+    # Plot pinch-off and saturation points, and gompaertz sigmoid fit
+    ax.scatter(pinch_off_voltage, pinch_off_current, color='red', s=100, zorder=5, label='Pinch-off Point')
+    ax.scatter(sat_voltage, sat_current, color='green', s=100, zorder=5, label='Saturation Point')
+    ax.plot(x1, y_fit, '--', color='red', linewidth=2, label='Fitted Sigmoid')
 
-        ax.scatter(pinch_off_voltage, pinch_off_current, color='red', s=100, zorder=5, label='Pinch-off Point')
-        ax.scatter(sat_voltage, sat_current, color='green', s=100, zorder=5, label=sat_label)
-        ax.plot(x1, y_fit, '--', color='red', linewidth=2, label='Fitted Sigmoid')
+    ax.legend(fontsize=20, frameon=False, loc='upper left')
 
-        ax.legend(fontsize=20, frameon=False, loc='upper left')
+    # --- Double-sided arrows showing full range ---
 
-        # --- Double-sided arrows showing full range ---
+    # Define arrow y-positions (swap positions)
+    y_arrow = ax.get_ylim()[1] + 0.05  # Device arrow
 
-        # Define arrow y-positions (swap positions)
+    # Device arrow (now above)
+    ax.annotate(
+        '', xy=(sat_voltage, y_arrow), xytext=(pinch_off_voltage, y_arrow),
+        arrowprops=dict(arrowstyle='<->', color='C0', lw=3.0, shrinkA=0, shrinkB=0),
+        annotation_clip=False
+    )
+    ax.text((sat_voltage + pinch_off_voltage)/2, y_arrow - 0.05*(ax.get_ylim()[1]-ax.get_ylim()[0]),
+            s='', color='C0', ha='center', va='top', fontsize=20)
 
-        y_arrow1 = ax.get_ylim()[1] + 0.05  # Device 1 arrow
+    # --- Characteristic vertical lines extending to the data points ---
 
-        # Device 1 arrow (now above)
-        
-        ax.annotate(
-            '', xy=(sat_voltage, y_arrow1), xytext=(pinch_off_voltage, y_arrow1),
-            arrowprops=dict(arrowstyle='<->', color='C0', lw=3.0, shrinkA=0, shrinkB=0),
-            annotation_clip=False
-        )
-        ax.text((sat_voltage + pinch_off_voltage)/2, y_arrow1 - 0.05*(ax.get_ylim()[1]-ax.get_ylim()[0]),
-                s='', color='C0', ha='center', va='top', fontsize=20)
+    y_pinch = y1_norm[np.argmax(np.isclose(x1, pinch_off_voltage, atol=1e-3))]
 
-        # --- Characteristic vertical lines extending to the data points ---
+    for color, po, sat, label, y_arrow, direction, y_pinch, y_sat in [
+        # Device → arrow above, extend down to data
+        ('C0', pinch_off_voltage, sat_voltage, 'Device 1', y_arrow, 'down', y_pinch, sat_current)
+    ]:
+        if direction == 'up':
+            # Extend upward from arrow to the y-values of the fitted curve
+            ax.vlines(po, ymin=y_arrow, ymax=y_pinch - 0.01, colors=color, linestyles='--', alpha=0.6)
+            ax.vlines(sat, ymin=y_arrow, ymax=y_sat - 0.025, colors=color, linestyles='--', alpha=0.6)
+        else:
+            # Extend downward from arrow to the y-values of the fitted curve
+            ax.vlines(po, ymin=y_pinch + 0.02, ymax=y_arrow, colors=color, linestyles='--', alpha=0.6)
+            ax.vlines(sat, ymin=y_sat - 0.015, ymax=y_arrow, colors=color, linestyles='--', alpha=0.6)
 
-        y_pinch1 = y1_norm[np.argmax(np.isclose(x1, pinch_off_voltage, atol=1e-3))]
+    # --- Labels and formatting ---
 
-        for color, po, sat, label, y_arrow, direction, y_pinch, y_sat in [
-            # Device 1 → arrow above, extend down to data
-            ('C0', pinch_off_voltage, sat_voltage, 'Device 1', y_arrow1, 'down', y_pinch1, sat_current)
-        ]:
-            if direction == 'up':
-                # Extend upward from arrow to the y-values of the fitted curve
-                ax.vlines(po, ymin=y_arrow, ymax=y_pinch - 0.01, colors=color, linestyles='--', alpha=0.6)
-                ax.vlines(sat, ymin=y_arrow, ymax=y_sat - 0.025, colors=color, linestyles='--', alpha=0.6)
-            else:
-                # Extend downward from arrow to the y-values of the fitted curve
-                ax.vlines(po, ymin=y_pinch + 0.02, ymax=y_arrow, colors=color, linestyles='--', alpha=0.6)
-                ax.vlines(sat, ymin=y_sat - 0.015, ymax=y_arrow, colors=color, linestyles='--', alpha=0.6)
+    if gate_type == 'Plunger':
+        ax.set_xlabel(r'V$_{Plunger}$ (V)', fontsize=35)
 
-        # --- Labels and formatting ---
+    elif gate_type == 'Accumulation':
+        ax.set_xlabel(r'V$_{Accumulation}$ (V)', fontsize=35)
 
-        if gate_type == 'Plunger':
-            ax.set_xlabel(r'V$_{Plunger}$ (V)', fontsize=35)
+    elif gate_type == 'Barrier':
+        ax.set_xlabel(r'V$_{Barrier}$ (V)', fontsize=35)
+    
+    ax.set_ylabel('I (nA)', fontsize=35)
 
-        elif gate_type == 'Accumulation':
-            ax.set_xlabel(r'V$_{Accumulation}$ (V)', fontsize=35)
+    ax.minorticks_on()
+    ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
+    ax.tick_params(direction='in', length=5, width=1.2, labelsize=18, top=True, right=True)
 
-        elif gate_type == 'Barrier':
-            ax.set_xlabel(r'V$_{Barrier}$ (V)', fontsize=35)
-        
-        ax.set_ylabel('I (nA)', fontsize=35)
+    xticks_span = np.linspace(x1.min(), x1.max(), 5)
 
-        ax.minorticks_on()
-        ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
-        ax.tick_params(direction='in', length=5, width=1.2, labelsize=18, top=True, right=True)
+    ax.set_xticks(xticks_span)
+    ax.set_xticklabels([f'{xticks_span[0]:.2f}', '', f'{xticks_span[2]:.2f}', '', f'{xticks_span[-1]:.2f}'], fontsize=25)
 
-        xticks_span = np.linspace(x1.min(), x1.max(), 5)
+    yticks_span = np.linspace(y1_norm.min(), y1_norm.max(), 5)
 
-        ax.set_xticks(xticks_span)
-        ax.set_xticklabels([f'{xticks_span[0]:.2f}', '', f'{xticks_span[2]:.2f}', '', f'{xticks_span[-1]:.2f}'], fontsize=25)
+    ax.set_yticks(yticks_span)
+    ax.set_yticklabels([f'{y1.min():.2f}', '', '', '', f'{y1.max():.3f}'], fontsize=25)
 
-        yticks_span = np.linspace(y1_norm.min(), y1_norm.max(), 5)
+    # Extend y-limits slightly to make space for arrows
 
-        ax.set_yticks(yticks_span)
-        ax.set_yticklabels([f'{y1.min():.2f}', '', '', '', f'{y1.max():.3f}'], fontsize=25)
+    ax.set_xlim(ax.get_xlim()[0], ax.get_xlim()[1])
+    ax.set_ylim(ax.get_ylim()[0], ax.get_ylim()[1])
 
-        # Extend y-limits slightly to make space for arrows
+    plt.tight_layout()
 
-        ax.set_xlim(ax.get_xlim()[0], ax.get_xlim()[1])
-        ax.set_ylim(ax.get_ylim()[0], ax.get_ylim()[1])
+    # Save final plot
+    filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+    fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
-        plt.tight_layout()
+    plt.close(fig)
+    # plt.show()
 
-        filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
-        fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
-
-        plt.close(fig)
-
+    # Define a voltage/pinch-off window to return for next step in protocol
     voltage_window = (pinch_off_voltage, sat_voltage)
 
     return voltage_window
@@ -459,28 +623,75 @@ def extract_max_conductance_points(x_data: np.array,
                                    y_data: np.array,
                                    filepath: str,
                                    filename: str,
+<<<<<<< Updated upstream
                                    peak_height: list[float] = [None, None],
                                    peak_prominence: list[float] = [None, None],
                                    peak_width: list[float] = [None, None]
+=======
+                                   peak_height_factor: list[float] = [None, None],
+                                   abs_peak_height: list[float] = [None, None],
+                                   peak_prominence_factor: list[float] = [None, None],
+                                   peak_width: list[tuple] = [None, None]
+>>>>>>> Stashed changes
                                    ):
-    """Analyze current data to identify the largest conductance features.
+    """
+    Description
+    -----------
+    Analyze current data to identify the largest conductance features.
 
     This function plots the current and its derivative, then highlights
     the most extreme conductance peaks and valleys.
+
+    Parameters
+    -----------
+    x_data : np.array
+        independent variable (voltage) values
+    y_data : np.array
+        dependent variable (current) values
+    peak_height_factor : list[float]
+        percentage of maximum conductance to set the minimum absolute peak height threshold in conductance, for [positive peaks, negative peaks]
+    abs_peak_height : list[float]
+        absolute minimum conductance threshold for peak detection
+    peak_prominence_factor : list[float]
+        percentage of maximum conductance to set the minimum peak prominence threshold in conductance, for [positive peaks, negative peaks]
+    peak_width : list[tuple]
+        peak width range in pixel space, for [positive peaks, negative peaks]
+
+    Returns
+    -----------
+    best_sens_pts : list[tuple]
+        the most positive and negative conductance peaks in current space
+    all_sens_pts : tuple(np.array, np.array)
+        first np.array is the voltages where all the peaks occur, second np.array is their corresponding conductances 
     """
 
+    # --- Data definitions ---
+    
+    # Ensures numpy array 
     x1 = np.array(x_data)
     y1 = np.array(y_data)
 
-    # Now, we calculate the derivative and replot
-
+    # Calculate the derivative
     dIdV = np.gradient(y1, x1)
 
-    if peak_height == [None, None]:
-        peak_height = [0.25 * np.max(dIdV), 0.25 * np.max(dIdV)]
-    if peak_prominence == [None, None]:
-        peak_prominence = [0.3 * np.max(dIdV), 0.3 * np.max(dIdV)]
+    # Ensures only 1 kind of height threshold is given
+    if abs_peak_height != [None, None] and peak_height_factor != [None, None]:
+        # Switch to Logging error so protocol doesn't crash
+        raise ValueError("Both abs_peak_height and peak_height_factor values were given. Please ensure only one of these arguments are given!")
 
+    # Implements default if no user-defined values are given
+
+    if abs_peak_height != [None, None]:
+        peak_height = [abs_peak_height[0], abs_peak_height[1]]
+    elif peak_height_factor == [None, None]:
+        peak_height = [0.25 * np.max(dIdV), 0.25 * np.max(dIdV)]
+    else:
+        peak_height = [peak_height_factor[0] * np.max(dIdV), peak_height_factor[1] * np.max(dIdV)]
+
+    if peak_prominence_factor == [None, None]:
+        peak_prominence = [0.3 * np.max(dIdV), 0.3 * np.max(dIdV)]
+    else:
+        peak_prominence = [peak_prominence_factor[0] * np.max(dIdV), peak_prominence_factor[1] * np.max(dIdV)]
 
     # --- Find two largest and two smallest conductance points (positive + negative extremes) ---
 
@@ -489,7 +700,24 @@ def extract_max_conductance_points(x_data: np.array,
 
     peak_idx = np.sort(np.concatenate([peak_idx_pos, peak_idx_neg]))
 
-    # Extract the corresponding data points
+    # Check if no peaks are found, and safely end the function whilst saving the raw data
+
+    if peak_idx.size == 0:
+
+        logger.info("No conductance peaks were found")
+
+        # Saves data even if no peaks are found, so the user can see why the peak detection failed
+        fig = plt.figure()
+        plt.plot(x1, y1)
+        plt.close(fig)
+
+        filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+        fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
+        raise ValueError("No conductance peaks were found") # Switch to Logging error so protocol doesn't crash
+
+    # Extract data points from peaks
+
     x_top = x1[peak_idx]
     I_top = y1[peak_idx]
     G_top = dIdV[peak_idx]
@@ -505,12 +733,22 @@ def extract_max_conductance_points(x_data: np.array,
     G_min = dIdV[min_idx]
 
     best_sens_pts = [(x_max, I_max), (x_min, I_min)]
+    all_sens_pts = (x_top, G_top)
 
     # Create two subplots that share the x-axis
     fig, (ax1, ax2) = plt.subplots(2, 1, sharex=False, figsize=(8, 6))
 
-    # --- Top panel: Current ---
+    # --- Top panel: Current Data ---
     ax1.plot(x1, y1, color='#2c5aa0', linewidth=1)
+
+    # --- Bottom panel: Conductance Data ---
+    ax2.plot(x1, dIdV, color='#2c5aa0', linewidth=1)
+
+    # Save raw data
+    filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+    fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
+    # --- Top panel: Current Analysis and Labelling ---
     for i in range(len(x_top)):
         if I_top[i] == I_max:
             ax1.scatter(x_top[i], I_top[i], facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Max I')
@@ -523,8 +761,7 @@ def extract_max_conductance_points(x_data: np.array,
     ax1.set_xlim(min(x1), max(x1))
     ax1.tick_params(labelbottom=True)
 
-    # --- Bottom panel: Conductance ---
-    ax2.plot(x1, dIdV, color='#2c5aa0', linewidth=1)
+    # --- Bottom panel: Conductance Analysis and Labelling ---
     for i in range(len(x_top)):
         if G_top[i] == G_max:
             ax2.scatter(x_top[i], G_top[i], facecolors='none', edgecolors="#01FF05", s=100, linewidths=2, zorder=5, label='Max G')
@@ -537,7 +774,7 @@ def extract_max_conductance_points(x_data: np.array,
     ax1.set_ylim(bottom=0)
     ax2.set_xlim(min(x1), max(x1))
 
-    # --- Create the connection line ---
+    # --- Create the connection line between top and bottom panels ---
     for i in range(len(x_top)):
         con = ConnectionPatch(
             xyA=(x_top[i], I_top[i]), coordsA=ax1.transData,
@@ -546,7 +783,7 @@ def extract_max_conductance_points(x_data: np.array,
         )
         fig.add_artist(con)
 
-    # --- Create a custom legend entry (hollow circle) ---
+    # --- Create custom legend entries (hollow circles) ---
     legend_marker = mlines.Line2D([], [], color='#FF5500', marker='o',
                                 markerfacecolor='none', markersize=10,
                                 linewidth=0, label='High Sensitivity Points')
@@ -557,7 +794,7 @@ def extract_max_conductance_points(x_data: np.array,
 
     # --- Custom tick labels: only min and max shown ---
 
-    # Get existing ticks (so tick marks stay)
+    # Get existing ticks
     for ax in [ax1, ax2]:
 
         ax.minorticks_on()
@@ -582,13 +819,23 @@ def extract_max_conductance_points(x_data: np.array,
 
     # --- Adjust layout ---
     plt.subplots_adjust(hspace=0.40)
+<<<<<<< Updated upstream
     
     filepath = os.path.join(filepath, filename)
     fig.savefig(filepath, dpi = 'figure', bbox_inches='tight')
     
     #plt.show()
+=======
+    # plt.show()
+    
+    # Saves final plot
+    filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+    fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+>>>>>>> Stashed changes
 
-    return best_sens_pts, (x_top, G_top)
+    plt.close(fig)
+
+    return best_sens_pts, all_sens_pts
 
 def extract_working_point(lb_data: np.array,
                           rb_data: np.array,
@@ -602,79 +849,122 @@ def extract_working_point(lb_data: np.array,
                           maxAngleDeg: float = -30,
                           minLineLength: int = 50,
                           maxLineGap: int = 200,
-                          debug: bool = False,
-                          plot_results: bool = True):
-    
+                          debug: bool = False
+                          ):
     """
+    Description
+    -----------
     Find working-point lines in a 2D barrier sweep image.
 
     This function converts raw barrier voltage and current data into an image,
     applies ridge detection and Hough transform filtering, and returns the
-    extracted working-point lines that correspond to relevant device ridges.
+    extracted working-points and lines that correspond to relevant device ridges.
+
+    Parameters
+    -----------
+    lb_data : np.array
+        independent left barrier voltage values
+    rb_data : np.array
+        independent right barrier voltage values
+    current_data : np.array
+        dependent current values
+    gates : list[str]
+        barrier gate names, [left barrier, right barrier]
+    DotTuning : str
+        'SET' for charge sensor tuning, and 'Triple Dot' for triple dot tuning
+    barrier_pinch_offs : list[float]
+        barrier gate pinch-off voltages, [left barrier, right barrier]
+    filepath : str
+        name of directory to save turn-on plot in
+    filename : str
+        name of file to save the turn-on plot under
+    minAngleDeg : float
+        minimum angle threshold to find working-point/hough lines in degrees
+    maxAngleDeg : float
+        maximum angle threshold to find working-point/hough lines in degrees
+    minLineLength : int
+        minimum length of hough lines in pixel space
+    maxLineGap : int
+        maximum gap between 2 hough lines in pixel space
+    debug : bool
+        toggles debug mode, which plots images of each step in the process
+
+    Returns
+    -----------
+    best_shifted_point : tuple(float)
+        the working-point closest to both barriers pinch-off voltage (bottom-left corner of plot).
+    shifted_points : list
+        all working-point candidates found for DotTuning of 'Triple Dot'
+    perp_bias_points : list
+        all working-point candidates found for DotTuning of 'SET'
+    perp_traces_for_plot : list
+        the perpendicular lines found at each working-point candidate
     """
 
-    # We start by ensuring our inputs are numpy arrays
-
+    # --- Data definitions ---
+    
+    # Ensures numpy array
     lb_data = np.array(lb_data)
     rb_data = np.array(rb_data)
     current_data = np.array(current_data)
     barrier_pinch_offs = np.array(barrier_pinch_offs)
+<<<<<<< Updated upstream
     device_type = 'electron'
+=======
+>>>>>>> Stashed changes
 
-    # 2. Establish uniform coordinate grids
-    # (Assumes original data represents a regular mesh grid)
     ux = np.unique(lb_data)
     uy = np.unique(rb_data)
 
-    # Define your clipping thresholds here (adjust values as needed)
-    lb_min, lb_max = barrier_pinch_offs[0], ux.max()  # Replace with specific limits if desired
-    rb_min, rb_max = barrier_pinch_offs[1], uy.max()  # Replace with specific limits if desired
+    # Define your clipping thresholds here
+    lb_min, lb_max = barrier_pinch_offs[0], ux.max()
+    rb_min, rb_max = barrier_pinch_offs[1], uy.max()
 
-    # 3. Create a boolean mask matching the original 1D data structure
+    # Create a boolean mask matching the original 1D data structure
     clip_mask = (
         (lb_data >= lb_min) & (lb_data <= lb_max) & 
         (rb_data >= rb_min) & (rb_data <= rb_max)
     )
 
-    # 4. Apply the clipping mask to all arrays
+    # Apply the clipping mask to all arrays
     lb_data = lb_data[clip_mask]
     rb_data = rb_data[clip_mask]
     current_data = current_data[clip_mask]
 
-    # 5. Handle polarity and device typing
+    # Handle polarity
     if current_data[0] < 0:
         current_data = -current_data
 
+    # Determines device type
+    device_type = 'hole'
     if np.average(lb_data) > 0 and np.average(rb_data) > 0:
         current_data = np.flip(current_data, axis=None)
         device_type = 'electron'
 
-    # 6. Calculate new dimensions based on unique clipped values
+    # Calculate new dimensions based on unique clipped values
     nx_new = len(np.unique(lb_data))
     ny_new = len(np.unique(rb_data))
 
-    # 7. Reshape the 1D clipped data into a 2D grid
+    # Reshape the 1D clipped data into a 2D grid
     if current_data.ndim == 1:
         # Verify the clipped size matches the expected 2D grid dimensions
         if current_data.size == nx_new * ny_new:
             current_data = current_data.reshape((ny_new, nx_new))
         else:
+            # Switch to Logging error so protocol doesn't crash
             raise ValueError("Clipped data size does not form a perfect rectangular grid.")
 
     ny, nx = current_data.shape
 
-    # Here, we define the voltage ranges
-
+    # Here, we define the voltage ranges for the barriers
     lb_voltages = np.linspace(lb_data.min(), lb_data.max(), nx)
     rb_voltages = np.linspace(rb_data.min(), rb_data.max(), ny)
     
     logger.info("calculation starting...")
 
-    # ---------- Gradient Calculation and Ridge Detection ----------
+    # --- Gradient Calculation and Ridge Detection ---
     
-
     # Now, compute the gradient and the log of the gradient
-
     Gx, Gy = np.gradient(current_data)
     G = (1.0 / np.sqrt(2.0)) * np.sqrt(Gx**2 + Gy**2)
 
@@ -684,8 +974,8 @@ def extract_working_point(lb_data: np.array,
 
     G_uint = (255 * G_scaled).astype(np.uint8)
 
-    low = int(0.10 * 255)    # discard noise
-    high = int(0.35 * 255)  # discard strongest boundaries
+    low = int(0.10 * 255) # Discard noise
+    high = int(0.35 * 255) # Discard strongest boundaries
 
     # These next lines threshold above and below to keep a certain color band
 
@@ -693,7 +983,6 @@ def extract_working_point(lb_data: np.array,
     _, band_passed = cv2.threshold(low_passed, high, 255, cv2.THRESH_TOZERO_INV)
 
     # Here, we apply ridge detection, meaning we are detecting peaks within the image, then finding the middles of those peaks, widthwise
-
     epsilon = 1e-12
 
     ridge = sato(band_passed, sigmas=[1, 2, 3], black_ridges=False)
@@ -710,11 +999,11 @@ def extract_working_point(lb_data: np.array,
     # Now, we limit our analysis to the red zone based on device type
     # Convert barrier_pinch_offs to pixel coordinates
     
-    # pixel index arrays (needed for interpolation)
+    # Pixel index arrays for interpolation
     x_index_arr = np.arange(nx)
     y_index_arr = np.arange(ny)
 
-    # Selects mid point of x and y axes
+    # Selects midpoint of x and y axes
     x_idx_mid = np.interp((lb_voltages.min() + lb_voltages.max()) / 2, lb_voltages, x_index_arr)
     y_idx_mid = np.interp((rb_voltages.min() + rb_voltages.max()) / 2, rb_voltages, y_index_arr)
     x_idx_mid = int(np.clip(x_idx_mid, 0, nx - 1))
@@ -725,12 +1014,12 @@ def extract_working_point(lb_data: np.array,
     if device_type == 'electron':
         # Electron: analyze bottom-left
         ridge_masked[:y_idx_mid, :x_idx_mid] = ridge_filtered[:y_idx_mid, :x_idx_mid]
-    else:  # hole
+    else:
         # Hole: analyze top-right
         ridge_masked[y_idx_mid:, x_idx_mid:] = ridge_filtered[y_idx_mid:, x_idx_mid:]
 
     # From these edges, we detect lines using a probabilistic hough transform.
-    # Use a slightly lower threshold and tune the minimum required segment length so long bottom-left lines are prioritized.
+    # Uses a slightly lower threshold and tunes the minimum required segment length so long lines are prioritized.
     hough_threshold = max(5, int(0.02 * max(nx, ny)))
     hough_length = max(12, int(minLineLength * 0.15))
     hough_gap = max(1, int(maxLineGap * 0.03))
@@ -805,12 +1094,11 @@ def extract_working_point(lb_data: np.array,
     # if not filtered_lines:
     #     return []
 
-    # Previously, we limited analysis to the bottom left quadrant, here we're defining the voltage range for that quadrant
+    # Here we're defining the voltage range for that quadrant
     # Using the pinch-off voltages from barrier_pinch_offs parameter
 
-    # enlarge region by adding 0.1 V to pinch-off values
-    lb_mid_volt = (lb_voltages.min() + lb_voltages.max()) / 2  # First value: x-axis (left/bottom gate)
-    rb_mid_volt = (rb_voltages.min() + rb_voltages.max()) / 2  # Second value: y-axis (right/bottom gate)
+    lb_mid_volt = (lb_voltages.min() + lb_voltages.max()) / 2  # First value: x-axis (left barrier gate)
+    rb_mid_volt = (rb_voltages.min() + rb_voltages.max()) / 2  # Second value: y-axis (right barrier gate)
 
     perp_candidates = []
     perp_traces_for_plot = []
@@ -819,36 +1107,36 @@ def extract_working_point(lb_data: np.array,
     perp_samples = 400
     smooth_sigma = 2.0
 
-    # Now, for each filtered line, we define a line perpendicular to it, then find the peaks in current along them
+    # Now, for each filtered line, we define a line perpendicular to it
 
     logger.info("finding traces...")
 
     for x1, y1, x2, y2 in filtered_lines:
         
-        # midpoints
+        # Midpoints
         mx = 0.5 * (x1 + x2)
         my = 0.5 * (y1 + y2)
 
-        # distances
+        # Distances
         dx, dy = x2 - x1, y2 - y1
         L = np.hypot(dx, dy)
         if L == 0:
             continue
 
-        # perpendicular direction
+        # Perpendicular direction
         pxu, pyu = -dy / L, dx / L
 
-        # length along the perpendicular lines in pixel space
+        # Length along the perpendicular lines in pixel space
         t = np.linspace(-perp_length_pixels / 2,
                         perp_length_pixels / 2,
                         perp_samples)
 
-        # Limiting the values of the array to the bottom left quadrant
+        # Limiting the values of the array to the quadrant in analysis
         samp_x = np.clip(mx + pxu * t, 0, nx - 1)
         samp_y = np.clip(my + pyu * t, 0, ny - 1)
         trace_id = len(perp_traces_for_plot)
 
-        # defining current
+        # Defining current trace
         trace = map_coordinates(
             current_data,
             [samp_y, samp_x],
@@ -856,7 +1144,7 @@ def extract_working_point(lb_data: np.array,
             mode="reflect"
         )
 
-        # smooth the trace
+        # Smooth the trace
         trace_smooth = gaussian_filter1d(trace, smooth_sigma)
         
         # Calculating conductance
@@ -873,7 +1161,7 @@ def extract_working_point(lb_data: np.array,
             "s": s.copy()
         }
 
-        # find local maxima of current
+        # Find local maxima of current
         noise_sigma = 1.4826 * np.median(np.abs(conductance - np.median(conductance)))
         prominence_thresh = 4.0 * noise_sigma
         peaks, _ = signal.find_peaks(conductance,
@@ -883,7 +1171,7 @@ def extract_working_point(lb_data: np.array,
         if len(peaks) == 0:
             continue
 
-        # defining the the maxima in voltage space from pixel space
+        # Defining the the maxima in voltage space from pixel space
         peak_idx = peaks
         px = samp_x[peak_idx]
         py = samp_y[peak_idx]
@@ -891,10 +1179,10 @@ def extract_working_point(lb_data: np.array,
         vx = np.interp(px, x_index_arr, lb_voltages)
         vy = np.interp(py, y_index_arr, rb_voltages)
 
-        # restrict to red zone based on device type
+        # Restrict to red zone based on device type
         if device_type == 'electron':
             valid = (vx < lb_mid_volt) & (vy < rb_mid_volt)
-        else:  # hole
+        else:  # Hole
             valid = (vx > lb_mid_volt) & (vy > rb_mid_volt)
         peak_idx = peak_idx[valid]
         px = px[valid]
@@ -905,7 +1193,7 @@ def extract_working_point(lb_data: np.array,
         if len(peak_idx) == 0:
             continue
 
-        # compiling data into trace info
+        # Compiling data into trace info
         for k, p in enumerate(peak_idx):
             prom = signal.peak_prominences(trace_smooth, peak_idx)[0]
             score = prom[k]
@@ -933,17 +1221,15 @@ def extract_working_point(lb_data: np.array,
 
     # ---------- Selecting Final Bias Points ----------
 
-    # First, we sort the points in order of increasing current
-    
     logger.info("selecting bias points...")
 
     logger.info(f"filtered_lines: {len(filtered_lines)}")
     logger.info(f"perp_candidates: {len(perp_candidates)}")
 
+    # First, we sort the points in order of increasing current
     perp_candidates.sort(key=lambda x: -x[0])
 
     # Then, we pick the top 4 points of highest current
-
     N_FINAL = 4
     top_candidates = perp_candidates[:N_FINAL]
 
@@ -966,9 +1252,10 @@ def extract_working_point(lb_data: np.array,
     logger.info("selecting working points...")
 
     dist_to_pinch_off_corner = {}
+    shift_voltage = 0.15 # Amount we want to shift the triple dot working point by in voltage space
 
-    # Compute selected working points. For Triple Dot, shift each point 0.1 V in the
-    # opposite yellow trace direction instead of perpendicular to it.
+    # Compute selected working points. For Triple Dot, shift each point 0.15 V in the
+    # yellow trace direction (perpendicular)
     selected_working_points = []
     traces_by_id = {tr["trace_id"]: tr for tr in perp_traces_for_plot}
     for i, cand in enumerate(top_candidates):
@@ -983,7 +1270,7 @@ def extract_working_point(lb_data: np.array,
                 norm_dir = np.hypot(direction[0], direction[1])
                 if norm_dir > 0:
                     unit_dir = direction / norm_dir
-                    shift_vec = -unit_dir * 0.1
+                    shift_vec = -unit_dir * shift_voltage
                     selected_working_points.append((float(round(vx_c + shift_vec[0], 3)), float(round(vy_c + shift_vec[1], 3))))
                 else:
                     selected_working_points.append((round(vx_c, 3), round(vy_c, 3)))
@@ -1001,8 +1288,7 @@ def extract_working_point(lb_data: np.array,
         if tr["trace_id"] in selected_trace_ids
     ]
 
-    # Now, we overlay perpendicular traces (strictly clipped to BL quadrant)
-    
+    # Now, we overlay perpendicular traces (strictly clipped to the quadrant in analysis)
     for tr in perp_traces_for_plot:
 
         logger.info("for loop!")
@@ -1053,273 +1339,272 @@ def extract_working_point(lb_data: np.array,
 
     logger.info("Plotting Results...")
 
-    if plot_results:
+    # Create figure and axes
+    fig, ax = plt.subplots(figsize=(10,10))
 
-        # Create figure and axes
-        fig, ax = plt.subplots(figsize=(10,10))
+    # Show image
+    im = ax.imshow(
+        current_data,
+        extent=[lb_data.min(), lb_data.max(), rb_data.min(), rb_data.max()],
+        origin='lower',
+        aspect='auto',
+        cmap='coolwarm'
+    )
 
-        # Show image
-        im = ax.imshow(
-            current_data,
-            extent=[lb_data.min(), lb_data.max(), rb_data.min(), rb_data.max()],
-            origin='lower',
-            aspect='auto',
-            cmap='coolwarm'
+    # Save raw data
+    filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+    fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
+    # Set axis limits
+    ax.set_xlim(lb_data.min(), lb_data.max())
+    ax.set_ylim(rb_data.min(), rb_data.max())
+
+    # Round and Set ticks
+    step = 0.001
+    def round_to_step(x, step): return step * np.round(x / step)
+
+    x0, x1 = round_to_step(lb_data.min(), step), round_to_step(lb_data.max(), step)
+    y0, y1 = round_to_step(rb_data.min(), step), round_to_step(rb_data.max(), step)
+
+    ax.set_xticks([np.round(lb_data.min(), 3), np.round(lb_data.max(), 3)])
+    ax.set_yticks([np.round(rb_data.min(), 3), np.round(rb_data.max(), 3)])
+    ax.set_xticklabels([str(np.round(lb_data.min(), 3)), str(np.round(lb_data.max(), 3))], fontsize=30)
+    ax.set_yticklabels([str(np.round(rb_data.min(), 3)), str(np.round(rb_data.max(), 3))], fontsize=30)
+
+    ax.tick_params(
+        which="major",
+        direction="in",
+        length=6,
+        width=1.2,
+        top=True,
+        right=True
+    )
+
+    ax.minorticks_on()
+
+    ax.xaxis.set_minor_locator(AutoMinorLocator(9))
+    ax.yaxis.set_minor_locator(AutoMinorLocator(9))
+
+    # Style minor ticks (no labels by default)
+    ax.tick_params(
+        which="minor",
+        direction="in",
+        length=3,
+        width=1.0,
+        top=True,
+        right=True
+    )
+
+    # Axis labels
+    ax.set_xlabel(rf'V$_{{{gates[0]}}}$ (V)', fontsize=35, labelpad = -25)
+    ax.set_ylabel(rf'V$_{{{gates[1]}}}$ (V)', fontsize=35)
+
+    ax.yaxis.set_label_coords(-0.025, 0.40)
+
+    # Create horizontal colorbar above the plot
+    from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+    cax = inset_axes(
+        ax,
+        width="100%",
+        height="50%",
+        loc="upper center",
+        bbox_to_anchor=(0, 1.08, 1, 0.1),
+        bbox_transform=ax.transAxes,
+        borderpad=0
+    )
+    cbar = plt.colorbar(im, cax=cax, orientation="horizontal")
+    cbar.set_label("I (nA)", fontsize=35, labelpad=10)
+    cbar.ax.xaxis.set_ticks_position("bottom")
+    cbar.ax.xaxis.set_label_position("top")
+    cbar_ticks = np.linspace(0, current_data.max(), 5)
+    cbar.set_ticks(cbar_ticks)
+    cbar.set_ticklabels([f'{tick:.2f}' for tick in cbar_ticks])
+    cbar.ax.tick_params(labelsize=25, direction="in", length=6)
+
+    cbar.ax.minorticks_on()
+
+    cbar.ax.xaxis.set_minor_locator(AutoMinorLocator(5))
+
+    # Style minor ticks
+    cbar.ax.tick_params(
+        which="minor",
+        direction="in",
+        length=4,
+        width=1.0
+    )
+
+    # Block Boundary and shaded region based on device type
+    if device_type == 'electron':
+        # Bottom-left quadrant boundary
+
+        # Top edge of the bottom-left quadrant
+        ax.plot(
+            [lb_data.min(), lb_mid_volt],   # left edge -> midpoint
+            [rb_mid_volt, rb_mid_volt],     # horizontal line at y midpoint
+            linestyle='--',
+            color='red',
+            linewidth=1.2,
+            alpha=0.9
         )
 
-        filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
-        fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+        # Right edge of the bottom-left quadrant
+        ax.plot(
+            [lb_mid_volt, lb_mid_volt],     # vertical line at x midpoint
+            [rb_data.min(), rb_mid_volt],   # bottom edge -> midpoint
+            linestyle='--',
+            color='red',
+            linewidth=1.2,
+            alpha=0.9
+        )
 
-        # Set axis limits
-        ax.set_xlim(lb_data.min(), lb_data.max())
-        ax.set_ylim(rb_data.min(), rb_data.max())
+        # Shade only the bottom-left quadrant
+        rect = Rectangle(
+            (lb_data.min(), rb_data.min()),
+            lb_mid_volt - lb_data.min(),
+            rb_mid_volt - rb_data.min(),
+            facecolor='red',
+            alpha=0.2,
+            edgecolor=None,
+            zorder=2
+        )
+        ax.add_patch(rect)
 
-        # Round ticks
-        step = 0.001
-        def round_to_step(x, step): return step * np.round(x / step)
+    else:  # Hole
+        # Top-right quadrant boundary
 
-        x0, x1 = round_to_step(lb_data.min(), step), round_to_step(lb_data.max(), step)
-        y0, y1 = round_to_step(rb_data.min(), step), round_to_step(rb_data.max(), step)
+        # Bottom edge of the top-right quadrant
+        ax.plot(
+            [lb_mid_volt, lb_data.max()],   # midpoint -> right edge
+            [rb_mid_volt, rb_mid_volt],     # horizontal line at y midpoint
+            linestyle='--',
+            color='red',
+            linewidth=1.2,
+            alpha=0.9
+        )
+
+        # Left edge of the top-right quadrant
+        ax.plot(
+            [lb_mid_volt, lb_mid_volt],     # vertical line at x midpoint
+            [rb_mid_volt, rb_data.max()],   # midpoint -> top edge
+            linestyle='--',
+            color='red',
+            linewidth=1.2,
+            alpha=0.9
+        )
+
+        # Shade only the top-right quadrant
+        rect = Rectangle(
+            (lb_mid_volt, rb_mid_volt),
+            lb_data.max() - lb_mid_volt,
+            rb_data.max() - rb_mid_volt,
+            facecolor='red',
+            alpha=0.2,
+            edgecolor=None,
+            zorder=2
+        )
+        ax.add_patch(rect)
+
+    # Hough lines
+    for x1, y1, x2, y2 in filtered_lines:
+        # Compute voltage coordinates
+        v1x = np.interp(x1, x_index_arr, lb_voltages)
+        v1y = np.interp(y1, y_index_arr, rb_voltages)
+        v2x = np.interp(x2, x_index_arr, lb_voltages)
+        v2y = np.interp(y2, y_index_arr, rb_voltages)
         
-        ax.set_xticks([np.round(lb_data.min(), 3), np.round(lb_data.max(), 3)])
-        ax.set_yticks([np.round(rb_data.min(), 3), np.round(rb_data.max(), 3)])
-        ax.set_xticklabels([str(np.round(lb_data.min(), 3)), str(np.round(lb_data.max(), 3))], fontsize=30)
-        ax.set_yticklabels([str(np.round(rb_data.min(), 3)), str(np.round(rb_data.max(), 3))], fontsize=30)
+        # Uncomment below to see the detected Hough lines
+        # ax.plot([v1x, v2x], [v1y, v2y], c='black', lw=1.2) 
 
-        ax.tick_params(
-            which="major",
-            direction="in",
-            length=6,
-            width=1.2,
-            top=True,
-            right=True
-        )
+    # Perpendicular traces and peaks
+    dot_tuning_shift = shift_voltage if str(DotTuning).strip().lower() == 'triple dot' else 0.0
 
-        ax.minorticks_on()
+    shifted_points = []
+    best_shifted_point = None
+    green_circle = False
 
-        ax.xaxis.set_minor_locator(AutoMinorLocator(9))
-        ax.yaxis.set_minor_locator(AutoMinorLocator(9))
+    for tr in perp_traces_for_plot:
+        idx = tr.get("chosen_block", None)
+        if idx is None or len(idx) == 0: continue
+        vx = np.interp(tr["px"], np.arange(nx), lb_voltages)
+        vy = np.interp(tr["py"], np.arange(ny), rb_voltages)
+        ax.plot(vx[idx], vy[idx], c='yellow', lw=1.5, alpha=0.9)
+        valid_peaks = np.intersect1d(tr.get("peak_idx", []), idx)
 
-        # Style minor ticks (no labels by default)
-        ax.tick_params(
-            which="minor",
-            direction="in",
-            length=3,
-            width=1.0,
-            top=True,
-            right=True
-        )
-        
-        # Axis labels
-        ax.set_xlabel(rf'V$_{{{gates[0]}}}$ (V)', fontsize=35, labelpad = -25)
-        ax.set_ylabel(rf'V$_{{{gates[1]}}}$ (V)', fontsize=35)
+        if valid_peaks.size > 0:
+            # Plot each peak and shift it along the perpendicular normal towards origin
+            try:
+                for p in np.atleast_1d(valid_peaks):
+                    i = int(p)
+                    vx_p = float(vx[i])
+                    vy_p = float(vy[i])
 
-        ax.yaxis.set_label_coords(-0.025, 0.40)
+                    # Compute a local tangent along the yellow trace and shift along it
+                    if 1 <= i < (len(vx) - 1):
+                        ddx = float(vx[i + 1]) - float(vx[i - 1])
+                        ddy = float(vy[i + 1]) - float(vy[i - 1])
+                    else:
+                        # Fallback to using the chosen block endpoints
+                        ddx = float(vx[idx][-1]) - float(vx[idx][0])
+                        ddy = float(vy[idx][-1]) - float(vy[idx][0])
 
-        # Create horizontal colorbar above the axes
-        from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-        cax = inset_axes(
-            ax,
-            width="100%",
-            height="50%",
-            loc="upper center",
-            bbox_to_anchor=(0, 1.08, 1, 0.1),
-            bbox_transform=ax.transAxes,
-            borderpad=0
-        )
-        cbar = plt.colorbar(im, cax=cax, orientation="horizontal")
-        cbar.set_label("I (nA)", fontsize=35, labelpad=10)
-        cbar.ax.xaxis.set_ticks_position("bottom")
-        cbar.ax.xaxis.set_label_position("top")
-        cbar_ticks = np.linspace(0, current_data.max(), 5)
-        cbar.set_ticks(cbar_ticks)
-        cbar.set_ticklabels([f'{tick:.2f}' for tick in cbar_ticks])
-        cbar.ax.tick_params(labelsize=25, direction="in", length=6)
+                    norm_dir = np.hypot(ddx, ddy)
+                    if norm_dir > 0:
+                        shift_dir = np.array([ddx / norm_dir, ddy / norm_dir])
+                        shift_vec = -shift_dir * dot_tuning_shift
+                    else:
+                        shift_dir = np.array([0.0, 1.0])
+                        shift_vec = shift_dir * dot_tuning_shift
 
-        cbar.ax.minorticks_on()
+                    sx = vx_p + float(shift_vec[0])
+                    sy = vy_p + float(shift_vec[1])
 
-        cbar.ax.xaxis.set_minor_locator(AutoMinorLocator(5))
+                    # Debug: report computed shift direction and shift vector
+                    if debug:
+                        try:
+                            print(f"DEBUG_SHIFT peak={i} vx={vx_p:.6f} vy={vy_p:.6f} dir=({shift_dir[0]:.6f},{shift_dir[1]:.6f}) shift_vec=({shift_vec[0]:.6f},{shift_vec[1]:.6f})")
+                            # Draw a cyan debug line showing the shift direction
+                            ax.plot([vx_p, sx], [vy_p, sy], c='cyan', lw=1.5, alpha=0.9, zorder=9)
+                        except Exception:
+                            pass
 
-        # Style minor ticks
-        cbar.ax.tick_params(
-            which="minor",
-            direction="in",
-            length=4,
-            width=1.0
-        )
+                    # Shifted star (exactly dot_tuning_shift along the yellow perp)
+                    ax.scatter(sx, sy, s=200, c='white', marker='*', edgecolors='black', zorder=10)
+                    shifted_points.append((sx, sy))
 
-        # Block Boundary and shaded region based on device type
-        
-        if device_type == 'electron':
-            # Bottom-left quadrant boundary
+                    if vx_p == closest_candidate[0] and vy_p == closest_candidate[1]:
+                        best_shifted_point = (sx, sy)
+                        green_circle = True
 
-            # Top edge of the bottom-left quadrant
-            ax.plot(
-                [lb_data.min(), lb_mid_volt],   # left edge -> midpoint
-                [rb_mid_volt, rb_mid_volt],     # horizontal line at y midpoint
-                linestyle='--',
-                color='red',
-                linewidth=1.2,
-                alpha=0.9
-            )
+                    if green_circle:
+                        # Hollow green circle at original peak position for best candidate
+                        ax.scatter(vx_p, vy_p, s=80, c='none', edgecolors='white', linewidths=1.5, zorder=11)
+                        green_circle = False
+                    else:
+                        # Hollow red circle at original peak position for every other peak
+                        ax.scatter(vx_p, vy_p, s=80, c='none', edgecolors='red', linewidths=1.5, zorder=11)
 
-            # Right edge of the bottom-left quadrant
-            ax.plot(
-                [lb_mid_volt, lb_mid_volt],     # vertical line at x midpoint
-                [rb_data.min(), rb_mid_volt],   # bottom edge -> midpoint
-                linestyle='--',
-                color='red',
-                linewidth=1.2,
-                alpha=0.9
-            )
-
-            # Shade only the bottom-left quadrant
-            rect = Rectangle(
-                (lb_data.min(), rb_data.min()),
-                lb_mid_volt - lb_data.min(),
-                rb_mid_volt - rb_data.min(),
-                facecolor='red',
-                alpha=0.2,
-                edgecolor=None,
-                zorder=2
-            )
-            ax.add_patch(rect)
-        
-        else:  # hole
-            # Top-right quadrant boundary
-
-            # Bottom edge of the top-right quadrant
-            ax.plot(
-                [lb_mid_volt, lb_data.max()],   # midpoint -> right edge
-                [rb_mid_volt, rb_mid_volt],     # horizontal line at y midpoint
-                linestyle='--',
-                color='red',
-                linewidth=1.2,
-                alpha=0.9
-            )
-
-            # Left edge of the top-right quadrant
-            ax.plot(
-                [lb_mid_volt, lb_mid_volt],     # vertical line at x midpoint
-                [rb_mid_volt, rb_data.max()],   # midpoint -> top edge
-                linestyle='--',
-                color='red',
-                linewidth=1.2,
-                alpha=0.9
-            )
-
-            # Shade only the top-right quadrant
-            rect = Rectangle(
-                (lb_mid_volt, rb_mid_volt),
-                lb_data.max() - lb_mid_volt,
-                rb_data.max() - rb_mid_volt,
-                facecolor='red',
-                alpha=0.2,
-                edgecolor=None,
-                zorder=2
-            )
-            ax.add_patch(rect)
-
-        # Hough lines
-        for x1, y1, x2, y2 in filtered_lines:
-            # compute voltage coordinates
-            v1x = np.interp(x1, x_index_arr, lb_voltages)
-            v1y = np.interp(y1, y_index_arr, rb_voltages)
-            v2x = np.interp(x2, x_index_arr, lb_voltages)
-            v2y = np.interp(y2, y_index_arr, rb_voltages)
-            
-            # Uncomment below to see the detected Hough lines
-            # ax.plot([v1x, v2x], [v1y, v2y], c='black', lw=1.2) 
-
-        # Perpendicular traces and peaks
-        dot_tuning_shift = 0.1 if str(DotTuning).strip().lower() == 'triple dot' else 0.0
-
-        shifted_points = []
-        best_shifted_point = None
-        green_circle = False
-
-        for tr in perp_traces_for_plot:
-            idx = tr.get("chosen_block", None)
-            if idx is None or len(idx) == 0: continue
-            vx = np.interp(tr["px"], np.arange(nx), lb_voltages)
-            vy = np.interp(tr["py"], np.arange(ny), rb_voltages)
-            ax.plot(vx[idx], vy[idx], c='yellow', lw=1.5, alpha=0.9)
-            valid_peaks = np.intersect1d(tr.get("peak_idx", []), idx)
-
-            if valid_peaks.size > 0:
-                # Plot each peak and shift it along the perpendicular normal towards origin
-                try:
-                    for p in np.atleast_1d(valid_peaks):
-                        i = int(p)
-                        vx_p = float(vx[i])
-                        vy_p = float(vy[i])
-
-                        # compute a local tangent along the yellow trace and shift along it
-                        if 1 <= i < (len(vx) - 1):
-                            ddx = float(vx[i + 1]) - float(vx[i - 1])
-                            ddy = float(vy[i + 1]) - float(vy[i - 1])
-                        else:
-                            # fallback to using the chosen block endpoints
-                            ddx = float(vx[idx][-1]) - float(vx[idx][0])
-                            ddy = float(vy[idx][-1]) - float(vy[idx][0])
-
-                        norm_dir = np.hypot(ddx, ddy)
-                        if norm_dir > 0:
-                            shift_dir = np.array([ddx / norm_dir, ddy / norm_dir])
-                            shift_vec = -shift_dir * dot_tuning_shift
-                        else:
-                            shift_dir = np.array([0.0, 1.0])
-                            shift_vec = shift_dir * dot_tuning_shift
-
-                        sx = vx_p + float(shift_vec[0])
-                        sy = vy_p + float(shift_vec[1])
-
-                        # Debug: report computed shift direction and shift vector
-                        if debug:
-                            try:
-                                print(f"DEBUG_SHIFT peak={i} vx={vx_p:.6f} vy={vy_p:.6f} dir=({shift_dir[0]:.6f},{shift_dir[1]:.6f}) shift_vec=({shift_vec[0]:.6f},{shift_vec[1]:.6f})")
-                                # draw a cyan debug line showing the shift direction
-                                ax.plot([vx_p, sx], [vy_p, sy], c='cyan', lw=1.5, alpha=0.9, zorder=9)
-                            except Exception:
-                                pass
-
-                        # shifted star (exactly dot_tuning_shift along the yellow perp)
-                        ax.scatter(sx, sy, s=200, c='white', marker='*', edgecolors='black', zorder=10)
-                        shifted_points.append((sx, sy))
-
-                        if vx_p == closest_candidate[0] and vy_p == closest_candidate[1]:
-                            best_shifted_point = (sx, sy)
-                            green_circle = True
-
-                        if green_circle:
-                            # hollow green  circle at original peak position for best candidate
-                            ax.scatter(vx_p, vy_p, s=80, c='none', edgecolors='white', linewidths=1.5, zorder=11)
-                            green_circle = False
-                        else:
-                            # hollow red circle at original peak position
-                            ax.scatter(vx_p, vy_p, s=80, c='none', edgecolors='red', linewidths=1.5, zorder=11)
-
-                        # arrow from original to shifted star
-                        ax.annotate('', xy=(sx, sy), xytext=(vx_p, vy_p),
-                                    arrowprops=dict(arrowstyle='->', color='black', lw=1.0), zorder=12)
-                except Exception:
-                    pass
+                    # Arrow from original to shifted star
+                    ax.annotate('', xy=(sx, sy), xytext=(vx_p, vy_p),
+                                arrowprops=dict(arrowstyle='->', color='black', lw=1.0), zorder=12)
+            except Exception:
+                pass
 
         ax.set_box_aspect(0.775)
 
+        # Save final plot
         filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
         fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
         logger.info("Figure saved!")
 
         plt.close(fig)
+        # plt.show()
 
         # These are 1D perpendicular trace plots
-
         if debug:
             for tr in perp_traces_for_plot:
                 s = tr["s"]
-                I = tr["trace"]                 # smoothed current
+                I = tr["trace"]                 # Smoothed current
                 dIds = tr["conductance"]        # dI/ds
                 peak_idx = tr.get("peak_idx", [])
                 chosen_block = tr.get("chosen_block", None)
@@ -1329,17 +1614,13 @@ def extract_working_point(lb_data: np.array,
                 )
 
                 # We plot the current traces here
-
                 axs[0].plot(s, I, color="black", lw=1.3)
                 axs[0].set_ylabel("Current")
                 axs[0].set_title(
                     f"Perpendicular trace {tr['trace_id']}"
                 )
 
-                
-
                 # Shade chosen block (if present)
-                
                 if chosen_block is not None and len(chosen_block) > 0:
                     axs[0].axvspan(
                         s[chosen_block[0]],
@@ -1352,13 +1633,11 @@ def extract_working_point(lb_data: np.array,
                 axs[0].legend(loc="best")
 
                 # Here, we plot the conductance as well
-
                 axs[1].plot(s, dIds, color="tab:blue", lw=1.2)
                 axs[1].set_xlabel("Arc length s (pixels)")
                 axs[1].set_ylabel("dI/ds")
 
                 # Mark current peaks
-                
                 if len(peak_idx) > 0:
                     axs[1].scatter(
                         s[peak_idx],
@@ -1377,7 +1656,6 @@ def extract_working_point(lb_data: np.array,
     if debug:
         
         # We first plot the original current data
-        
         plt.figure(figsize=(10, 6))
         plt.imshow(current_data,
             extent=[lb_data.min(), lb_data.max(), rb_data.min(), rb_data.max()],
@@ -1391,7 +1669,6 @@ def extract_working_point(lb_data: np.array,
         plt.show()
         
         # Next, we plot the gradient of the data, i.e. the conductance
-
         plt.figure(figsize=(10, 6))
         plt.imshow(G,
             extent=[lb_data.min(), lb_data.max(), rb_data.min(), rb_data.max()],
@@ -1403,7 +1680,6 @@ def extract_working_point(lb_data: np.array,
         plt.show()
 
         # Then, we plot G_log normalized to 255, or G_uint
-
         plt.figure(figsize = (10, 6))
         plt.imshow(G_uint, 
             extent=[lb_data.min(), lb_data.max(), rb_data.min(), rb_data.max()],
@@ -1415,7 +1691,6 @@ def extract_working_point(lb_data: np.array,
         plt.show()
 
         # Here is the plot of the band-passed G_uint, i.e. after being thresholded
-
         plt.figure(figsize = (10, 6))
         plt.imshow(band_passed, 
             extent=[lb_data.min(), lb_data.max(), rb_data.min(), rb_data.max()],
@@ -1427,7 +1702,6 @@ def extract_working_point(lb_data: np.array,
         plt.show()
 
         # Here is a plot of the ridges
-
         plt.figure(figsize=(10, 6))
         plt.imshow(ridge,
             extent=[lb_data.min(), lb_data.max(), rb_data.min(), rb_data.max()],
@@ -1439,7 +1713,6 @@ def extract_working_point(lb_data: np.array,
         plt.show()
 
         # Here is a plot of the normalized ridges
-
         plt.figure(figsize=(10, 6))
         plt.imshow(ridge_norm,
             extent=[lb_data.min(), lb_data.max(), rb_data.min(), rb_data.max()],
@@ -1451,7 +1724,6 @@ def extract_working_point(lb_data: np.array,
         plt.show()
 
         # Here is a plot of the ridges filtered for strength
-
         plt.figure(figsize=(10, 6))
         plt.imshow(ridge_masked,
             extent=[lb_data.min(), lb_data.max(), rb_data.min(), rb_data.max()],
@@ -1465,12 +1737,8 @@ def extract_working_point(lb_data: np.array,
 
         # ---------- Hough Line Plotting ----------
 
-
         # Now, we'll plot a set of lines from the Hough Transform at each preprocessing stage
-
-
         # We start with lines detected from the original data
-
         plt.figure(figsize = (10, 6))
         plt.imshow(
             current_data,
@@ -1491,7 +1759,6 @@ def extract_working_point(lb_data: np.array,
             return []
 
         # Now, we filter for lines within a certain angle range
-
         filtered_lines = []
         for p0, p1 in lines:
             dx, dy = p1[0] - p0[0], p1[1] - p0[1]
@@ -1531,7 +1798,6 @@ def extract_working_point(lb_data: np.array,
         plt.show()
 
         # Now, we detect lines from the gradient
-
         plt.figure(figsize = (10, 6))
         plt.imshow(
             G,
@@ -1552,7 +1818,6 @@ def extract_working_point(lb_data: np.array,
             return []
 
         # Now, we filter for lines within a certain angle range
-
         filtered_lines = []
         for p0, p1 in lines:
             dx, dy = p1[0] - p0[0], p1[1] - p0[1]
@@ -1591,8 +1856,7 @@ def extract_working_point(lb_data: np.array,
         plt.title("Hough Transform Lines from Gradient")
         plt.show()
 
-        # Now, we detect lines from the normalized Gradient
-
+        # Now, we detect lines from the normalized gradient
         plt.figure(figsize = (10, 6))
         plt.imshow(
             G_uint,
@@ -1613,7 +1877,6 @@ def extract_working_point(lb_data: np.array,
             return []
 
         # Now, we filter for lines within a certain angle range
-
         filtered_lines = []
         for p0, p1 in lines:
             dx, dy = p1[0] - p0[0], p1[1] - p0[1]
@@ -1653,7 +1916,6 @@ def extract_working_point(lb_data: np.array,
         plt.show()
 
         # Now, we detect lines from the G_log normalized after thresholding
-
         plt.figure(figsize = (10, 6))
         plt.imshow(
             band_passed,
@@ -1674,7 +1936,6 @@ def extract_working_point(lb_data: np.array,
             return []
 
         # Now, we filter for lines within a certain angle range
-
         filtered_lines = []
         for p0, p1 in lines:
             dx, dy = p1[0] - p0[0], p1[1] - p0[1]
@@ -1714,7 +1975,6 @@ def extract_working_point(lb_data: np.array,
         plt.show()
 
         # Now, we detect lines from the ridges
-
         plt.figure(figsize = (10, 6))
         plt.imshow(
             ridge,
@@ -1735,7 +1995,6 @@ def extract_working_point(lb_data: np.array,
             return []
 
         # Now, we filter for lines within a certain angle range
-
         filtered_lines = []
         for p0, p1 in lines:
             dx, dy = p1[0] - p0[0], p1[1] - p0[1]
@@ -1774,8 +2033,7 @@ def extract_working_point(lb_data: np.array,
         plt.title("Hough Transform Lines from Ridges")
         plt.show()
 
-        # Now, we detect lines from the Normalized Ridges
-
+        # Now, we detect lines from the normalized ridges
         plt.figure(figsize = (10, 6))
         plt.imshow(
             ridge_norm,
@@ -1796,7 +2054,6 @@ def extract_working_point(lb_data: np.array,
             return []
 
         # Now, we filter for lines within a certain angle range
-
         filtered_lines = []
         for p0, p1 in lines:
             dx, dy = p1[0] - p0[0], p1[1] - p0[1]
@@ -1836,7 +2093,6 @@ def extract_working_point(lb_data: np.array,
         plt.show()
 
         # Now, we detect lines from the ridges after filtering
-
         plt.figure(figsize = (10, 6))
         plt.imshow(
             ridge_filtered,
@@ -1857,7 +2113,6 @@ def extract_working_point(lb_data: np.array,
             return []
 
         # Now, we filter for lines within a certain angle range
-
         filtered_lines = []
         for p0, p1 in lines:
             dx, dy = p1[0] - p0[0], p1[1] - p0[1]
@@ -1910,9 +2165,36 @@ def extract_tunnel_barrier_latching(dp_data: np.array,
                                     peak_prominence: list[float] = [None, None],
                                     peak_width: list[float] = [None, None]
                                     ):
-    """Analyze current data to identify if latching is occuring during dot-lead tuning
+    """
+    Description
+    -----------
+    Analyze current data to identify if latching is occuring during dot-lead tuning.
 
-    This function plots the derivative of the current and analyzes the peaks to see if latching is occuring.
+    This function plots the derivative of the current at multiple traces and analyzes the peaks to see if latching is occuring.
+
+    Parameters
+    -----------
+    dp_data : np.array
+        independent dot plunger voltage values
+    tb_data : np.array
+        independent tunnel barrier voltage values
+    current_data : np.array
+        dependent current values
+    peak_height : list[float]
+        minimum absolute peak height threshold in conductance, for [positive peaks, negative peaks]
+    peak_prominence : list[float]
+        minimum peak prominence threshold in conductance, for [positive peaks, negative peaks]
+    peak_width : list[float]
+        minimum peak width threshold in pixel space, for [positive peaks, negative peaks]
+
+    Returns
+    -----------
+    best_sens_pts_list : list
+        the most positive and negative conductance peaks in current space found at every trace
+    all_sens_pts_list : list
+        all conductance peaks in current space found at every trace 
+    barrier_voltage_set_point : float
+        the voltage where the tunnel barrier should be set to to avoid latching
     """
 
     dp_data = np.array(dp_data)
@@ -2047,12 +2329,28 @@ def extract_tunnel_barrier_latching(dp_data: np.array,
     return best_sens_pts_list, all_sens_pts_list, barrier_voltage_set_point
 
 def extract_lever_arms(data: pd.DataFrame,
-                       plot_process: bool = False) -> dict:
-    """Estimate lever arms from a 2D transconductance map.
+                       plot_process: bool = False
+                       ) -> dict:
+    """
+    Description
+    -----------
+    Estimate lever arms from a 2D transconductance map.
 
     This function pivots the input dataframe to a grid, computes the
     gradient in the current data, applies filtering, and optionally plots
     the intermediate transconductance results.
+
+    Parameters
+    -----------
+    data : pd.DataFrame
+        data as pandas DataFrame object
+    plot_process : bool
+        plots the data through process at every step
+
+    Returns
+    -----------
+    results : dict
+        extracted dot parameters; centroid, addition voltage, charging voltage, dot capacitance, total capacitance, lever arm, dot size
     """
     
     # Load in data and separate 
@@ -2213,16 +2511,45 @@ def extract_max_conductance_pair(x_data: np.array,
                                  y_data: np.array,
                                  filepath: str,
                                  filename: str,
-                                 peak_height: list[float] = [None, None],
-                                 peak_prominence: list[float] = [None, None],
+                                 peak_height_factor: list[float] = [None, None],
+                                 peak_prominence_factor: list[float] = [None, None],
                                  peak_width: list[float] = [None, None]
                                 ):
+<<<<<<< Updated upstream
     
     """
     Analyze current data to identify the largest conductance peak and it's pair feature on the same peak.
+=======
+    """
+    Description
+    -----------
+    Analyze current data to identify the largest conductance peak and it's pair feature on the same current peak.
+>>>>>>> Stashed changes
 
     This function plots the current and its derivative, then highlights
-    the most extreme conductance peak along with the pair that's on the same peak.
+    the most extreme conductance peak along with the pair that's on the same current peak.
+
+    Parameters
+    -----------
+    x_data : np.array
+        independent gate voltage values
+    y_data : np.array
+        dependent SET current values
+    filepath : str
+        name of directory to save turn-on plot in
+    filename : str
+        name of file to save the turn-on plot under
+    peak_height_factor : list[float]
+        percentage of maximum conductance to set the minimum absolute peak height threshold in conductance, for [positive peaks, negative peaks]
+    peak_prominence_factor : list[float]
+        percentage of maximum conductance to set the minimum peak prominence threshold in conductance, for [positive peaks, negative peaks]
+    peak_width : list[float]
+        minimum peak width threshold in pixel space, for [positive peaks, negative peaks]
+
+    Returns
+    -----------
+    conductance_pair : tuple(float)
+        the voltages of the largest absolute conductance and its pair on the same current peak
     """
 
     x1 = np.array(x_data)
@@ -2234,10 +2561,15 @@ def extract_max_conductance_pair(x_data: np.array,
 
     posdIdV = abs(dIdV)
 
-    if peak_height == [None, None]:
+    if peak_height_factor == [None, None]:
         peak_height = [0.25 * np.max(dIdV), 0.25 * np.max(dIdV)]
-    if peak_prominence == [None, None]:
+    else:
+        peak_height = [peak_height_factor[0] * np.max(dIdV), peak_height_factor[1] * np.max(dIdV)]
+
+    if peak_prominence_factor == [None, None]:
         peak_prominence = [0.3 * np.max(dIdV), 0.3 * np.max(dIdV)]
+    else:
+        peak_prominence = [peak_prominence_factor[0] * np.max(dIdV), peak_prominence_factor[1] * np.max(dIdV)]
 
     peak_idx_pos, _ = signal.find_peaks(dIdV, height = peak_height[0], prominence = peak_prominence[0], width=peak_width[0])
     peak_idx_neg, _ = signal.find_peaks(-dIdV, height = peak_height[1], prominence = peak_prominence[1], width=peak_width[1])
@@ -2351,6 +2683,7 @@ def extract_max_conductance_pair(x_data: np.array,
 
     return conductance_pair
 
+<<<<<<< Updated upstream
 def hough_transform(x_data: np.array,
                     y_data: np.array,
                     current_data: np.array,
@@ -2358,13 +2691,109 @@ def hough_transform(x_data: np.array,
                     filename: str,
                     transform_trim: list = [0, -1]
                     ):
+=======
+def extract_charge_transitions(x_data: np.array,
+                               y_data: np.array,
+                               filepath: str,
+                               filename: str,
+                               peak_height_factor: list[float] = [None, None],
+                               abs_peak_height: list[float] = [None, None],
+                               peak_prominence_factor: list[float] = [None, None],
+                               peak_width: list[tuple] = [None, None]
+                               ):
+>>>>>>> Stashed changes
     """
+    Description
+    -----------
+    Analyze current data to identify charge transition (as heavy-side looking functions).
+
+    This function plots the current and its derivative, then highlights
+    the all charge transitions, returning the best one to the user.
+
+    Parameters
+    -----------
+    x_data : np.array
+        independent gate voltage values
+    y_data : np.array
+        dependent SET current values
+    filepath : str
+        name of directory to save turn-on plot in
+    filename : str
+        name of file to save the turn-on plot under
+    peak_height_factor : list[float]
+        percentage of maximum conductance to set the minimum absolute peak height threshold in conductance, for [positive peaks, negative peaks]
+    abs_peak_height : list[float]
+        absolute minimum conductance threshold for peak detection
+    peak_prominence_factor : list[float]
+        percentage of maximum conductance to set the minimum peak prominence threshold in conductance, for [positive peaks, negative peaks]
+    peak_width : list[tuple]
+        peak width range in pixel space, for [positive peaks, negative peaks]
+
+    Returns
+    -----------
+    best_charge_transition_voltage : float
+        the voltage where the strongest conductance of any charge transition exists
+    """
+
+    x1 = np.array(x_data)
+    y1 = np.array(y_data)
+
+    if abs_peak_height != [None, None] and peak_height_factor != [None, None]:
+        raise ValueError("Both abs_peak_height and peak_height_factor values were given. Please ensure only one of these arguments are given!")
+
+    if abs_peak_height == [None, None]:
+        peak_height = [100, 100]
+    elif peak_height_factor == [None, None]:
+        peak_height_factor = [0.3, 0.3]
+
+    if peak_prominence_factor == [None, None]:
+        peak_prominence_factor = [0.45, 0.45]
+
+    _, all_sens_pts = extract_max_conductance_points(x1, y1, filepath, filename, abs_peak_height=peak_height, peak_prominence_factor=peak_prominence_factor, peak_width=peak_width)
+
+    G_max = abs(all_sens_pts[1]).max()
+    max_idx = np.where(G_max == abs(all_sens_pts[1]))[0][0]
+    best_charge_transition_voltage = all_sens_pts[0][max_idx]
+
+    return best_charge_transition_voltage
+
+def hough_transform(x_data: np.array,
+                    y_data: np.array,
+                    current_data: np.array,
+                    filepath: str,
+                    filename: str,
+                    transform_trim: list[int] = [0, -1]
+                    ):
+    """
+    Description
+    -----------
     Analyze voltage data to find the slope of the line seen by cross-talk measurements using the hough transform.
     Can be used as regualr hough transform as well.
 
-    This function plots the voltage, then highlights
-    the slope of the cross-talk line seen.
+    This function plots the voltage, then highlights the slope of the cross-talk line seen.
     The transform_trim argument allows you to remove points from the hough tranform analysis to make the fit better (mainly for debugging)
+
+    Parameters
+    -----------
+    x_data : np.array
+        independent gate voltage values
+    y_data : np.array
+        independent gate voltage values
+    current_data : np.array
+        dependent current values
+    filepath : str
+        name of directory to save turn-on plot in
+    filename : str
+        name of file to save the turn-on plot under
+    transform_trim : list[int]
+        the cut-off values for making the transform a better fit to the data (mainly for manual debugging)
+
+    Returns
+    -----------
+    slope : float
+        the slope of the line found using the transform
+    intercept : float
+        the y-intercept of the line found using the transform
     """
 
     # Ensure arguments are arrays

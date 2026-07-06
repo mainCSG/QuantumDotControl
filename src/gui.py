@@ -12,11 +12,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from nicegui import ui, app
-import os
 import threading
 import time
 from instrument_handler import create_buffer_instance
-import time
 from experiment_handler import get_experiment_handler
 from autotuning_handler import get_autotuning_handler
 from qcodes.station import Station
@@ -568,10 +566,13 @@ class tuner_gui:
 
     def on_abort(self):
         ui.notify('Aborting...')
-        self.logger.warning("Experiment abort signal sent")
-        self.abort_signal.set()
-    
+        self.logger.warning("Abort requested: draining all worker queues")
+        self.autotuning_handler.autotuning_thread.abort()
+        self.experiment_handler.experiment_thread.abort()
+        self.instrument_handler.abort_instruments()
+
     def on_shutdown(self):
         self.abort_signal.set() # Abort any currently running experiments.
-        self.instrument_handler.shutdown_instruments()
+        self.autotuning_handler.autotuning_thread.join()
         self.experiment_handler.experiment_thread.join()
+        self.instrument_handler.shutdown_instruments()

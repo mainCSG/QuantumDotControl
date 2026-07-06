@@ -14,7 +14,7 @@ import threading
 from queue import PriorityQueue
 from collections.abc import Callable
 from dataclasses import dataclass
-from instrument_handler import TunerFuture
+from instrument_handler import TunerFuture, AbortException
 from enum import Enum
 from typing import Tuple, Dict, Any, Literal, Protocol, Optional, Deque
 from qcodes.instrument import Instrument
@@ -85,6 +85,7 @@ class AutotuningThread:
 
         print("Stopping the autotuning thread...")
         self.shutdown_event.set()
+        self.job_event.set()
         self.thread.join()
     
     def __assert_correct_thread__(self):
@@ -113,7 +114,20 @@ class AutotuningThread:
     def abort(self):
 
         self.abort_event.set()
-    
+        self.job_event.set()
+
+    def _drain_queue(self):
+
+        while True:
+            try:
+                priority, (f, args, future) = self.job_queue.get_nowait()
+            except Exception:
+                break
+            future.set_exception(AbortException("Autotuning job aborted"))
+            self.job_queue.task_done()
+
+        self.abort_event.clear()
+
     def __thread_loop__(self):
 
         print("Starting the Autotuning Thread Worker")
@@ -121,19 +135,17 @@ class AutotuningThread:
         while not self.shutdown_event.is_set():
 
             self.job_event.wait()
+            # safely removes all jobs in queue
+            if self.abort_event.is_set():
+                self._drain_queue()        
+                self.job_event.clear()
+                continue
 
             while self.job_queue.qsize() > 0:
 
-                if self.abort_event.is_set(): # Clear remaining jobs safely 
-                    while not self.job_queue.empty(): 
-                        try: 
-                            _, (_, _, future) = self.job_queue.get_nowait() 
-                            future.set_exception(RuntimeError("Autotuning Stage aborted")) 
-                            self.job_queue.task_done() 
-                        except: 
-                            break 
-                        self.abort_event.clear() 
-                        continue
+                if self.abort_event.is_set():
+                    self._drain_queue()   
+                    break
 
                 priority, data = self.job_queue.get()
                 f, args, future = data
@@ -147,7 +159,6 @@ class AutotuningThread:
 
                 self.job_queue.task_done()
 
-            # reset event once queue is empty
             self.job_event.clear()
 
         logger.info("Exiting Thread!")

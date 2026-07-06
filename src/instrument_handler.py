@@ -15,7 +15,7 @@ from qcodes.instrument import Instrument
 from qcodes.parameters import Parameter
 from collections.abc import Callable
 from typing import Tuple, Dict, Any, Literal, Protocol, Optional, Deque
-from queue import Queue
+from queue import Queue, Empty
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
@@ -72,7 +72,13 @@ class TunerFuture:
         else:
             logger.info("Timeout Reached!")
             raise TimeoutError("Future timed out while waiting for result")
-    
+
+
+class AbortException(Exception):
+    """Raised on the TunerFuture of a queued job discarded by an abort."""
+    pass
+
+
 @dataclass
 class instrument_job:
     future : TunerFuture
@@ -113,6 +119,9 @@ class instrument_thread:
         self.parameters_public : List[str] = []
         self.parameters_lock = threading.Lock()
         self.job_queue : Queue[instrument_job] = Queue()
+
+        self.abort_event = threading.Event()
+        self.queue_lock = threading.Lock()
 
         self.BUFFER_SIZE = 1000
         self.buffer : Dict[str, Deque[Tuple[float, float]]] = {}
@@ -162,15 +171,51 @@ class instrument_thread:
         with self.status_lock:
             self.status = status_string
             logger.debug("Thread '%s' updating status to '%s'", self.thread_name, status_string)
+
     def get_status(self) -> str:
         '''
         Get current status of the instrument buffer thread (thread safe).
         '''
         with self.status_lock:
             return self.status
+        
     def get_heartbeat(self) -> float:
         with self.heartbeat_lock:
             return self.heartbeat
+
+    def abort(self):
+        '''
+        Request an abort of this instrument thread's queued work (thread safe).
+
+        Called from the coordinator thread. This only sets ``abort_event``; it does
+        no draining itself. The worker thread observes the set event and drains the
+        job queue on its own (the queue's owning thread), so the queue is never read
+        concurrently from two threads. Setting the event also signals
+        any in-flight job that polls it so it can stop cooperatively.
+        '''
+        self.abort_event.set()
+
+    def _drain_queue(self):
+        '''
+        Drain all queued jobs during an abort. Runs on the worker thread that owns
+        the queue, inside ``queue_lock`` so it blocks all other queue operations.
+        Each discarded job's future is completed with an AbortException so callers
+        blocked on ``result`` are released promptly instead of timing out. After the
+        queue is empty, the ``abort_event`` is cleared. The monitored-parameter set
+        and the readout buffer are never touched here, so monitoring state is preserved.
+        '''
+        with self.queue_lock:
+            while True:
+                try:
+                    job = self.job_queue.get_nowait()
+                except Empty:
+                    break
+                try:
+                    job.future.set_exception(AbortException("Job discarded by abort"))
+                finally:
+                    self.job_queue.task_done()
+            # Reset abort state now that the queue is drained
+            self.abort_event.clear()
     
     def _worker(self, instrument_name : str, station : Station,\
                 station_lock : threading.Lock,\
@@ -223,6 +268,10 @@ class instrument_thread:
         loop_times = deque(maxlen = 500) # A deque for tracking the average loop time
         tprev = self.timefunc()
         while not self.shutdown_signal.is_set() and not self.global_shutdown.is_set():
+            # Drain the queue at the top of each monitoring cycle when an abort is
+            # requested, so the drain runs on the queue's owning thread
+            if self.abort_event.is_set():
+                self._drain_queue()
             self._process_queue()
             self._read_parameters()
 
@@ -313,6 +362,7 @@ class instrument_thread:
                 self._handle_monitor_status_job(job)
 
             return
+        
     def getattr_recursive(self, obj, param : str):
         splitted = param.split('.', maxsplit = 1)
         attr = getattr(obj, splitted[0])
@@ -511,6 +561,20 @@ class instrument_handler:
         for inst_thread in self.instrument_threads.values():
             inst_thread.stop()
 
+    def abort_instruments(self):
+        '''
+        Request an abort of every registered instrument thread's queued work.
+
+        This is the instrument-side entry point invoked by the Abort_Coordinator
+        (``tuner_gui.on_abort``). It only sets each thread's ``abort_event`` via
+        ``instrument_thread.abort()``; each worker thread drains its own queue on the
+        next monitoring cycle, so threads stay alive and reusable and no draining
+        happens on the coordinator thread. It does not join, stop, or
+        shut down any thread.
+        '''
+        logger.warning("Abort requested: draining queued work for all instrument threads")
+        for inst_thread in self.instrument_threads.values():
+            inst_thread.abort()
 
     def add_instrument(self, name : str,\
                                 init_func : Optional[InstrumentCallback] = None,\
@@ -575,7 +639,8 @@ class instrument_handler:
         if inst is not None:
             future = TunerFuture()
             job = instrument_callback_job(future, callback, *args, when = when)
-            inst.job_queue.put(job)
+            with inst.queue_lock:
+                inst.job_queue.put(job)
 
             if wait:
                 return future.result(timeout)
@@ -608,7 +673,8 @@ class instrument_handler:
         if inst is not None:
             future = TunerFuture()
             job = get_parameter_job(future, params, when)
-            inst.job_queue.put(job)
+            with inst.queue_lock:
+                inst.job_queue.put(job)
 
             if wait:
                 return future.result(timeout)
@@ -639,7 +705,8 @@ class instrument_handler:
 
             future = TunerFuture()
             job = set_parameter_job(future = future, set_vals = set_vals, when=when)
-            inst.job_queue.put(job)
+            with inst.queue_lock:
+                inst.job_queue.put(job)
             if wait:
                 return future.result(timeout)
             else:
@@ -668,7 +735,8 @@ class instrument_handler:
             future = TunerFuture()
             job =change_monitor_status_job(future, params, not remove, when)
 
-            inst.job_queue.put(job)
+            with inst.queue_lock:
+                inst.job_queue.put(job)
 
             if wait:
                 return future.result(timeout)

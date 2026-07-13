@@ -1,4 +1,5 @@
 import logging
+import os
 import colorlog
 from typing import Literal, List
 import sys
@@ -73,10 +74,14 @@ class TunerLog(logging.Logger):
                     })
                 consoleHandler.setFormatter(colorFormatter)
 
+            original_dir = os.getcwd()
+
             if logfile is None:
-                #logfile = f"../logs/QDot_tuner_{datetime.datetime.now().strftime("%m-%d-%Y_%H-%M-%S")}.log"
-                #logfile = f"../logs/QDot_tuner_{datetime.datetime.now().strftime('%m-%d-%Y')}.log"
-                logfile = f"../Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}/QDot_tuner_{datetime.datetime.now().strftime('%m-%d-%Y')}.log"
+
+                os.chdir("..")
+                logfile_dir = f"Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}"
+                logfile = f"QDot_tuner_{datetime.datetime.now().strftime('%m-%d-%Y')}.log"
+                logfile = os.path.join(logfile_dir, logfile)
 
             if fileHandler is None:
                 fileHandler = logging.FileHandler(logfile)
@@ -95,13 +100,18 @@ class TunerLog(logging.Logger):
             
             loggers[name] = self # add to list of loggers
     
+            os.chdir(original_dir)
+
     def add_ui_handler(self, element: ui.log, level: Literal['debug', 'info', 'warning', 'error'] = 'info'):
-        """Add the UI handler to all loggers, and make sure all the previous history gets sent to the ui logger.
+        
+        """
+        Add the UI handler to all loggers, and make sure all the previous history gets sent to the ui logger.
 
         Args:
             element (ui.log): _description_
             level (Literal[&#39;debug&#39;, &#39;info&#39;, &#39;warning&#39;, &#39;error&#39;], optional): _description_. Defaults to 'info'.
         """
+        
         level_num = getattr(logging, level.upper())
 
         global loggers, uiHandler, history

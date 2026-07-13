@@ -274,13 +274,9 @@ def extract_turn_on_voltage(x_data: np.array,
         if val > abs(threshold):
             idx_turnon = np.where(y1 == val)[0][0] # Get the index of the turn-on point
             
-<<<<<<< Updated upstream
-            turnon_voltage = x1[idx_turnon - 1]
-=======
             logger.info(f"Index: {idx_turnon}")
             
             turnon_voltage = x1[idx_turnon - 1] # Get the voltage of the turn-on point
->>>>>>> Stashed changes
             
             logger.info(f"Turn_On Voltage: {turnon_voltage}")
             
@@ -306,17 +302,9 @@ def extract_turn_on_voltage(x_data: np.array,
     ax.set_xlabel(r'V$_{gate}$ (V)', fontsize=35)
     ax.set_ylabel('I (nA)', fontsize=35)
 
-<<<<<<< Updated upstream
-        logger.info("before minor ticks!")
-
-        ax.minorticks_on()
-        ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
-        ax.tick_params(direction='in', length=5, width=1.2, labelsize=18, top=True, right=True)
-=======
     ax.minorticks_on()
     ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
     ax.tick_params(direction='in', length=5, width=1.2, labelsize=18, top=True, right=True)
->>>>>>> Stashed changes
 
     xticks_span = np.linspace(x1.min(), x1.max(), 5)
 
@@ -328,20 +316,6 @@ def extract_turn_on_voltage(x_data: np.array,
     ax.set_yticks(yticks_span)
     ax.set_yticklabels([f'{np.abs(yticks_span[0]):.1f}', '', '', '', f'{yticks_span[-1]:.4f}'], fontsize=25)
 
-<<<<<<< Updated upstream
-        logger.info("before tight layout!")
-
-        plt.tight_layout()
-
-        logger.info("before save!")
-
-        filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
-        fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
-
-        logger.info("before close!")
-
-        plt.close(fig)
-=======
     plt.tight_layout()
 
     # Save final data
@@ -349,7 +323,6 @@ def extract_turn_on_voltage(x_data: np.array,
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
     plt.close(fig)
->>>>>>> Stashed changes
 
     # --- Print summary ---
     #print(f"  Turn-on Voltage:  {turnon_voltage:.3f} V")
@@ -514,12 +487,7 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
 
     elif gate_type == 'Barrier':
         sat_voltage = fit_saturation_voltage
-<<<<<<< Updated upstream
-        sat_current = y1_norm[np.argmax(np.isclose(x1, sat_voltage, atol=1e-3, rtol=1e-3))]
-        sat_label = 'Saturation Point'
-=======
         sat_current = y1_norm[np.abs(x1 - sat_voltage).argmin()]
->>>>>>> Stashed changes
 
     else:
         # Switch to Logging error so protocol doesn't crash
@@ -623,16 +591,10 @@ def extract_max_conductance_points(x_data: np.array,
                                    y_data: np.array,
                                    filepath: str,
                                    filename: str,
-<<<<<<< Updated upstream
-                                   peak_height: list[float] = [None, None],
-                                   peak_prominence: list[float] = [None, None],
-                                   peak_width: list[float] = [None, None]
-=======
                                    peak_height_factor: list[float] = [None, None],
                                    abs_peak_height: list[float] = [None, None],
                                    peak_prominence_factor: list[float] = [None, None],
                                    peak_width: list[tuple] = [None, None]
->>>>>>> Stashed changes
                                    ):
     """
     Description
@@ -819,19 +781,11 @@ def extract_max_conductance_points(x_data: np.array,
 
     # --- Adjust layout ---
     plt.subplots_adjust(hspace=0.40)
-<<<<<<< Updated upstream
-    
-    filepath = os.path.join(filepath, filename)
-    fig.savefig(filepath, dpi = 'figure', bbox_inches='tight')
-    
-    #plt.show()
-=======
     # plt.show()
     
     # Saves final plot
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
->>>>>>> Stashed changes
 
     plt.close(fig)
 
@@ -908,10 +862,7 @@ def extract_working_point(lb_data: np.array,
     rb_data = np.array(rb_data)
     current_data = np.array(current_data)
     barrier_pinch_offs = np.array(barrier_pinch_offs)
-<<<<<<< Updated upstream
     device_type = 'electron'
-=======
->>>>>>> Stashed changes
 
     ux = np.unique(lb_data)
     uy = np.unique(rb_data)
@@ -2515,16 +2466,10 @@ def extract_max_conductance_pair(x_data: np.array,
                                  peak_prominence_factor: list[float] = [None, None],
                                  peak_width: list[float] = [None, None]
                                 ):
-<<<<<<< Updated upstream
-    
-    """
-    Analyze current data to identify the largest conductance peak and it's pair feature on the same peak.
-=======
     """
     Description
     -----------
     Analyze current data to identify the largest conductance peak and it's pair feature on the same current peak.
->>>>>>> Stashed changes
 
     This function plots the current and its derivative, then highlights
     the most extreme conductance peak along with the pair that's on the same current peak.
@@ -2683,15 +2628,6 @@ def extract_max_conductance_pair(x_data: np.array,
 
     return conductance_pair
 
-<<<<<<< Updated upstream
-def hough_transform(x_data: np.array,
-                    y_data: np.array,
-                    current_data: np.array,
-                    filepath: str,
-                    filename: str,
-                    transform_trim: list = [0, -1]
-                    ):
-=======
 def extract_charge_transitions(x_data: np.array,
                                y_data: np.array,
                                filepath: str,
@@ -2701,7 +2637,6 @@ def extract_charge_transitions(x_data: np.array,
                                peak_prominence_factor: list[float] = [None, None],
                                peak_width: list[tuple] = [None, None]
                                ):
->>>>>>> Stashed changes
     """
     Description
     -----------

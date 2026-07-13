@@ -69,7 +69,13 @@ class tuner_gui:
         self.logger = TunerLog("TunerGUI")
         self.start_time = time.monotonic()
 
-        self.station = Station(config_file = "../configs/test_station.yaml")
+        y = os.getcwd()
+        logger.info(f"{y}")
+        os.chdir("..")
+
+        self.station_path = os.path.join("configs", "station.yaml")
+
+        self.station = Station(config_file = self.station_path)
         self.station_lock = threading.Lock()
 
         self.instrument_handler = create_buffer_instance(self.station, self.station_lock) 
@@ -132,9 +138,11 @@ class tuner_gui:
             
                     with ui.tab_panel('Setup'):
 
+                        device_config = os.path.join("configs", "Intel_Config.yaml")
+
                         self.autotune = ui.button(
                                             'Autotune',
-                                            on_click = Protocol(device_config = '../configs/Intel_Config.yaml')
+                                            on_click = Protocol(device_config = device_config)
                                                  )
 
                     with ui.tab_panel('Bootstrapping'):
@@ -368,7 +376,9 @@ class tuner_gui:
         self.debug_status.set_text("Running Bootstrapping...")
         self.logger.info("Bootstrapping Jobs queued")
 
-        future = self.autotuning_handler.run_bootstrapping(device_config = r'C:\Users\BaughLaflamme\Documents\GitHub\QuantumDotControl\configs\Intel_Config.yaml',
+        device_config = os.path.join("configs", "Intel_Config.yaml")
+
+        future = self.autotuning_handler.run_bootstrapping(device_config = device_config,
                                                            instrument_handler = self.instrument_handler,
                                                            experiment_handler = self.experiment_handler,
                                                            wait = False
@@ -379,7 +389,9 @@ class tuner_gui:
         self.debug_status.set_text("Running Global Charge Tuning...")
         self.logger.info("Global Charge Tuning Jobs queued")
 
-        future = self.autotuning_handler.run_global_charge_tuning(device_config = r'C:\Users\BaughLaflamme\Documents\GitHub\QuantumDotControl\configs\Intel_Config.yaml',
+        device_config = os.path.join("configs", "Intel_Config.yaml")
+
+        future = self.autotuning_handler.run_global_charge_tuning(device_config = device_config,
                                                                   instrument_handler = self.instrument_handler,
                                                                   experiment_handler = self.experiment_handler,
                                                                   wait = False

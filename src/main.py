@@ -6,16 +6,34 @@ Entry point to the auto tuner.
 
 '''
 
+import datetime
 import os
+
+protocol_folder = None
+datafolder = None
+
+if protocol_folder is None:
+        
+    current_dir = os.getcwd()
+    os.chdir("..")
+    protocol_folder = f"Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}"
+    os.makedirs(protocol_folder, exist_ok=True)
+    os.chdir(current_dir)
+
+if datafolder is None:
+    current_dir = os.getcwd()
+    os.chdir("..")
+    datafolder = f"Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}"
+    datafolder = os.path.join(datafolder, "Data")
+    os.makedirs(datafolder, exist_ok=True)
+    os.chdir(current_dir)
+
 from nicegui import app, ui
 from gui import tuner_gui
 from tunerlog import TunerLog
-import datetime
 
 gui = None
 logger = None
-protocol_folder = None
-datafolder = None
 
 @app.on_startup
 def start_tuner_gui():
@@ -26,17 +44,12 @@ def start_tuner_gui():
     logger = TunerLog("main")
     logger.info("Starting GUI...")
 
-    if protocol_folder is None:
-        protocol_folder = f"../Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}"
-        os.makedirs(protocol_folder, exist_ok=True)
-
-    if datafolder is None:
-        datafolder = f"../Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}/Data"
-        os.makedirs(datafolder, exist_ok=True)
+    y = os.getcwd()
+    logger.info(f"{y}")
 
     gui = tuner_gui()
 
-    print("Gui Startup Complete! Welcome to QAT!")
+    print("Gui Startup Complete! Welcome to the QAT!")
 
 @app.on_shutdown
 def stop_tuner_gui():

@@ -51,8 +51,7 @@ class Sweep:
             for p in layer.targets
         ]
 
-        # self.directory = os.path.join(os.path.expanduser("~"), r"C:\Users\BaughLaflamme\Desktop\3d1s_W151_1 Measurements\3D1S_w151_1 - Autotuning Tests")
-        self.directory = os.path.join(os.path.expanduser("~"), rf"../Protocol_Run_{datetime.now().strftime('%m-%d-%Y')}/Data")
+        self.directory = os.path.join(os.getcwd(), f"Protocol_Run_{datetime.now().strftime('%m-%d-%Y')}", "Data")
 
         self._csv_file = None
         self._csv_writer = None
@@ -63,15 +62,24 @@ class Sweep:
             'agilent_left.volt',
             'agilent_right.volt'
         ]
+
+        logger.info(f"{self.directory}")
+
         ap = list(self.all_params)
         
         self._header = ap + keys
 
+        logger.info(f"{self._header}")
+
         self.filename = filename
+
+        logger.info(f"{self.filename}")
 
         self.csv_path = os.path.join(self.directory, self.filename)
 
         self._csv_file = open(self.csv_path, "w", newline="")
+
+        logger.info(f"{self.csv_path}")
 
         self._csv_writer = csv.writer(self._csv_file)
         self._csv_writer.writerow(self._header)

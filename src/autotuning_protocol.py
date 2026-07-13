@@ -21,11 +21,6 @@ from qcodes.dataset.dond.do_nd_utils import ActionsT
 from qcodes.parameters import ParameterBase
 import numpy.typing as npt
 
-from skimage.transform import probabilistic_hough_line
-from skimage.feature import canny
-from skimage.filters import threshold_otsu
-from skimage.morphology import diamond, rectangle  # noqa
-
 from datetime import datetime
 import threading
 from experiment_base import SweepParam, SweepLayer, Sweep
@@ -33,7 +28,6 @@ from data_analysis import extract_turn_on_voltage, extract_pinch_off_curve_range
 
 import sys
 
-from nicegui import ui
 from tunerlog import TunerLog
 
 logger = TunerLog('Autotuning Protocol')
@@ -47,7 +41,7 @@ class Protocol:
     ):
         
         '''
-        Initializes the protocol. Reads the device configuration file provided and creates a path from gate name to dac.
+        Initializes the protocol. Reads the device configuration file provided and creates a path from gate name to dac. 
 
         
         '''
@@ -151,8 +145,6 @@ class Protocol:
         self.SET_preamp_bias = self.config['setup']['SET_preamp']['preamp_bias']
         self.SET_preamp_sensitivity = self.config['setup']['SET_preamp']['preamp_sensitivity']
 
-<<<<<<< Updated upstream
-=======
     def parameter_snapshot(self, name):
 
         # Collect voltage parameter from all gates and capture the data in the logger. 
@@ -176,8 +168,6 @@ class Protocol:
         logger.info(f"Snapshot of {name} created!")
         logger.info(f"{snapshot_dacs_and_vals}")
 
-
->>>>>>> Stashed changes
 class Bootstrapping(Protocol):
 
     def __init__(self, device_config, instrument_handler, experiment_handler):

@@ -11,6 +11,8 @@ device:
     abs_max_gate_differential: 1.5
     abs_max_gate_voltage: 1.5
     abs_max_ohmic_bias: 1e-3
+    screening_initial_voltages: 0.2
+    initial_ohmic_bias: -2e-4
 
   gates:
     S0:

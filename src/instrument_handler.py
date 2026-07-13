@@ -425,7 +425,7 @@ class instrument_handler:
             The qcodes station with the config file loaded. Instruments will be loaded using this
         
         station_lock : threading.Lock
-            qcodes unfortunately writes to the station class during load_instrument, so we
+            Qcodes unfortunately writes to the station class during load_instrument, so we
             need a lock to protect the station and make calls to it thread safe.
 
         time_func : Callable[[], Any]

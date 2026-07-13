@@ -180,6 +180,9 @@ class autotuning_handler:
                                    instrument_handler = instrument_handler,
                                    experiment_handler = experiment_handler
                                   )
+        
+            result.autotune()
+
             return result
 
         return self.autotuning_thread.add_job(

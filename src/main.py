@@ -44,9 +44,6 @@ def start_tuner_gui():
     logger = TunerLog("main")
     logger.info("Starting GUI...")
 
-    y = os.getcwd()
-    logger.info(f"{y}")
-
     gui = tuner_gui()
 
     print("Gui Startup Complete! Welcome to the QAT!")

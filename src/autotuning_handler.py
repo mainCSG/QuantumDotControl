@@ -166,6 +166,7 @@ class AutotuningThread:
 class autotuning_handler:
 
     def __init__(self, autotuning_thread):
+
         self.autotuning_thread = autotuning_thread
 
     def run_bootstrapping(self,
@@ -176,12 +177,17 @@ class autotuning_handler:
                 timeout: float = 6000):
 
         def sweep_fn(abort_event):
+
             result = Bootstrapping(device_config = device_config,
-                                   instrument_handler = instrument_handler,
-                                   experiment_handler = experiment_handler
+                                   instr_handler = instrument_handler,
+                                   exp_handler = experiment_handler
                                   )
-        
-            result.autotune()
+
+            result.autotune(instr_handler = instrument_handler,
+                            exp_handler = experiment_handler,
+                            num_points_bootstrapping = [150, 150, 200, 200, 200],
+                            dev_mode = True
+                           )
 
             return result
 
@@ -200,13 +206,20 @@ class autotuning_handler:
                 timeout: float = 6000):
 
         def sweep_fn(abort_event):
+            
             result = GlobalChargeTuning(device_config = device_config,
-                                        instrument_handler = instrument_handler,
-                                        experiment_handler = experiment_handler
+                                        instr_handler = instrument_handler,
+                                        exp_handler = experiment_handler
                                        )
-            return result
 
-        logger.info("adding job!")
+            result.autotune(instr_handler = instrument_handler,
+                            exp_handler = experiment_handler,
+                            num_points_bootstrapping = [150, 150, 200, 200, 200],
+                            num_points_global_charge_tuning = [150, 400, 400],
+                            dev_mode = True
+                           )
+
+            return result
 
         return self.autotuning_thread.add_job(
                                               sweep_fn,
@@ -216,14 +229,27 @@ class autotuning_handler:
                                              )
 
     def run_virtual_gating(self,
-                sweep,
-                instrument_handler,
-                current_setpoints = {},
-                wait: bool = True,
-                timeout: float = 60):
+                           device_config,
+                           instrument_handler,
+                           experiment_handler,
+                           wait: bool = True,
+                           timeout: float = 6000):
 
         def sweep_fn(abort_event):
-            result = VirtualGating()
+            
+            result = VirtualGating(device_config = device_config,
+                                   instr_handler = instrument_handler,
+                                   exp_handler = experiment_handler
+                                  )
+
+            result.autotune(instr_handler = instrument_handler,
+                            exp_handler = experiment_handler,
+                            num_points_bootstrapping = [100, 100, 50, 50, 50],
+                            num_points_global_charge_tuning = [100, 100, 50],
+                            num_points_virtual_gating = [],
+                            dev_mode = True
+                           )
+
             return result
 
         return self.autotuning_thread.add_job(

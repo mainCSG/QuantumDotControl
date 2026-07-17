@@ -63,23 +63,14 @@ class Sweep:
             'agilent_right.volt'
         ]
 
-        logger.info(f"{self.directory}")
-
         ap = list(self.all_params)
         
         self._header = ap + keys
 
-        logger.info(f"{self._header}")
-
         self.filename = filename
-
-        logger.info(f"{self.filename}")
-
         self.csv_path = os.path.join(self.directory, self.filename)
 
         self._csv_file = open(self.csv_path, "w", newline="")
-
-        logger.info(f"{self.csv_path}")
 
         self._csv_writer = csv.writer(self._csv_file)
         self._csv_writer.writerow(self._header)

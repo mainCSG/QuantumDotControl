@@ -69,8 +69,6 @@ class tuner_gui:
         self.logger = TunerLog("TunerGUI")
         self.start_time = time.monotonic()
 
-        y = os.getcwd()
-        logger.info(f"{y}")
         os.chdir("..")
 
         self.station_path = os.path.join("configs", "station.yaml")
@@ -197,6 +195,11 @@ class tuner_gui:
                         ui.button(
                             'Run Global Charge Tuning',
                             on_click = self.run_global_charge_tuning
+                        )
+
+                        ui.button(
+                            'Run Virtual Gating',
+                            on_click = self.run_virtual_gating
                         )
 
                         self.debug_status = ui.label('Idle')
@@ -392,6 +395,19 @@ class tuner_gui:
         device_config = os.path.join("configs", "Intel_Config.yaml")
 
         future = self.autotuning_handler.run_global_charge_tuning(device_config = device_config,
+                                                                  instrument_handler = self.instrument_handler,
+                                                                  experiment_handler = self.experiment_handler,
+                                                                  wait = False
+                                                                 )
+
+    def run_virtual_gating(self):
+
+        self.debug_status.set_text("Running Virtual Gating...")
+        self.logger.info("Virtual Gating Jobs queued")
+
+        device_config = os.path.join("configs", "Intel_Config.yaml")
+
+        future = self.autotuning_handler.run_virtual_gating(device_config = device_config,
                                                                   instrument_handler = self.instrument_handler,
                                                                   experiment_handler = self.experiment_handler,
                                                                   wait = False

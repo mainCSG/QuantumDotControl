@@ -2112,6 +2112,8 @@ def extract_working_point(lb_data: np.array,
 def extract_tunnel_barrier_latching(dp_data: np.array,
                                     tb_data: np.array,
                                     current_data: np.array,
+                                    filepath: str,
+                                    filename: str,
                                     peak_height: list[float] = [None, None],
                                     peak_prominence: list[float] = [None, None],
                                     peak_width: list[float] = [None, None]

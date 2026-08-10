@@ -43,7 +43,6 @@ class LogElementHandler(logging.Handler):
             msg = self.format(record)
 
             client = self.element.client
-            print("CONNECT", client.id, hex(id(client)))
             self.element.push(msg, classes=colors[level])
         except Exception as e:
             print("UI handler failed:", repr(e))

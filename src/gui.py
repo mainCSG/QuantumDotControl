@@ -73,7 +73,7 @@ class tuner_gui:
         logger.info(f"{y}")
         os.chdir("..")
 
-        self.station_path = os.path.join("configs", "station.yaml")
+        self.station_path = os.path.join("configs", "dummy_station.yaml")
 
         self.station = Station(config_file = self.station_path)
         self.station_lock = threading.Lock()
@@ -93,12 +93,12 @@ class tuner_gui:
             instrument.add_spi_module(7, 'D5a', 'module2')
             return
 
-        self.instrument_handler.add_instrument("agilent_left", init_agilent)
-        self.instrument_handler.add_instrument("agilent_right", init_agilent)
-        self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
+        # self.instrument_handler.add_instrument("agilent_left", init_agilent)
+        # self.instrument_handler.add_instrument("agilent_right", init_agilent)
+        # self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
 
-        self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
-        self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
+        # self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
+        # self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
 
         self.abort_signal = threading.Event()
 
@@ -406,8 +406,9 @@ class tuner_gui:
             self:
         """
 
-        with ui.header().classes(replace='row items-center') as header:
-            ui.label('Welcome to the QAT!!!')
+        # Uses bg-primary to match the default NiceGUI footer color
+        with ui.header().classes('bg-primary text-white').style('height: 2px;'):
+            ui.label(' ').classes('opacity-0')
 
     def footer(self):
         
@@ -418,8 +419,14 @@ class tuner_gui:
             self:
         """
 
-        with ui.footer(value=True) as footer:
-            ui.button('ABORT', on_click = self.on_abort, color='red')
+        with ui.footer(value=True).classes('items-center'):
+            with ui.row().classes('w-full items-center justify-between'):
+                # left: abort button
+                ui.button('ABORT', on_click=self.on_abort, color='red').classes('mx-4')
+                # center: large centered welcome text using a Unicode ket
+                ui.label('Welcome to |QAT⟩').classes('text-3xl font-bold text-center flex-1')
+                # right: spacer to balance the layout
+                ui.label('').style('width:64px')
 
     # The below methods define all features and general functions of the GUI
 

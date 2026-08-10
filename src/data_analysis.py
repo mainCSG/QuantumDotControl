@@ -9,6 +9,7 @@ import shutil
 import sys
 import threading
 import time
+import copy
 from pathlib import Path
 from typing import Callable, Dict, List
 from venv import logger
@@ -31,7 +32,7 @@ from IPython.display import display
 
 from scipy.optimize import curve_fit
 from scipy.special import expit
-from scipy.ndimage import convolve, map_coordinates, gaussian_filter1d
+from scipy.ndimage import convolve, map_coordinates, gaussian_filter1d, gaussian_filter
 
 import skimage
 from skimage import filters, transform
@@ -360,9 +361,9 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
     gate_type : str
         the type of gate being pinched off, options are 'Accumulation', 'Barrier', and 'Plunger'
     filepath : str
-        name of directory to save turn-on plot in
+        name of directory to save pinch-off plot in
     filename : str
-        name of file to save the turn-on plot under
+        name of file to save the pinch-off plot under
 
     Returns
     -----------
@@ -453,8 +454,8 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
 
     # --- Fit sigmoids (Gompertz function) ---
 
-    params, popt, pcov = fit_to_function(x1, y1_norm, gompertz, p0=[y1_norm.max() * 0.9, 1e5, 10], print_results=False) # For plotting
-    params2, popt2, pcov2 = fit_to_function(x1, y1, gompertz, p0=[y1_norm.max() * 0.9, 1e5, 10], print_results=False) # For fit calculations
+    params, popt, pcov = fit_to_function(x1, y1_norm, gompertz, print_results=False) # For plotting
+    params2, popt2, pcov2 = fit_to_function(x1, y1, gompertz, print_results=False) # For fit calculations
 
     # --- Extract key points ---
    
@@ -486,7 +487,8 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
         sat_current = y1_norm[np.abs(y1 - A2).argmin()]
 
     elif gate_type == 'Barrier':
-        sat_voltage = fit_saturation_voltage
+        a = A2 * 0.9
+        sat_voltage = x1[np.abs(y1 - a).argmin()]
         sat_current = y1_norm[np.abs(x1 - sat_voltage).argmin()]
 
     else:
@@ -506,7 +508,7 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
     # Plot pinch-off and saturation points, and gompaertz sigmoid fit
     ax.scatter(pinch_off_voltage, pinch_off_current, color='red', s=100, zorder=5, label='Pinch-off Point')
     ax.scatter(sat_voltage, sat_current, color='green', s=100, zorder=5, label='Saturation Point')
-    ax.plot(x1, y_fit, '--', color='red', linewidth=2, label='Fitted Sigmoid')
+    ax.plot(x1, y_fit, '--', color='red', linewidth=2, label='Fitted Gompertz')
 
     ax.legend(fontsize=20, frameon=False, loc='upper left')
 
@@ -610,6 +612,10 @@ def extract_max_conductance_points(x_data: np.array,
         independent variable (voltage) values
     y_data : np.array
         dependent variable (current) values
+    filepath : str
+        name of directory to save conductance plot in
+    filename : str
+        name of file to save the conductance plot under
     peak_height_factor : list[float]
         percentage of maximum conductance to set the minimum absolute peak height threshold in conductance, for [positive peaks, negative peaks]
     abs_peak_height : list[float]
@@ -829,9 +835,9 @@ def extract_working_point(lb_data: np.array,
     barrier_pinch_offs : list[float]
         barrier gate pinch-off voltages, [left barrier, right barrier]
     filepath : str
-        name of directory to save turn-on plot in
+        name of directory to save barrier-barrier plot in
     filename : str
-        name of file to save the turn-on plot under
+        name of file to save the barrier-barrier plot under
     minAngleDeg : float
         minimum angle threshold to find working-point/hough lines in degrees
     maxAngleDeg : float
@@ -2481,9 +2487,9 @@ def extract_max_conductance_pair(x_data: np.array,
     y_data : np.array
         dependent SET current values
     filepath : str
-        name of directory to save turn-on plot in
+        name of directory to save conductance plot in
     filename : str
-        name of file to save the turn-on plot under
+        name of file to save the conductance plot under
     peak_height_factor : list[float]
         percentage of maximum conductance to set the minimum absolute peak height threshold in conductance, for [positive peaks, negative peaks]
     peak_prominence_factor : list[float]
@@ -2652,9 +2658,9 @@ def extract_charge_transitions(x_data: np.array,
     y_data : np.array
         dependent SET current values
     filepath : str
-        name of directory to save turn-on plot in
+        name of directory to save charge transitions plot in
     filename : str
-        name of file to save the turn-on plot under
+        name of file to save the charge transitions plot under
     peak_height_factor : list[float]
         percentage of maximum conductance to set the minimum absolute peak height threshold in conductance, for [positive peaks, negative peaks]
     abs_peak_height : list[float]
@@ -2670,21 +2676,159 @@ def extract_charge_transitions(x_data: np.array,
         the voltage where the strongest conductance of any charge transition exists
     """
 
+    # --- Data definitions ---
+    
+    # Ensures numpy array 
     x1 = np.array(x_data)
     y1 = np.array(y_data)
 
-    if abs_peak_height != [None, None] and peak_height_factor != [None, None]:
-        raise ValueError("Both abs_peak_height and peak_height_factor values were given. Please ensure only one of these arguments are given!")
+    # Calculate the derivative
+    dIdV = np.gradient(y1, x1)
 
-    if abs_peak_height == [None, None]:
-        peak_height = [100, 100]
+    # Implements default if no user-defined values are given
+    if abs_peak_height != [None, None]:
+        peak_height = [abs_peak_height[0], abs_peak_height[1]]
     elif peak_height_factor == [None, None]:
-        peak_height_factor = [0.3, 0.3]
+        peak_height = [0.25 * np.max(dIdV), 0.25 * np.max(dIdV)]
+    else:
+        peak_height = [peak_height_factor[0] * np.max(dIdV), peak_height_factor[1] * np.max(dIdV)]
 
     if peak_prominence_factor == [None, None]:
-        peak_prominence_factor = [0.45, 0.45]
+        peak_prominence = [0.3 * np.max(dIdV), 0.3 * np.max(dIdV)]
+    else:
+        peak_prominence = [peak_prominence_factor[0] * np.max(dIdV), peak_prominence_factor[1] * np.max(dIdV)]
 
-    _, all_sens_pts = extract_max_conductance_points(x1, y1, filepath, filename, abs_peak_height=peak_height, peak_prominence_factor=peak_prominence_factor, peak_width=peak_width)
+    # --- Find two largest and two smallest conductance points (positive + negative extremes) ---
+
+    peak_idx_pos, _ = signal.find_peaks(dIdV, height = peak_height[0], prominence = peak_prominence[0], width=peak_width[0])
+    peak_idx_neg, _ = signal.find_peaks(-dIdV, height = peak_height[1], prominence = peak_prominence[1], width=peak_width[1])
+
+    peak_idx = np.sort(np.concatenate([peak_idx_pos, peak_idx_neg]))
+
+    # Check if no peaks are found, and safely end the function whilst saving the raw data
+
+    if peak_idx.size == 0:
+
+        # logger.info("No conductance peaks were found")
+
+        # Saves data even if no peaks are found, so the user can see why the peak detection failed
+        fig = plt.figure()
+        plt.plot(x1, y1)
+        plt.close(fig)
+
+        # filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+        # fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
+        raise ValueError("No conductance peaks were found") # Switch to Logging error so protocol doesn't crash
+
+    # Extract data points from peaks
+
+    x_top = x1[peak_idx]
+    I_top = y1[peak_idx]
+    G_top = dIdV[peak_idx]
+
+    max_idx = peak_idx[np.argmax(dIdV[peak_idx])]
+    min_idx = peak_idx[np.argmin(dIdV[peak_idx])]
+
+    x_max = x1[max_idx]
+    x_min = x1[min_idx]
+    I_max = y1[max_idx]
+    I_min = y1[min_idx]
+    G_max = dIdV[max_idx]
+    G_min = dIdV[min_idx]
+
+    num_transitions = 3
+    if len(peak_idx) < 3:
+        num_transitions = len(peak_idx)
+    G_best = []
+    x_best = []
+    I_best = []
+    indices = np.argpartition(abs(G_top), -num_transitions)[-num_transitions:]
+    for i in indices:
+        x_best.append(x_top[i])
+        I_best.append(I_top[i])
+        G_best.append(G_top[i])
+
+    all_sens_pts = (x_top, G_top)
+
+    # Create two subplots that share the x-axis
+    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=False, figsize=(8, 6))
+
+    # --- Top panel: Current Data ---
+    ax1.plot(x1, y1, color='#2c5aa0', linewidth=1)
+
+    # --- Bottom panel: Conductance Data ---
+    ax2.plot(x1, dIdV, color='#2c5aa0', linewidth=1)
+
+    # Save raw data
+    filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+    fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
+    # --- Top panel: Current Analysis and Labelling ---
+    for i in range(len(x_best)):
+        ax1.scatter(x_best[i], I_best[i], facecolors='none', edgecolors="#FF5500", s=100, linewidths=2, zorder=5, label='Detected Charge Transitions')
+    ax1.set_ylabel('I (nA)', fontsize=35)
+    ax1.set_ylim(bottom=0)
+    ax1.set_xlim(min(x1), max(x1))
+    ax1.tick_params(labelbottom=True)
+
+    # --- Bottom panel: Conductance Analysis and Labelling ---
+    for i in range(len(x_best)):
+        ax2.scatter(x_best[i], G_best[i], facecolors='none', edgecolors="#FF5500", s=100, linewidths=2, zorder=5, label='Detected Charge Transitions')
+    ax2.set_xlabel(r'$V_P$ (V)', fontsize=35)
+    ax2.set_ylabel('G (nS)', fontsize=35)
+    ax1.set_ylim(bottom=0)
+    ax2.set_xlim(min(x1), max(x1))
+
+    # --- Create the connection line between top and bottom panels ---
+    for i in range(len(x_best)):
+        con = ConnectionPatch(
+            xyA=(x_best[i], I_best[i]), coordsA=ax1.transData,
+            xyB=(x_best[i], G_best[i]), coordsB=ax2.transData,
+            color='#FF5500', linestyle='--', linewidth=0.7
+        )
+        fig.add_artist(con)
+
+    # --- Create custom legend entries (hollow circles) ---
+    legend_marker = mlines.Line2D([], [], color='#FF5500', marker='o',
+                                markerfacecolor='none', markersize=10,
+                                linewidth=0, label='Detected Charge Transitions')
+
+    # --- Custom tick labels: only min and max shown ---
+
+    # Get existing ticks
+    for ax in [ax1, ax2]:
+
+        ax.minorticks_on()
+        ax.tick_params(which='minor', direction='in', length=3, top=True, right=True)
+        ax.tick_params(direction='in', length=5, width=1.2, labelsize=20, top=True, right=True)
+        xticks = ax.get_xticks()
+        yticks = ax.get_yticks()
+        
+    ax1.set_xticks([np.round(x1.min(), 3), np.round((x1.min() + x1.max()) / 2, 3), np.round(x1.max(), 3)])
+    ax1.set_xticklabels([str(np.round(x1.min(), 3)), str(np.round((x1.min() + x1.max()) / 2, 3)), str(np.round(x1.max(), 3))], fontsize=25)
+
+    ax1.set_yticks([0, np.round(y1.max(), 3)])
+    ax1.set_yticklabels(['0', str(np.round(y1.max(), 3))], fontsize=25)
+
+    ax2.set_xticks([np.round(x1.min(), 3), np.round((x1.min() + x1.max()) / 2, 3),  np.round(x1.max(), 3)])
+    ax2.set_xticklabels([str(np.round(x1.min(), 3)), str(np.round((x1.min() + x1.max()) / 2, 3)), str(np.round(x1.max(), 3))], fontsize=25)
+
+    ax2.set_yticks([np.round(dIdV.min(), 1), 0, np.round(dIdV.max(), 1)])
+    ax2.set_yticklabels([str(np.round(dIdV.min(), 1)), '0', str(np.round(dIdV.max(), 1))], fontsize=25)
+
+    ax1.legend(handles=[legend_marker], loc='upper left', fontsize=16, frameon=False)
+
+    # --- Adjust layout ---
+    plt.subplots_adjust(hspace=0.40)
+    # plt.show()
+    
+    # Saves final plot
+    filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+    fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+
+    plt.close(fig)
+    # plt.show()
 
     G_max = abs(all_sens_pts[1]).max()
     max_idx = np.where(G_max == abs(all_sens_pts[1]))[0][0]
@@ -2717,9 +2861,9 @@ def hough_transform(x_data: np.array,
     current_data : np.array
         dependent current values
     filepath : str
-        name of directory to save turn-on plot in
+        name of directory to save hough transform plot in
     filename : str
-        name of file to save the turn-on plot under
+        name of file to save the hough transform plot under
     transform_trim : list[int]
         the cut-off values for making the transform a better fit to the data (mainly for manual debugging)
 
@@ -2767,9 +2911,10 @@ def hough_transform(x_data: np.array,
         cmap='viridis'
     )
     fig.colorbar(mesh, ax=ax, label="I (nA)")
-    ax.set_xlabel("Gate X Voltage (V)")
-    ax.set_ylabel("Gate Y Voltage (V)")
+    ax.set_xlabel("P1 (V)")
+    ax.set_ylabel("P2 (V)")
 
+    # Save Raw Data
     filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
     fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
 
@@ -2809,9 +2954,1319 @@ def hough_transform(x_data: np.array,
     # Set the limits and show
     ax.set_ylim(min(y_vals), max(y_vals))
 
+    # Save Analyzed Data
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
     plt.close(fig)
+    # plt.show()
 
     return slope, intercept
+
+def bias_range_coulomb_diamond(x_data: np.array,
+                               current_data: np.array,
+                               bias: list[float],
+                               debug: bool = False
+                               ):
+    """
+    Description
+    -----------
+    Determine the range, bounds, of SD bias necessary to conduct a coulomb diamond experiment.
+
+    This function uses 4 traces given by the user to outline rough diamonds that will be seen for a full high-res scan to be taken later.
+    Ensure the order of the current traces and bias is the same.
+
+    Parameters
+    -----------
+    x_data : np.array
+        Charge sensor plunger gate data, all traces should have the same x range
+    current_data : np.array
+        4 arrays of charge sensor current data are contained within this array, 1 for each bias traces
+    bias : list[float]
+        The 4 biases at which the traces are taken at
+    debug : bool
+        Shows the traces and its derivative alongside the where the peaks were found
+
+    Returns
+    -----------
+    bias_bounds : tuple(float)
+        The minimum and maximum bounds for the SD bias for a high-res scan (symmetric around 0)
+    line_list : list[list[float]]
+        Contains the properties of each line that outlines the coulomb diamonds
+    dia_list : list[list[float]]
+        Contains the properties of the points that make up each coulomb diamond
+    """
+
+    # Check if 4 current_data traces were given
+    if len(current_data) != 4:
+        raise ValueError("Not enough or too many current traces were given. Ensure that only 4 traces are given.")
+
+    # Check if 4 biases were given
+    if len(bias) != 4:
+        raise ValueError("Not enough or too many biases were given. Ensure that only 4 biases are given.")
+
+    # Set all data to numpy arrays
+    curr = []
+
+    for g in range(len(current_data)):
+        curr.append(np.array(current_data[g]))
+
+    x1 = np.array(x_data)
+    curr = np.array(curr)
+
+    # Create a list template for containing all the data for the diamonds
+    dia_temp = [
+                [(), ()], # top left line
+                [(), ()], # top right line
+                [(), ()], # bottom left line
+                [(), ()]  # bottom right line
+                        ]
+
+    # Initialze all variables
+    dia_list = []
+    x_vals = []
+    y_vals = []
+    dia_create = True
+    num_dia = None
+    der_analysis = []
+    peak_list = []
+
+    # Getting the derivative of each bias trace and finding the peaks in each derivative trace
+    for h in range(len(bias)):
+        der_analysis.append(np.gradient(curr[h], x1))
+        peak_idx, _ = signal.find_peaks(abs(der_analysis[h]), distance=6)
+        peak_list.append(peak_idx)
+
+    # Ensures that there are only an even number of peaks (only full diamonds being taken into account)
+    for i in range(len(bias)):
+        if len(peak_list[i]) % 2 == 1:
+            peak_list[i] = peak_list[i][:-1]
+
+    # Group the traces by bias polarity. Every positive-bias trace shares one
+    # peak set and every negative-bias trace shares another, so a check that
+    # fails on any one trace trims the peaks of every trace in that group.
+    pos_group = [idx for idx in range(len(bias)) if bias[idx] > 0]
+    neg_group = [idx for idx in range(len(bias)) if bias[idx] <= 0]
+
+    def _peak_sign(trace_idx, peak_pos):
+        """Sign of the derivative at a single peak, indexed directly.
+
+        Avoids rebuilding the full ``der_analysis[t][peak_list[t]]`` fancy-index
+        array (which the previous implementation did once per comparison).
+        """
+        return float(np.sign(der_analysis[trace_idx][peak_list[trace_idx][peak_pos]]))
+
+    def _trim_group(group, del_pos):
+        """Delete the given peak position(s) from every trace in the group.
+
+        Traces in a group can hold different numbers of peaks, so a member that
+        has already run out of peaks is skipped instead of being allowed to raise
+        IndexError from ``np.delete``.
+        """
+        needed = len(del_pos) if isinstance(del_pos, list) else 1
+        for member in group:
+            if len(peak_list[member]) >= needed:
+                peak_list[member] = np.delete(peak_list[member], del_pos)
+
+    # Checks every bias trace for full diamonds. `polarity` encodes the expected
+    # leading edge: +1 for positive-bias traces (positive peak then negative)
+    # and -1 for negative-bias traces (negative peak then positive).
+    for group, polarity in ((pos_group, 1.0), (neg_group, -1.0)):
+        for trace_idx in group:
+
+            # Every check reads the first/last two peaks, so stop once the trace
+            # no longer has two peaks left to inspect.
+            if len(peak_list[trace_idx]) < 2:
+                continue
+
+            # First two peaks share a sign, so they do not bound a full diamond
+            if _peak_sign(trace_idx, 0) == _peak_sign(trace_idx, 1):
+                _trim_group(group, [0, 1])
+                if len(peak_list[trace_idx]) < 2:
+                    continue
+
+            # Last two peaks share a sign, so they do not bound a full diamond
+            if _peak_sign(trace_idx, -1) == _peak_sign(trace_idx, -2):
+                _trim_group(group, [-1, -2])
+                if len(peak_list[trace_idx]) < 2:
+                    continue
+
+            # Leading edge runs the wrong way round for this bias polarity
+            if _peak_sign(trace_idx, 0) == -polarity and _peak_sign(trace_idx, 1) == polarity:
+                _trim_group(group, 0)
+                if len(peak_list[trace_idx]) < 2:
+                    continue
+
+            # Trailing edge runs the wrong way round for this bias polarity
+            if _peak_sign(trace_idx, -1) == polarity and _peak_sign(trace_idx, -2) == -polarity:
+                _trim_group(group, -1)
+
+    # Number of full diamonds found in all traces
+    num_dia = int(np.floor(len(peak_list[0])/2))
+
+    for j in range(len(bias)):
+
+        # Creates a copy of the template for each diamond only on the first iteration
+        if dia_create:
+            for _ in range(num_dia):
+                dia_list.append(copy.deepcopy(dia_temp))
+            dia_create = False
+
+        # Populates the list with the points to outline each diamond
+        for k in range(num_dia):
+            start_idx = k*2
+            end_idx = start_idx + 1
+
+            if j == 0 or j == 2:
+                dia_list[k][j][0] = (x1[peak_list[j][start_idx]], bias[j])
+                x_vals.append(x1[peak_list[j][start_idx]])
+                y_vals.append(bias[j])
+                dia_list[k][j+1][0] = (x1[peak_list[j][end_idx]], bias[j])
+                x_vals.append(x1[peak_list[j][end_idx]])
+                y_vals.append(bias[j])
+            elif j == 1 or j == 3:
+                dia_list[k][j-1][1] = (x1[peak_list[j][start_idx]], bias[j])
+                x_vals.append(x1[peak_list[j][start_idx]])
+                y_vals.append(bias[j])
+                dia_list[k][j][1] = (x1[peak_list[j][end_idx]], bias[j])
+                x_vals.append(x1[peak_list[j][end_idx]])
+                y_vals.append(bias[j])
+
+        # Allows the plotting of the traces and its derivative and where the peaks were found
+        if debug == True:
+            fig, ax = plt.subplots(figsize=(8,6))
+            ax.plot(x1, curr[j], label=f"SD Bias = {bias[j]} V")
+            for l in peak_list[j]:
+                    ax.axvline(x=x1[l], color='red', linestyle='--')
+            ax.set_xlabel("P20 (V)")
+            ax.set_ylabel("I (nA)")
+            ax.legend()
+            plt.show()
+
+            fig, ax = plt.subplots(figsize=(8,6))
+            ax.plot(x1, der_analysis[j], label=f"SD Bias = {bias[j]} V")
+            ax.scatter(x1[peak_list[j]], der_analysis[j][peak_list[j]], color='red', label='Peaks')
+            ax.set_xlabel("P20 (V)")
+            ax.set_ylabel("dI/dP20 (nA/V)")
+            ax.legend()
+            plt.show()
+
+    line_list = []
+
+    # Finding the lines to outline each diamond
+    for m in range(num_dia):
+        line_list.append([])
+
+        for n in range(4):
+            # If the slope is undefined (vertical line), then slope is set to nan and y_int is the x value that satisfies the equation y = x
+            if (dia_list[m][n][1][0] - dia_list[m][n][0][0]) == 0:
+                slope = np.nan
+                y_int = dia_list[m][n][0][0]
+            else:
+                slope = (dia_list[m][n][1][1] - dia_list[m][n][0][1]) / (dia_list[m][n][1][0] - dia_list[m][n][0][0])
+                y_int = dia_list[m][n][0][1] - (slope*dia_list[m][n][0][0])
+
+            line_list[m].append((slope, y_int))
+
+    # Finding the intersection point between the top and bottom lines
+    intersect_list = []
+
+    # Top intersection point (+'ve bias)
+    for o in range(num_dia):
+        intersect_list.append([])
+
+        # Checks if both lines are vertical, and if so, then set the intersection point to nan
+        if np.isnan(line_list[o][1][0]) and np.isnan(line_list[o][0][0]):
+            intersect_list[o].append(np.nan)
+            continue
+
+        # Checks if the slopes if they are inverted (left line is negatively sloped and right line is positively sloped), and if so, then set the intersection point to nan
+        if line_list[o][0][0] < 0 and line_list[o][1][0] > 0:
+            intersect_list[o].append(np.nan)
+            continue
+
+        # Checks if the lines are parallel, and if so, then set the intersection point to nan
+        if line_list[o][0][0] == line_list[o][1][0]:
+            intersect_list[o].append(np.nan)
+            continue
+
+        # Checks if the right line is vertical and calculates the intersection point accordingly
+        if np.isnan(line_list[o][1][0]):
+            x_int_0 = line_list[o][1][1]
+            y_int_0 = (line_list[o][0][0]*x_int_0) + line_list[o][0][1]
+
+        # Checks if the left line is vertical and calculates the intersection point accordingly
+        elif np.isnan(line_list[o][0][0]):
+            x_int_0 = line_list[o][0][1]
+            y_int_0 = (line_list[o][1][0]*x_int_0) + line_list[o][1][1]
+
+        # Calculates the intersection point
+        else:
+            x_int_0 = (line_list[o][1][1] - line_list[o][0][1]) / (line_list[o][0][0] - line_list[o][1][0])
+            y_int_0 = (line_list[o][0][0]*x_int_0) + line_list[o][0][1]
+
+        intersect_list[o].append((x_int_0, y_int_0))
+
+    # Bottom intersection point (-'ve bias)
+    for p in range(num_dia):
+
+        # Checks if both lines are vertical, and if so, then set the intersection point to nan
+        if np.isnan(line_list[p][3][0]) and np.isnan(line_list[p][2][0]):
+            intersect_list[p].append(np.nan)
+            continue
+
+        # Checks if the slopes if they are inverted (left line is positively sloped and right line is negatively sloped), and if so, then set the intersection point to nan
+        if line_list[p][2][0] > 0 and line_list[p][3][0] < 0:
+            intersect_list[p].append(np.nan)
+            continue
+
+        # Checks if the lines are parallel, and if so, then set the intersection point to nan
+        if line_list[p][2][0] == line_list[p][3][0]:
+            intersect_list[p].append(np.nan)
+            continue
+
+         # Checks if the right line is vertical and calculates the intersection point accordingly
+        if np.isnan(line_list[p][3][0]):
+            x_int_1 = line_list[p][3][1]
+            y_int_1 = (line_list[p][2][0]*x_int_1) + line_list[p][2][1]
+
+        # Checks if the left line is vertical and calculates the intersection point accordingly
+        elif np.isnan(line_list[p][2][0]):
+            x_int_1 = line_list[p][2][1]
+            y_int_1 = (line_list[p][3][0]*x_int_1) + line_list[p][3][1]
+
+        # Calculates the intersection point
+        else:
+            x_int_1 = (line_list[p][3][1] - line_list[p][2][1]) / (line_list[p][2][0] - line_list[p][3][0])
+            y_int_1 = (line_list[p][2][0]*x_int_1) + line_list[p][2][1]
+
+        intersect_list[p].append((x_int_1, y_int_1))
+
+    y_int_pos_vals = []
+    y_int_neg_vals = []
+
+    # Sorts the y values of all intersection points into positive and negative categories
+    for q in range(2):
+        for r in range(num_dia):
+            item = intersect_list[r][q]
+
+            if isinstance(item, tuple):
+                value_to_append = item[1]
+            else:
+                value_to_append = np.nan 
+
+            if q == 0:
+                y_int_pos_vals.append(value_to_append)
+            elif q == 1:
+                y_int_neg_vals.append(value_to_append)
+
+    # Removes all nans from the arrays
+    y_int_pos_vals_upd = [x for x in y_int_pos_vals if not (isinstance(x, float) and np.isnan(x))]
+    y_int_neg_vals_upd = [x for x in y_int_neg_vals if not (isinstance(x, float) and np.isnan(x))]
+
+    # Takes the average of the positive and negative intersection values
+    y_int_pos_avg = np.average(np.array(y_int_pos_vals_upd))*1.5
+    y_int_neg_avg = np.average(np.array(y_int_neg_vals_upd))*1.5
+
+    # Finds which average is larger in magnitude and sets that symetrically across 0 for bounds
+    if abs(y_int_pos_avg) > abs(y_int_neg_avg):
+            bias_bounds = (-y_int_pos_avg, y_int_pos_avg)
+    else:
+            bias_bounds = (y_int_neg_avg, abs(y_int_neg_avg))
+
+    return bias_bounds
+
+def extract_coulomb_diamonds(x_data: np.array,
+                                y_data: np.array,
+                                current_data: np.array,
+                                filepath: str,
+                                filename: str,
+                                smoothing: float = 1.5,
+                                edge_threshold: float = 0.5,
+                                contrast_percentile: float = 95.0,
+                                peak_distance: int = 4,
+                                zero_bias_exclusion: float = 0.02,
+                                bias_window: float = 0.5,
+                                x_window: tuple = None,
+                                slope_range: tuple = None,
+                                slope_steps: int = 900,
+                                degeneracy_prominence: float = 0.25,
+                                slope_tolerance: float = 0.5,
+                                min_edge_points: int = 4,
+                                slope_consistency: float = 0.35,
+                                blockade_ratio: float = 1.8,
+                                min_concentration: float = 1.5,
+                                orientation_margin: float = 0.03,
+                                alignment_gain: float = 0.20,
+                                debug: bool = False
+                                ):
+    """
+    Description
+    -----------
+    Locate the Coulomb diamonds in a 2D bias-vs-gate scan and outline them.
+
+    The routine is fully deterministic: identical input always produces identical output.
+    It works from the numerical derivative of the current with respect to the gate axis,
+    ``dI/dVg``. Because the ohmic/leakage background of such a scan depends
+    almost entirely on the bias, differentiating along the gate axis removes it
+    and leaves the diamond edges as ridges.
+
+    Each diamond is a quadrilateral pinned to its two zero-bias vertices, with all
+    four edges fitted independently to the ridge points that belong to them. The
+    edges are not forced parallel, because forcing that makes the outline miss the
+    real diamond whenever the two sides differ even slightly. They are instead only
+    loosely tied together: each edge slope is held within ``slope_consistency`` of
+    the corresponding global value, so the four stay similar without being equal.
+
+    The global pair is refined iteratively. A first estimate comes from the whole
+    scan, the per-edge fits are then re-derived from it, and the global pair is
+    recomputed from those fits until it settles. Without this the outlines stay
+    locked to a poor starting estimate.
+
+    Algorithm
+    -----------
+    1. Grid the scan onto its unique gate/bias axes and lightly smooth it.
+    2. Take ``dI/dVg`` and normalise the magnitude row by row, so weak-signal
+       bias rows still contribute.
+    3. Pick out ridge points as the per-row peaks of that edge map, skipping the
+       narrow band around zero bias where all edges converge.
+    4. Recover the two edge slopes with a Radon-style accumulator: for a trial
+       slope ``m`` every ridge point is projected to the zero-bias intercept
+       ``b = x - y/m``. The correct slope is the one that makes those intercepts
+       pile up, because every diamond edge extrapolates to a charge-degeneracy
+       point on the zero-bias axis. The concentration score is normalised
+       against a uniform spread so the search is not biased toward steep slopes.
+    5. Read the charge-degeneracy points off the combined accumulator. Each
+       neighbouring pair of degeneracy points brackets one diamond.
+    6. Fit each of the four edges of each diamond to the ridge points nearest its
+       predicted position, iterating the global pair until it settles, then
+       intersect the upper pair for the apex and the lower pair for the base.
+    7. Discard any candidate that runs off the sides of the scan, is taller than
+       the measured bias range, or fails a Coulomb-blockade check on its interior
+       (inside a real diamond the current is flat, so its gate derivative is
+       quiet compared with the rest of the scan).
+
+    Parameters
+    -----------
+    x_data : np.array
+        Gate (plunger) voltage. Either the flat per-point list, or the 1D axis
+        when ``current_data`` is supplied as a 2D grid.
+    y_data : np.array
+        Source-drain bias voltage, in the same layout as ``x_data``.
+    current_data : np.array
+        Measured current. Either the flat per-point list matching ``x_data`` and
+        ``y_data``, or a 2D grid shaped ``(len(y_data), len(x_data))``.
+    filepath : str
+        name of directory to save coulomb diamonds plot in
+    filename : str
+        name of file to save the coulomb diamonds plot under
+    smoothing : float
+        Standard deviation, in pixels, of the Gaussian applied before
+        differentiating. Raise it for noisier scans, lower it to resolve
+        closely spaced diamonds.
+    edge_threshold : float
+        Minimum row-normalised edge strength for a ridge point, where 1.0 is the
+        ``contrast_percentile`` of the edge map in that bias row.
+    contrast_percentile : float
+        Percentile of each bias row's edge map that is treated as full scale, the
+        algorithmic equivalent of narrowing a colour-bar range. The default of 95
+        keys the scale to the strongest features in the row. Lowering it (75, or
+        60) compresses the bright features and lets faint edges compete, which
+        matters when the diamond signal is only a per-cent-level modulation on a
+        large ohmic background. Note that it can change which line family the
+        slope search settles on, so check the result against the plots.
+    peak_distance : int
+        Minimum separation, in gate pixels, between two ridge points in the same
+        bias row.
+    zero_bias_exclusion : float
+        Fraction of the bias half-range around zero bias that is ignored. The
+        four edges meeting at a degeneracy point cannot be resolved there.
+    bias_window : float
+        Fraction of the bias half-range searched for edges, measured out from
+        zero bias. Diamonds occupy only the low-bias part of a wide scan, so the
+        default keeps the outer half of the scan from adding noise.
+    x_window : tuple(float, float) or None
+        Optional ``(x_min, x_max)`` restriction of the gate range. Useful for
+        excluding a turn-on region or another strong non-diamond feature. When
+        None the full gate range is used.
+    slope_range : tuple(float, float) or None
+        Smallest and largest edge-slope magnitude ``|dV/dVg|`` considered by the
+        slope search. When None both bounds are derived from the scan itself using
+        the observed zero-bias peak spacing: the lower bound is the shallowest
+        slope whose apex still clears the zero-bias axis by a few bias pixels, and
+        the upper bound keeps the apex inside the searched bias window. Leaving
+        this at None is recommended.
+    slope_steps : int
+        Number of trial slopes tested per sign. Higher is finer but slower.
+    degeneracy_prominence : float
+        A peak in the degeneracy accumulator must reach this fraction of the
+        tallest peak to be accepted as a charge-degeneracy point.
+    slope_tolerance : float
+        Fractional band around the global slope within which a ridge point is
+        accepted as belonging to a given diamond edge. 0.5 means +/-50%.
+    min_edge_points : int
+        Fewest ridge points needed to refine a slope for one diamond. Below this
+        the global slope is used for that diamond instead.
+    slope_consistency : float
+        How far a single diamond's fitted slope may depart from the global value,
+        as a fraction. Every diamond in a scan is produced by the same charging
+        physics, so their edge slopes should be near a common pair; 0.25 allows
+        +/-25% of genuine variation while stopping one noisy fit from tilting a
+        shape away from its neighbours. Set to 0 to force every diamond onto the
+        global pair, or raise it to let each diamond be fitted freely.
+    blockade_ratio : float
+        A candidate diamond is kept only if the mean edge strength in its
+        interior is below this multiple of the mean edge strength over the
+        searched region. Inside a diamond the dot is Coulomb blockaded, so the
+        current is flat and its gate derivative small. This is a guard against
+        spurious shapes rather than a fit criterion, so the default is deliberately
+        permissive; lower it to demand a cleaner blockade region, raise it if
+        diamonds you can see are being dropped.
+    min_concentration : float
+        How much more tightly the winning edge family must concentrate its
+        zero-bias intercepts than an even spread would, before the scan is
+        accepted as containing diamonds at all. 1.0 is "no better than random".
+        This is what makes a featureless or pure-noise scan raise instead of
+        returning meaningless shapes.
+    orientation_margin : float
+        Fractional improvement in blockade depth required before the two slope
+        magnitudes are swapped between the edge pairs. The swap mirrors every
+        diamond (apex moving from one side to the other), so this guards against
+        flipping them on a difference that is really just noise. Raise it to make
+        the choice stickier, set it to 0 to always take the better of the two.
+    alignment_gain : float
+        Fractional reduction in the conductance enclosed by the outlines that a
+        rigid shift of the whole degeneracy set must achieve before it is applied.
+        The ridge accumulator can place the degeneracy points a fraction of a period
+        off, which slides every outline off its diamond; shifting to the blockade
+        fixes that. The threshold is high on purpose, because a small gain is not
+        evidence of a real phase error and acting on it moves correctly placed
+        outlines. Set to 0 to always take the best shift, or to 1 to disable.
+    debug : bool
+        Also plot the derivative map with the detected ridge points and the
+        degeneracy accumulator, and print the per-diamond table.
+
+    Returns
+    -----------
+    diamond_slopes : dict
+        One entry per accepted diamond, numbered left to right along the gate
+        axis, each holding the slope (dV/dVg) of its four edges::
+
+            {
+              'diamond_1': {'top_left': 2.22,  'top_right': -3.89,
+                            'bottom_left': -3.61, 'bottom_right': 2.54},
+              'diamond_2': {...},
+            }
+
+        All four are fitted separately, so they differ from one another. They are
+        constrained only to stay within ``slope_consistency`` of the global pair,
+        which keeps the two positive edges similar to each other and likewise the
+        two negative ones.
+    diamond_properties : dict
+        Scan-wide averages taken over the accepted diamonds::
+
+            {
+              'average_positive_slope': 2.28,     # dV/dVg, mean of the two
+                                                  #   positive edges of every diamond
+                                                  #   (top-left and bottom-right)
+              'average_negative_slope': -3.51,    # mean of the two negative edges
+                                                  #   (top-right and bottom-left)
+              'average_diamond_height': 0.1067,   # apex-to-base separation, in volts
+                                                  #   of SD bias
+              'average_diamond_width': 0.0393,    # gate-voltage separation of the two
+                                                  #   charge-degeneracy points that
+                                                  #   bracket the diamond
+            }
+
+    Raises
+    -----------
+    ValueError
+        If the scan cannot be gridded, if the slope search finds no consistent
+        edge family, or if no complete (not cut off) diamond is found.
+    """
+
+    # ------------------------------------------------------------------ inputs
+    # Coerce to numpy arrays even when they already are
+    x1 = np.array(x_data, dtype=float)
+    y1 = np.array(y_data, dtype=float)
+    curr = np.array(current_data, dtype=float)
+
+    # Accept either a 2D grid on 1D axes, or flat per-point lists
+    if curr.ndim == 2 and x1.ndim == 1 and y1.ndim == 1 and curr.shape == (y1.size, x1.size):
+        unique_x = np.unique(x1)
+        unique_y = np.unique(y1)
+        Z_matrix = curr.copy()
+    else:
+        xf, yf, cf = x1.ravel(), y1.ravel(), curr.ravel()
+        if not (xf.size == yf.size == cf.size):
+            raise ValueError("x_data, y_data and current_data must describe the same "
+                             "number of points, or current_data must be a 2D grid "
+                             "shaped (len(y_data), len(x_data)).")
+        unique_x = np.unique(xf)
+        unique_y = np.unique(yf)
+        Z_matrix = np.full((unique_y.size, unique_x.size), np.nan)
+        Z_matrix[np.searchsorted(unique_y, yf), np.searchsorted(unique_x, xf)] = cf
+
+    if unique_x.size < 8 or unique_y.size < 8:
+        raise ValueError(f"Scan is too small to contain diamonds: got a "
+                         f"{unique_y.size} x {unique_x.size} grid.")
+
+    fig_raw, ax_raw = plt.subplots(figsize=(8, 6))
+    mesh = ax_raw.pcolormesh(unique_x, unique_y, Z_matrix, shading='auto', cmap='viridis')
+    fig_raw.colorbar(mesh, ax=ax_raw, label='I (nA)')
+    ax_raw.set_xlabel('Gate voltage (V)')
+    ax_raw.set_ylabel('SD bias (V)')
+    ax_raw.set_title('Raw 2D scan')
+
+    filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+    fig_raw.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+    plt.close(fig_raw)
+
+    # Fill any pixel the scan never visited by interpolating along the gate axis
+    if np.isnan(Z_matrix).any():
+        for j in range(Z_matrix.shape[0]):
+            row = Z_matrix[j]
+            missing = np.isnan(row)
+            if missing.all():
+                row[:] = 0.0
+            elif missing.any():
+                row[missing] = np.interp(np.flatnonzero(missing),
+                                         np.flatnonzero(~missing),
+                                         row[~missing])
+
+    # ------------------------------------------------- derivative / edge map
+    # Differentiating along the gate axis cancels the bias-only ohmic background
+    Z_smooth = gaussian_filter(Z_matrix, sigma=smoothing, mode='nearest')
+    dI_dx = np.gradient(Z_smooth, unique_x, axis=1)
+    
+    # Normalise each bias row so low-signal rows still contribute ridge points.
+    # Rows whose derivative never rises above floating-point rounding are zeroed
+    # first: without that floor, normalising would amplify the rounding noise of a
+    # perfectly flat scan into apparent edges.
+    edge_map = np.abs(dI_dx)
+    gate_step = float(np.median(np.diff(unique_x)))
+    # Use the larger of the current's range and its magnitude, so a scan holding a
+    # constant non-zero current still gets a floor well above rounding noise
+    current_scale = max(float(np.ptp(Z_matrix)), float(np.max(np.abs(Z_matrix))))
+    derivative_floor = 1e-4 * current_scale / max(gate_step, 1e-12)
+    row_scale = np.percentile(edge_map, contrast_percentile, axis=1, keepdims=True)
+    edge_norm = np.where(row_scale > derivative_floor,
+                         edge_map / np.where(row_scale > 0, row_scale, 1.0),
+                         0.0)
+
+    # --------------------------------------------------------- ridge points
+    bias_half = np.max(np.abs(unique_y))
+    y_inner = zero_bias_exclusion * bias_half
+    y_outer = bias_window * bias_half
+
+    # A Coulomb diamond is by definition a bias-dependent feature, so if the scan's
+    # structure is the same at every bias there is nothing to find. This catches a
+    # scan that varies only along the gate axis, whose constant gate derivative can
+    # otherwise survive the later tests.
+    structure = Z_smooth - np.median(Z_smooth, axis=1, keepdims=True)
+    varies_with_bias = float(np.mean(np.std(structure, axis=0)))
+    varies_with_gate = float(np.mean(np.std(structure, axis=1)))
+    if varies_with_gate > 0 and varies_with_bias < 0.02 * varies_with_gate:
+        raise ValueError(
+            f"The scan's structure does not depend on the bias "
+            f"(variation across bias is {varies_with_bias / varies_with_gate:.1%} of "
+            f"the variation across the gate), so it cannot contain Coulomb diamonds.")
+
+    if x_window is None:
+        x_lo_lim, x_hi_lim = unique_x.min(), unique_x.max()
+    else:
+        x_lo_lim, x_hi_lim = float(min(x_window)), float(max(x_window))
+
+    in_x = (unique_x >= x_lo_lim) & (unique_x <= x_hi_lim)
+
+    ridge_x, ridge_y, ridge_w = [], [], []
+    for j, y_val in enumerate(unique_y):
+        if not (y_inner <= abs(y_val) <= y_outer):
+            continue
+        row = np.where(in_x, edge_norm[j], 0.0)
+        # Prominence as well as height: a diamond edge is a genuine ridge standing
+        # clear of its surroundings, whereas a scan with a constant gate derivative
+        # gives a flat row whose rounding wiggles would otherwise clear a pure
+        # height threshold and masquerade as edges.
+        found, _ = signal.find_peaks(row, height=edge_threshold,
+                                     prominence=0.15 * edge_threshold,
+                                     distance=peak_distance)
+        for i in found:
+            ridge_x.append(unique_x[i])
+            ridge_y.append(y_val)
+            ridge_w.append(row[i])
+
+    ridge_x = np.array(ridge_x)
+    ridge_y = np.array(ridge_y)
+    ridge_w = np.array(ridge_w)
+
+    if ridge_x.size < 2 * min_edge_points:
+        raise ValueError(f"Found only {ridge_x.size} edge points in the derivative "
+                         f"map, which is too few to define any diamond. Try lowering "
+                         f"edge_threshold or smoothing.")
+
+    # ------------------------------------------------------- slope search
+    # Every diamond edge extrapolates to a charge-degeneracy point on the zero
+    # bias axis, so the correct slope is the one whose intercepts pile up.
+    bin_width = gate_step
+    # The accumulator spans exactly the searched gate range, because a degeneracy
+    # point can only lie inside it. Holding that span fixed also gives the
+    # concentration score the same denominator for every trial slope, which removes
+    # the bias that would otherwise favour extreme slopes.
+    hist_lo, hist_hi = x_lo_lim, x_hi_lim
+    n_bins = max(16, int(round((hist_hi - hist_lo) / bin_width)))
+
+    def _intercepts(m):
+        """Zero-bias intercept of the line of slope m through each ridge point."""
+        return ridge_x - ridge_y / m
+
+    # Charge-degeneracy spacing, measured from the period of the zero-bias Coulomb
+    # oscillation. This sets the scale for the slope search, for how much the
+    # accumulator is smoothed, and for how close two degeneracy points may sit, so
+    # getting it wrong by a factor of two halves every diamond.
+    #
+    # The oscillation must be measured on the SIGNED residual, not on the magnitude
+    # of the derivative: taking the magnitude of an oscillation doubles its apparent
+    # frequency, which would report half the true spacing. The residual is
+    # phase-aligned by the sign of the bias first, because the current itself
+    # reverses with bias.
+    spacing = None
+    period_measured = False
+    osc_band = ((np.abs(unique_y) >= y_inner)
+                & (np.abs(unique_y) <= max(2.0 * y_inner, 0.25 * bias_half)))
+    if osc_band.sum() >= 3 and in_x.sum() >= 8:
+        residual_signed = Z_smooth - np.median(Z_smooth, axis=1, keepdims=True)
+        profile = (residual_signed[osc_band][:, in_x]
+                   * np.sign(unique_y[osc_band])[:, None]).mean(axis=0)
+        profile = profile - profile.mean()
+        if np.any(profile):
+            osc = np.correlate(profile, profile, mode='full')[profile.size - 1:]
+            if osc[0] > 0:
+                osc = osc / osc[0]
+                osc_peaks, _ = signal.find_peaks(osc[:max(4, profile.size // 2)],
+                                                 height=0.10)
+                osc_peaks = osc_peaks[osc_peaks >= 2]
+                if osc_peaks.size:
+                    # first autocorrelation peak is the fundamental period
+                    spacing = float(osc_peaks[0]) * bin_width
+                    period_measured = True
+
+    if spacing is None:
+        # Fall back to counting features on the edge map. Note this counts two per
+        # oscillation, so it can under-estimate the spacing.
+        near_zero = np.abs(unique_y) <= max(y_inner, 2.0 * bin_width)
+        if near_zero.any():
+            zero_profile = edge_norm[near_zero].mean(axis=0)
+        else:
+            zero_profile = edge_norm[np.argmin(np.abs(unique_y))]
+        zero_profile = np.where(in_x, zero_profile, 0.0)
+        zero_peaks, _ = signal.find_peaks(zero_profile, distance=peak_distance)
+        if zero_peaks.size >= 2:
+            spacing = float(np.median(np.diff(unique_x[zero_peaks])))
+        else:
+            spacing = 4.0 * bin_width
+
+    spacing = max(spacing, 2.0 * bin_width)
+
+    def _smoothing_for(spacing_estimate):
+        """Accumulator smoothing scaled to the expected degeneracy spacing.
+
+        Too little and one degeneracy point breaks into several fragments; too
+        much and neighbouring points merge.
+        """
+        return float(np.clip(0.12 * spacing_estimate / bin_width, 1.0, 12.0))
+
+    def _accumulator(m, sigma):
+        """Weighted histogram of those intercepts, lightly smoothed."""
+        hist, edges = np.histogram(_intercepts(m), bins=n_bins,
+                                   range=(hist_lo, hist_hi), weights=ridge_w)
+        return gaussian_filter1d(hist, sigma), edges
+
+    if slope_range is None:
+        # Cap the search at the steepest slope that still keeps the apex of a
+        # diamond of that width inside the searched bias window: a symmetric
+        # diamond of width w has its apex at w*m/2. Without a cap the accumulator
+        # drifts toward near-vertical features, which are common in these scans and
+        # are not diamond edges. The floor is the shallowest slope whose apex still
+        # stands a few bias pixels clear of the zero-bias axis.
+        bias_step = float(np.median(np.diff(unique_y)))
+        lo_m = max(6.0 * bias_step / spacing, 0.02)
+        # Generous per-slope bound only. The real constraint couples the two slopes,
+        # so it is applied to each candidate pair below rather than to either slope
+        # alone: a strongly asymmetric diamond can have one very steep edge and still
+        # keep its apex inside the scan.
+        hi_m = float(np.clip(8.0 * bias_half / spacing, 4.0 * lo_m, 400.0))
+    else:
+        lo_m, hi_m = float(min(np.abs(slope_range))), float(max(np.abs(slope_range)))
+
+    # Search the two slopes jointly rather than one at a time. The two edge families
+    # of a diamond must terminate at the same charge-degeneracy points, so a pair is
+    # scored by how well the intercepts of both families agree. Searching them
+    # independently can settle on a pair that is individually plausible but mutually
+    # inconsistent, which is exactly the failure this avoids.
+    n_grid = max(24, int(np.sqrt(slope_steps)) * 3)
+    trial = np.linspace(lo_m, hi_m, n_grid)
+    acc_sigma = _smoothing_for(spacing)
+
+    # One accumulator per candidate slope, computed once and then reused for every
+    # pair, so the joint search costs 2*n_grid histograms rather than n_grid squared
+    acc_plus = np.clip(np.array([_accumulator(+m, acc_sigma)[0] for m in trial]), 0.0, None)
+    acc_minus = np.clip(np.array([_accumulator(-m, acc_sigma)[0] for m in trial]), 0.0, None)
+
+    pair_score = np.zeros((n_grid, n_grid))
+    for i in range(n_grid):
+        combined = np.sqrt(acc_plus[i][None, :] * acc_minus)
+        total = combined.sum(axis=1)
+        ok = total > 0
+        pair_score[i, ok] = ((combined[ok] ** 2).sum(axis=1) / total[ok] ** 2) * n_bins
+
+    # A diamond of width w bounded by slopes a and b has its apex at w*a*b/(a+b),
+    # the harmonic-mean combination. Requiring that apex to lie inside the measured
+    # bias range is the exact physical constraint, and it couples the two slopes: one
+    # edge may be very steep provided the other is shallow enough. Applying it to the
+    # pair also removes the degenerate very-steep corner of the grid, where every
+    # intercept collapses onto the point's own gate voltage and any clustering in
+    # gate voltage alone would inflate the score.
+    mag_pos, mag_neg = np.meshgrid(trial, trial, indexing='ij')
+    apex_height = spacing * (mag_pos * mag_neg) / (mag_pos + mag_neg)
+    pair_score[apex_height > bias_half] = 0.0
+
+    if not np.any(np.isfinite(pair_score)) or pair_score.max() <= 0:
+        raise ValueError("The slope search found no consistent family of diamond "
+                         "edges. Try widening slope_range or adjusting smoothing.")
+
+    # Best-scoring valid pair. No preference for shallow slopes is needed here: the
+    # apex constraint above already excludes the degenerate steep corner, and adding
+    # one on top biases strongly asymmetric diamonds toward too-shallow edges.
+    chosen = np.unravel_index(int(np.argmax(pair_score)), pair_score.shape)
+    m_pos_global = float(trial[chosen[0]])
+    m_neg_global = float(-trial[chosen[1]])
+    pair_concentration = float(pair_score[chosen[0], chosen[1]])
+
+    # A featureless scan (pure background, or pure noise) still yields ridge points
+    # once the edge map is row-normalised, but their zero-bias intercepts do not
+    # pile up. A concentration near 1.0 means the intercepts are spread as evenly
+    # as random points would be, so there is no diamond structure to find.
+    weakest = pair_concentration
+    if weakest < min_concentration:
+        raise ValueError(
+            f"No clear Coulomb diamond structure was found: the best edge family "
+            f"concentrates its zero-bias intercepts only {weakest:.2f}x more than an "
+            f"even spread would, below min_concentration = {min_concentration}. Pure "
+            f"noise scores about 1.1-1.3, so a score in that region cannot be "
+            f"distinguished from noise automatically.\n"
+            f"  If you can see diamonds in the scan, the search is most likely being "
+            f"pulled off them by another feature. Things to try, in order:\n"
+            f"   1. x_window=(lo, hi) to exclude turn-on or other non-diamond regions\n"
+            f"   2. bias_window smaller (e.g. 0.3) so only the low-bias region is used\n"
+            f"   3. slope_range=(lo, hi) to pin the search to the edge slope you can "
+            f"see, which is the strongest lever when a scan holds more than one line "
+            f"family (for example near-vertical charge-sensor transitions)\n"
+            f"   4. min_concentration lower to force a result, accepting that the "
+            f"output may not be meaningful\n"
+            f"  Best slope pair found so far: m_pos = {m_pos_global:+.3f}, "
+            f"m_neg = {m_neg_global:+.3f}. Run with debug=True to see the edge map, "
+            f"the detected edge points and the intercept accumulator.")
+
+    # --------------------------------------------- charge-degeneracy points
+    # Both edge families intercept the zero-bias axis at degeneracy points, combined
+    # here with a geometric mean rather than a sum. A real degeneracy point
+    # terminates one edge of each family, so it appears in both accumulators,
+    # whereas the smear left when one family is projected with the other family's
+    # slope appears in only one. The geometric mean keeps the former and suppresses
+    # the latter.
+    def _combined(sigma):
+        pos, edges = _accumulator(m_pos_global, sigma)
+        neg, _ = _accumulator(m_neg_global, sigma)
+        return np.sqrt(np.clip(pos, 0.0, None) * np.clip(neg, 0.0, None)), edges
+
+    accumulator, edges = _combined(_smoothing_for(spacing))
+    centres = 0.5 * (edges[:-1] + edges[1:])
+
+    # Degeneracy points must lie inside the region actually searched
+    accumulator = np.where((centres >= x_lo_lim) & (centres <= x_hi_lim), accumulator, 0.0)
+
+    if accumulator.max() <= 0:
+        raise ValueError("No charge-degeneracy points were found on the zero-bias axis.")
+
+    # Two degeneracy points cannot sit much closer together than the oscillation
+    # period. When the period was measured from the oscillation itself it is
+    # trustworthy, so require most of it: a gap of only half a period means one
+    # diamond has been split in two, which draws a half-width shape sitting inside
+    # the real diamond. When only the fallback estimate is available, stay
+    # permissive rather than risk merging genuinely unevenly spaced diamonds.
+    separation_factor = 0.75 if period_measured else 0.45
+    min_separation = max(2, int(round(separation_factor * spacing / bin_width)))
+    found, _ = signal.find_peaks(accumulator,
+                                 height=degeneracy_prominence * accumulator.max(),
+                                 distance=min_separation)
+
+    # Projecting one edge family with the other family's slope leaves a weak
+    # artefact peak at the diamond apex, exactly midway between two real
+    # degeneracy points. Drop any peak that sits near such a midpoint and is
+    # clearly weaker than both of its neighbours. Real neighbouring degeneracy
+    # points have comparable weight, so they survive this test.
+    trimmed = True
+    while trimmed and found.size >= 3:
+        trimmed = False
+        heights = accumulator[found]
+        for k in range(1, found.size - 1):
+            gap = found[k + 1] - found[k - 1]
+            midpoint = 0.5 * (found[k + 1] + found[k - 1])
+            near_middle = gap > 0 and abs(found[k] - midpoint) <= 0.25 * gap
+            much_weaker = heights[k] < 0.7 * min(heights[k - 1], heights[k + 1])
+            if near_middle and much_weaker:
+                found = np.delete(found, k)
+                trimmed = True
+                break
+
+    degeneracy = np.sort(centres[found])
+
+    if degeneracy.size < 2:
+        raise ValueError(f"Found {degeneracy.size} charge-degeneracy point(s) on the "
+                         f"zero-bias axis; at least 2 are needed to bracket a diamond. "
+                         f"Try lowering degeneracy_prominence or edge_threshold.")
+
+    # ---------------------------------------------- per-diamond refinement
+    upper = ridge_y > 0
+    lower = ridge_y < 0
+
+    # Group the ridge points by bias row once, so each diamond can look up the edge
+    # points in a row without rescanning the whole cloud
+    rows_of_ridges = {}
+    for xr_, yr_, wr_ in zip(ridge_x, ridge_y, ridge_w):
+        rows_of_ridges.setdefault(yr_, []).append(xr_)
+    for yr_ in rows_of_ridges:
+        rows_of_ridges[yr_] = np.sort(np.array(rows_of_ridges[yr_]))
+
+    def _fit_edges(x_left, x_right, m_pos_guess, m_neg_guess):
+        """Fit the four edges of one diamond independently.
+
+        For each bias row the expected position of each edge is predicted from the
+        global slope, and the nearest ridge point within a narrow corridor of that
+        prediction is taken as the measured edge point. Simply taking the outermost
+        ridge in the row does not work: these scans often carry extra, much steeper
+        lines running through the diamonds, and the outermost ridge is then one of
+        those rather than the diamond boundary.
+
+        Each edge is forced through its own zero-bias vertex, which keeps the
+        diamond closed, and its slope is the median of the slopes implied by its
+        points. The four results are only loosely tied together: each is held within
+        ``slope_consistency`` of the corresponding global slope, so the edges stay
+        similar without being forced equal.
+        """
+        width = x_right - x_left
+        corridor = 0.3 * width
+        left_upper, left_lower, right_upper, right_lower = [], [], [], []
+        for y_val, xs_row in rows_of_ridges.items():
+            for anchor, guess, bucket in (
+                    (x_left, m_pos_guess if y_val > 0 else m_neg_guess,
+                     left_upper if y_val > 0 else left_lower),
+                    (x_right, m_neg_guess if y_val > 0 else m_pos_guess,
+                     right_upper if y_val > 0 else right_lower)):
+                predicted = anchor + y_val / guess
+                if not (x_left - corridor <= predicted <= x_right + corridor):
+                    continue
+                near = xs_row[np.abs(xs_row - predicted) <= corridor]
+                if near.size == 0:
+                    continue
+                measured = float(near[np.argmin(np.abs(near - predicted))])
+                if abs(measured - anchor) > 1e-12:
+                    bucket.append(y_val / (measured - anchor))
+
+        def _median_slope(values, guess, want_positive):
+            vals = np.array([v for v in values if np.isfinite(v)
+                             and (v > 0 if want_positive else v < 0)])
+            if vals.size < min_edge_points:
+                return guess
+            estimate = float(np.median(vals))
+            lo = guess * (1.0 - slope_consistency)
+            hi = guess * (1.0 + slope_consistency)
+            return float(np.clip(estimate, min(lo, hi), max(lo, hi)))
+
+        return (_median_slope(left_upper, m_pos_guess, True),    # top-left
+                _median_slope(right_upper, m_neg_guess, False),  # top-right
+                _median_slope(left_lower, m_neg_guess, False),   # bottom-left
+                _median_slope(right_lower, m_pos_guess, True))   # bottom-right
+
+
+
+    diamond_slopes = {}
+    outlines = []
+    rejected = {'geometry': 0, 'off_the_sides': 0, 'taller_than_scan': 0,
+                'too_few_interior_pixels': 0, 'no_blockade': 0}
+    x_min, x_max = unique_x.min(), unique_x.max()
+
+    # Coordinates of every pixel, plus the reference edge strength that the
+    # blockade test for each candidate diamond is compared against
+    grid_x, grid_y = np.meshgrid(unique_x, unique_y)
+    searched = np.zeros_like(edge_norm, dtype=bool)
+    searched[np.ix_((np.abs(unique_y) >= y_inner) & (np.abs(unique_y) <= y_outer), in_x)] = True
+    region_mean = float(edge_norm[searched].mean()) if searched.any() else float(edge_norm.mean())
+
+    # ------------------------------------------------------------- orientation
+    # The two slope magnitudes could be assigned either way round: putting the
+    # steeper one on the top-left/bottom-right pair leans the parallelogram one way,
+    # putting it on the top-right/bottom-left pair leans it the other. Both
+    # assignments give exactly the same zero-bias intercepts, so the intercept
+    # agreement score cannot choose between them and a wrong choice mirrors every
+    # diamond. The Coulomb blockade decides it: only the correct assignment puts the
+    # current-suppressed region inside the outlined shape. Chord conductance I/V is
+    # the direct measure, being small inside a diamond and large outside.
+    with np.errstate(divide='ignore', invalid='ignore'):
+        chord = np.abs(Z_matrix / grid_y)
+    usable = (np.abs(unique_y) >= max(y_inner, 2.0 * abs(float(np.median(np.diff(unique_y))))))
+    chord_norm = np.full_like(chord, np.nan)
+    for j in np.flatnonzero(usable):
+        row = chord[j]
+        finite = np.isfinite(row)
+        if finite.any():
+            scale = np.median(row[finite])
+            if scale > 0:
+                chord_norm[j] = row / scale
+
+    def _corners(m_tl, m_tr, m_bl, m_br, x_left, x_right):
+        """The four corners of a diamond from its two vertices and four edge slopes.
+
+        The apex is where the two upper edges meet and the base where the two lower
+        edges meet. Returns None when the edges do not close into a sensible shape.
+        """
+        if m_tl <= 0 or m_br <= 0 or m_tr >= 0 or m_bl >= 0:
+            return None
+        if np.isclose(m_tl, m_tr) or np.isclose(m_bl, m_br):
+            return None
+        x_top = (m_tl * x_left - m_tr * x_right) / (m_tl - m_tr)
+        y_top = m_tl * (x_top - x_left)
+        x_bot = (m_bl * x_left - m_br * x_right) / (m_bl - m_br)
+        y_bot = m_bl * (x_bot - x_left)
+        if not (y_top > 0 > y_bot):
+            return None
+        if not (x_left <= x_top <= x_right and x_left <= x_bot <= x_right):
+            return None
+        return ((x_left, 0.0), (x_top, y_top), (x_right, 0.0), (x_bot, y_bot))
+
+    def _interior_mask(corners, shrink=0.35):
+        """Pixels well inside the quadrilateral, shrunk toward its centre.
+
+        The four edges are fitted independently, so the shape is a general convex
+        quadrilateral rather than a parallelogram and the containment test has to be
+        general too. Shrinking toward the centroid keeps the sample clear of the
+        edges themselves.
+        """
+        pts = np.array(corners, dtype=float)
+        centre = pts.mean(axis=0)
+        pts = centre + (1.0 - shrink) * (pts - centre)
+
+        # Normalise the winding direction from the signed area, so the side test is
+        # correct whichever way round the corners happen to be ordered
+        signed_area = 0.0
+        for i in range(4):
+            x0, y0 = pts[i]
+            x1, y1 = pts[(i + 1) % 4]
+            signed_area += x0 * y1 - x1 * y0
+        winding = 1.0 if signed_area > 0 else -1.0
+
+        inside = np.ones(grid_x.shape, dtype=bool)
+        for i in range(4):
+            x0, y0 = pts[i]
+            x1, y1 = pts[(i + 1) % 4]
+            # the sign of the cross product says which side of the edge a point is on
+            cross = (x1 - x0) * (grid_y - y0) - (y1 - y0) * (grid_x - x0)
+            inside &= winding * cross >= 0
+        return inside
+
+    def _blockade_depth(mp, mn, points=None):
+        """Mean normalised chord conductance inside every candidate diamond.
+
+        Lower means the outlined shapes really do sit on blockaded regions, so this
+        is the direct measure of whether the outline encloses the diamond. Uses the
+        symmetric two-slope form, which is enough for comparing candidate placements.
+        """
+        pts = degeneracy if points is None else points
+        samples = []
+        for k in range(len(pts) - 1):
+            corners = _corners(mp, mn, mn, mp, float(pts[k]), float(pts[k + 1]))
+            if corners is None:
+                continue
+            vals = chord_norm[_interior_mask(corners)]
+            vals = vals[np.isfinite(vals)]
+            if vals.size:
+                samples.append(vals)
+        if not samples:
+            return np.inf
+        return float(np.concatenate(samples).mean())
+
+    a, b = abs(m_pos_global), abs(m_neg_global)
+    if not np.isclose(a, b):
+        depth_direct = _blockade_depth(a, -b)
+        depth_swapped = _blockade_depth(b, -a)
+        # Require a real improvement before mirroring every diamond. When the two
+        # depths are all but equal the blockade genuinely does not favour either
+        # orientation, and flipping on that would just be following noise.
+        if depth_swapped < depth_direct * (1.0 - orientation_margin):
+            m_pos_global, m_neg_global = b, -a
+            if debug:
+                print(f"orientation: swapped to m_pos={m_pos_global:+.3f}, "
+                      f"m_neg={m_neg_global:+.3f} (blockade {depth_swapped:.4f} vs "
+                      f"{depth_direct:.4f})")
+        elif debug:
+            print(f"orientation: kept m_pos={m_pos_global:+.3f}, "
+                  f"m_neg={m_neg_global:+.3f} (blockade {depth_direct:.4f} vs "
+                  f"{depth_swapped:.4f})")
+
+    # ------------------------------------------------------------- alignment
+    # The accumulator locates the degeneracy points from the edge ridges, and those
+    # can sit systematically off by a fraction of a period, which slides every
+    # outline off its diamond. A diamond is ultimately defined by the blockaded
+    # region between two degeneracy points, so shift the whole set and rescale the
+    # slope pair to minimise the conductance enclosed by the outlines. This aligns
+    # the shapes with the diamonds themselves rather than with the ridge statistics.
+    # Only a rigid shift is considered, and only a large, unambiguous improvement is
+    # accepted. A small gain is not evidence of a real phase error and chasing it
+    # drags well-placed outlines off correctly located diamonds.
+    align_before = _blockade_depth(m_pos_global, m_neg_global)
+    best_align = align_before
+
+    shift_grid = np.linspace(-0.5, 0.5, 41) * spacing
+    shift_scores = np.array([_blockade_depth(m_pos_global, m_neg_global, degeneracy + s)
+                             for s in shift_grid])
+    if np.any(np.isfinite(shift_scores)):
+        candidate = float(shift_grid[int(np.nanargmin(shift_scores))])
+        candidate_score = float(np.nanmin(shift_scores))
+        if (np.isfinite(align_before) and align_before > 0
+                and candidate_score < (1.0 - alignment_gain) * align_before):
+            shifted = degeneracy + candidate
+            shifted = shifted[(shifted >= x_lo_lim) & (shifted <= x_hi_lim)]
+            if shifted.size >= 2:
+                degeneracy = shifted
+                best_align = candidate_score
+                if debug:
+                    print(f"alignment: shifted degeneracy by {candidate:+.5f} V "
+                          f"({candidate / spacing:+.2f} period); enclosed conductance "
+                          f"{align_before:.4f} -> {best_align:.4f}")
+        elif debug:
+            print(f"alignment: no shift applied (best available gain "
+                  f"{100 * (align_before - candidate_score) / align_before:.0f}%, "
+                  f"needs {100 * alignment_gain:.0f}%)")
+
+    # Let the per-edge fits feed back into the global pair. The joint search gives a
+    # starting point from the whole scan, but if every edge in every diamond is
+    # pulled to one side of the allowed band then the starting point is wrong and
+    # holding onto it would keep all the outlines the wrong shape. Re-deriving the
+    # global pair from the fitted edges and repeating converges on the value the data
+    # actually supports.
+    for _ in range(4):
+        fitted_pos, fitted_neg = [], []
+        for k in range(degeneracy.size - 1):
+            m_tl, m_tr, m_bl, m_br = _fit_edges(float(degeneracy[k]),
+                                                float(degeneracy[k + 1]),
+                                                m_pos_global, m_neg_global)
+            fitted_pos.extend([m_tl, m_br])
+            fitted_neg.extend([m_tr, m_bl])
+        if not fitted_pos or not fitted_neg:
+            break
+        new_pos = float(np.median(fitted_pos))
+        new_neg = float(np.median(fitted_neg))
+        if new_pos <= 0 or new_neg >= 0:
+            break
+        # Only accept the update if it encloses the blockade better than the current
+        # pair. The edge fits follow the ridges, which is the finer measurement, but
+        # these scans also carry steeper non-diamond lines that pull the fits away,
+        # so the blockade has the final say on placement.
+        new_align = _blockade_depth(new_pos, new_neg)
+        if new_align >= best_align:
+            break
+        converged = (abs(new_pos - m_pos_global) < 0.01 * abs(m_pos_global)
+                     and abs(new_neg - m_neg_global) < 0.01 * abs(m_neg_global))
+        m_pos_global, m_neg_global = new_pos, new_neg
+        best_align = new_align
+        if converged:
+            break
+
+    if debug:
+        print(f"global slopes after edge refinement: m_pos = {m_pos_global:+.3f}, "
+              f"m_neg = {m_neg_global:+.3f} "
+              f"(enclosed conductance {_blockade_depth(m_pos_global, m_neg_global):.4f})")
+
+    for k in range(degeneracy.size - 1):
+        x_left = float(degeneracy[k])
+        x_right = float(degeneracy[k + 1])
+
+        # Each of the four edges is fitted to its own points
+        m_tl, m_tr, m_bl, m_br = _fit_edges(x_left, x_right,
+                                            m_pos_global, m_neg_global)
+
+
+
+        corners = _corners(m_tl, m_tr, m_bl, m_br, x_left, x_right)
+        if corners is None:
+            rejected['geometry'] += 1
+            continue
+
+        (_, _), (x_top, y_top), (_, _), (x_bot, y_bot) = corners
+
+        # Drop diamonds running off the sides of the scan
+        if min(x_left, x_right, x_top, x_bot) < x_min or max(x_left, x_right, x_top, x_bot) > x_max:
+            rejected['off_the_sides'] += 1
+            continue
+
+        # Drop diamonds much taller than the scan, since their apex or base was
+        # never measured. A small overshoot is allowed: when the diamonds nearly fill
+        # the bias range, ordinary fit uncertainty can put the apex just beyond the
+        # last measured row and rejecting those would discard good diamonds.
+        bias_tolerance = 1.15
+        if (y_top > bias_tolerance * unique_y.max()
+                or y_bot < bias_tolerance * unique_y.min()):
+            rejected['taller_than_scan'] += 1
+            continue
+
+        # Inside a diamond the dot is blockaded, so the gate derivative of the
+        # current should be quiet compared with the rest of the searched region.
+        interior = _interior_mask(corners)
+        if interior.sum() < min_edge_points:
+            rejected['too_few_interior_pixels'] += 1
+            continue
+        if edge_norm[interior].mean() > blockade_ratio * region_mean:
+            rejected['no_blockade'] += 1
+            continue
+
+        label = f"diamond_{len(diamond_slopes) + 1}"
+        diamond_slopes[label] = {'top_left': m_tl,
+                                 'top_right': m_tr,
+                                 'bottom_left': m_bl,
+                                 'bottom_right': m_br}
+        outlines.append({'label': label,
+                         'left': (x_left, 0.0),
+                         'top': (x_top, y_top),
+                         'right': (x_right, 0.0),
+                         'bottom': (x_bot, y_bot)})
+
+    if not diamond_slopes:
+        breakdown = ", ".join(f"{reason}: {count}" for reason, count in rejected.items() if count)
+        raise ValueError(f"No complete Coulomb diamonds were found: "
+                         f"{degeneracy.size} degeneracy point(s) gave "
+                         f"{degeneracy.size - 1} candidate diamond(s), all rejected "
+                         f"({breakdown}).")
+
+    # --------------------------------------------------------- averaged properties
+    # The two positive edges of every diamond (top-left and bottom-right) belong to
+    # one slope family and the two negative edges (top-right and bottom-left) to the
+    # other, so each family is averaged over every edge of every diamond.
+    positive_slopes = [s[edge] for s in diamond_slopes.values()
+                       for edge in ('top_left', 'bottom_right')]
+    negative_slopes = [s[edge] for s in diamond_slopes.values()
+                       for edge in ('top_right', 'bottom_left')]
+
+    # Height is the apex-to-base separation along the bias axis, in volts of SD bias.
+    # Width is the gate-voltage separation of the two charge-degeneracy points that
+    # bracket the diamond.
+    diamond_heights = [shape['top'][1] - shape['bottom'][1] for shape in outlines]
+    diamond_widths = [shape['right'][0] - shape['left'][0] for shape in outlines]
+
+    diamond_properties = {
+        'average_positive_slope': float(np.mean(positive_slopes)),
+        'average_negative_slope': float(np.mean(negative_slopes)),
+        'average_diamond_height': float(np.mean(diamond_heights)),
+        'average_diamond_width': float(np.mean(diamond_widths)),
+    }
+
+    # ------------------------------------------------------------- reporting
+    if debug:
+        print(f"slope search range: |m| in [{lo_m:.2f}, {hi_m:.2f}]")
+        print(f"global slopes (joint search): m_pos = {m_pos_global:+.3f}, "
+              f"m_neg = {m_neg_global:+.3f}  (pair concentration "
+              f"{pair_concentration:.2f}x)")
+        print(f"degeneracy spacing estimate: {spacing:.5f} V")
+        print(f"degeneracy points ({degeneracy.size}): {np.round(degeneracy, 5)}")
+        print(f"accepted {len(diamond_slopes)} of {degeneracy.size - 1} candidate(s); "
+              f"rejected " + ", ".join(f"{r}: {c}" for r, c in rejected.items() if c))
+        print(f"{'diamond':<12}{'x_left':>10}{'x_right':>10}{'apex V':>9}{'base V':>9}"
+              f"{'top_L':>8}{'top_R':>8}{'bot_L':>8}{'bot_R':>8}")
+        for shape in outlines:
+            s = diamond_slopes[shape['label']]
+            print(f"{shape['label']:<12}{shape['left'][0]:>10.5f}{shape['right'][0]:>10.5f}"
+                  f"{shape['top'][1]:>9.4f}{shape['bottom'][1]:>9.4f}"
+                  f"{s['top_left']:>8.2f}{s['top_right']:>8.2f}"
+                  f"{s['bottom_left']:>8.2f}{s['bottom_right']:>8.2f}")
+        print(f"averages: positive slope {diamond_properties['average_positive_slope']:+.3f}, "
+              f"negative slope {diamond_properties['average_negative_slope']:+.3f}, "
+              f"height {diamond_properties['average_diamond_height']:.5f} V, "
+              f"width {diamond_properties['average_diamond_width']:.5f} V")
+
+    # ---------------------------------------------------------------- plotting
+    # The diamond signal can be only a per-cent-level modulation on the ohmic
+    # background, which is invisible on a full-range colour scale. Subtracting each
+    # bias row's median removes the background (which depends on bias only) and
+    # percentile colour limits then put the remaining modulation across the full
+    # colour range, so the diamonds can actually be seen and the fit judged.
+    residual = Z_matrix - np.median(Z_matrix, axis=1, keepdims=True)
+    r_lo, r_hi = np.percentile(residual, [2, 98])
+    if r_hi <= r_lo:
+        r_lo, r_hi = residual.min(), residual.max() + 1e-12
+
+    def _draw_outlines(ax):
+        for shape in outlines:
+            loop = [shape['left'], shape['top'], shape['right'],
+                    shape['bottom'], shape['left']]
+            ax.plot([p[0] for p in loop], [p[1] for p in loop],
+                    color='red', linewidth=1.4)
+        ax.scatter([s['left'][0] for s in outlines] + [s['right'][0] for s in outlines],
+                   np.zeros(2 * len(outlines)), color='black', s=10, zorder=3,
+                   label='charge degeneracy')
+        ax.set_xlim(unique_x.min(), unique_x.max())
+        ax.set_ylim(unique_y.min(), unique_y.max())
+        ax.set_xlabel('Gate voltage (V)')
+        ax.set_ylabel('SD bias (V)')
+        ax.legend(loc='upper right')
+
+    fig_dia, (ax_dia, ax_res) = plt.subplots(1, 2, figsize=(15, 6))
+    mesh2 = ax_dia.pcolormesh(unique_x, unique_y, Z_matrix, shading='auto', cmap='viridis')
+    fig_dia.colorbar(mesh2, ax=ax_dia, label='I (nA)')
+    if curr.min()*0.2 > curr.max()*0.2:
+        v_lim = np.rint(abs(curr.max()*0.2)).astype(int)
+    else:
+        v_lim = np.rint(abs(curr.min()*0.2)).astype(int)
+    mesh2.set_clim(vmin = -v_lim, vmax = v_lim)
+    _draw_outlines(ax_dia)
+    ax_dia.set_title(f'Coulomb diamonds ({len(diamond_slopes)} found)')
+
+    mesh_r = ax_res.pcolormesh(unique_x, unique_y, residual, shading='auto',
+                               cmap='viridis', vmin=r_lo, vmax=r_hi)
+    fig_dia.colorbar(mesh_r, ax=ax_res, label='I - row median (nA)')
+    _draw_outlines(ax_res)
+    ax_res.set_title(f'Background removed, contrast {r_lo:+.2f} to {r_hi:+.2f} nA')
+    fig_dia.tight_layout()
+
+    filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+    fig_dia.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+    plt.close(fig_dia)
+
+    if debug:
+        fig_dbg, (ax_d1, ax_d2) = plt.subplots(2, 1, figsize=(8, 9))
+        mesh3 = ax_d1.pcolormesh(unique_x, unique_y, edge_norm, shading='auto', cmap='inferno')
+        fig_dbg.colorbar(mesh3, ax=ax_d1, label='|dI/dVg| (row normalised)')
+        ax_d1.scatter(ridge_x, ridge_y, s=4, color='cyan', label='edge points')
+        for shape in outlines:
+            loop = [shape['left'], shape['top'], shape['right'], shape['bottom'], shape['left']]
+            ax_d1.plot([p[0] for p in loop], [p[1] for p in loop], color='lime', linewidth=1.2)
+        ax_d1.set_xlabel('Gate voltage (V)')
+        ax_d1.set_ylabel('SD bias (V)')
+        ax_d1.set_title('Derivative map with detected edge points')
+        ax_d1.legend(loc='upper right')
+
+        ax_d2.plot(centres, accumulator, color='black', linewidth=1)
+        for xd in degeneracy:
+            ax_d2.axvline(xd, color='red', linestyle='--', linewidth=1)
+        ax_d2.set_xlim(unique_x.min(), unique_x.max())
+        ax_d2.set_xlabel('Gate voltage (V)')
+        ax_d2.set_ylabel('accumulated edge weight')
+        ax_d2.set_title('Zero-bias intercept accumulator (dashed = degeneracy points)')
+        fig_dbg.tight_layout()
+
+        filepath_debugged = os.path.join(filepath, "debugged_" + filename)
+        fig_dbg.savefig(filepath_debugged, dpi = 'figure', bbox_inches='tight')
+        plt.close(fig_dbg)
+
+    # plt.show()
+
+    return diamond_slopes, diamond_properties

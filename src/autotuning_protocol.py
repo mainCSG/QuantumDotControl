@@ -162,7 +162,7 @@ class Protocol:
         self.abs_max_gate_voltage = self.config['device']['constraints']['abs_max_gate_voltage']
         self.abs_max_gate_differential = self.config['device']['constraints']['abs_max_gate_differential']
         self.abs_max_gate_voltage = self.config['device']['constraints']['abs_max_gate_voltage']
-        self.initial_ohmic_bias = self.config['device']['constraints']['initial_ohmics_bias']
+        self.initial_ohmic_bias = self.config['device']['constraints']['initial_ohmic_bias']
         self.screening_initial_voltages = self.config['device']['constraints']['screening_initial_voltages']
 
         # Equipment Setup

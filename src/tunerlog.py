@@ -6,6 +6,7 @@ import sys
 import datetime
 from qcodes.instrument import Instrument
 from nicegui import ui
+from paths import *
 
 logfile = None
 consoleHandler = None
@@ -73,20 +74,17 @@ class TunerLog(logging.Logger):
                     })
                 consoleHandler.setFormatter(colorFormatter)
 
-            original_dir = os.getcwd()
-
             if logfile is None:
-
-                os.chdir("..")
-                logfile_dir = f"Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}"
+                logfile_dir = PROTOCOLS / f"Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}"
                 logfile = f"QDot_tuner_{datetime.datetime.now().strftime('%m-%d-%Y')}.log"
-                logfile = os.path.join(logfile_dir, logfile)
+                logfile = os.path.join(logfile_dir, logfile)    
 
             if fileHandler is None:
                 fileHandler = logging.FileHandler(logfile)
                 fileHandler.setLevel(level_num)
                 formatter = logging.Formatter(formatstr, datefmt=datefmt)
                 fileHandler.setFormatter(formatter)
+                
             if history is None:
                 history = StorageHandler(level_num)
 
@@ -98,8 +96,6 @@ class TunerLog(logging.Logger):
             self.info("Initalizing logger %s with log file '%s'", name, logfile)
             
             loggers[name] = self # add to list of loggers
-    
-            os.chdir(original_dir)
 
     def add_ui_handler(self, element: ui.log, level: Literal['debug', 'info', 'warning', 'error'] = 'info'):
         

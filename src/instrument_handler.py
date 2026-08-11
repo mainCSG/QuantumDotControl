@@ -107,12 +107,12 @@ class change_monitor_status_job(instrument_job):
         self.add_or_remove = add
 
 class instrument_thread:
-    def __init__(self, thread_name : str,\
-                    instrument_name: str,\
-                    station : Station,\
-                    station_lock : threading.Lock,\
-                    global_shutdown: threading.Event,\
-                    init_func : Optional[InstrumentCallback] = None,\
+    def __init__(self, thread_name : str,
+                    instrument_name: str,
+                    station : Station,
+                    station_lock : threading.Lock,
+                    global_shutdown: threading.Event,
+                    init_func : Optional[InstrumentCallback] = None,
                     *init_args : Any):
         
         self.parameters_private : List[str] = []
@@ -415,7 +415,7 @@ class instrument_handler:
     def __init__(self, station : Station, station_lock : threading.Lock):
         '''
         A class to handle the asynchronous buffered readout of the SET current for
-        autotuning devices. Instruments can be added from the staton by calling the 
+        autotuning devices. Instruments can be added from the station by calling the 
         method add_readout_instrument, where you specify the instrument, the parameters
         you want to monitor, and an initialization callback (if desired)
 
@@ -607,10 +607,10 @@ class instrument_handler:
         if instr_thread is None:
             self.heartbeats[name] = time.monotonic() # Create the first heartbeat
 
-            self.instrument_threads[name] = instrument_thread(f"{name}Thread", name,\
-                                                        self.station,\
-                                                        self.station_lock,\
-                                                        self.global_shutdown,\
+            self.instrument_threads[name] = instrument_thread(f"{name}Thread", name,
+                                                        self.station,
+                                                        self.station_lock,
+                                                        self.global_shutdown,
                                                         init_func, *init_args)
 
             self.instrument_threads[name].start()
@@ -758,7 +758,7 @@ class instrument_handler:
         Query the readout buffer for the status of an instrument. The buffer automatically 
         updates the status of each instrument.
 
-        Paramters
+        Parameters
         ---------
         instrument_name : str
             The name of the instrument in the config file

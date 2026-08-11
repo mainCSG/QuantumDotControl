@@ -12,6 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from nicegui import ui, app
+from local_file_picker import local_file_picker
 import threading
 import time
 from instrument_handler import create_buffer_instance
@@ -27,6 +28,10 @@ from tunerlog import TunerLog
 from experiment_base import SweepParam, SweepLayer, Sweep
 from autotuning_protocol import Protocol
 from tunerlog import TunerLog
+import yaml
+
+from instrument_init import INITIALIZERS, init_agilent, init_spi_rack
+from paths import *
 
 logger = TunerLog('GUI')
 
@@ -69,34 +74,49 @@ class tuner_gui:
         self.logger = TunerLog("TunerGUI")
         self.start_time = time.monotonic()
 
-        os.chdir("..")
+        ## try to instantiate Station() from most recent settings, if fail then instantiate empty station
+        try: 
+            with open(CONFIG_FOLDER / 'config_gui.yaml') as f:
+                settings = yaml.safe_load(f)
 
-        self.station_path = os.path.join("configs", "station.yaml")
+            last_config = settings['last_station_config']
+            self.station = Station(config_file=str(CONFIG_FOLDER / last_config))
+            print(f'Loading {CONFIG_FOLDER/ last_config} succesful')
 
-        self.station = Station(config_file = self.station_path)
+        except Exception as e:
+            print(f"Could not load previous Station: {e}")
+            self.station = Station()
+
         self.station_lock = threading.Lock()
 
         self.instrument_handler = create_buffer_instance(self.station, self.station_lock) 
-
         self.experiment_handler = get_experiment_handler()
         self.autotuning_handler = get_autotuning_handler()
 
-        def init_agilent(instrument: Instrument, *args):
-            instrument.NPLC(1.0)
-            instrument.range_auto('on')
+        instruments = self.station.config['instruments']
+        for instrument in instruments.keys():
+            print(instrument)
+            print(instruments[instrument]['initializer'])
+            self.instrument_handler.add_instrument(instrument, INITIALIZERS[instruments[instrument]['initializer']])
+        print(self.station.components)
+        
+        # def init_agilent(instrument: Instrument, *args):
+        #     instrument.NPLC(1.0)
+        #     instrument.range_auto('on')
 
-        def init_spi_rack(instrument: Instrument, *args):
+        # def init_spi_rack(instrument: Instrument, *args):
             
-            instrument.add_spi_module(8, 'D5a', 'module1')
-            instrument.add_spi_module(7, 'D5a', 'module2')
-            return
+        #     instrument.add_spi_module(8, 'D5a', 'module1')
+        #     instrument.add_spi_module(7, 'D5a', 'module2')
+        #     return
 
-        self.instrument_handler.add_instrument("agilent_left", init_agilent)
-        self.instrument_handler.add_instrument("agilent_right", init_agilent)
-        self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
+        # self.instrument_handler.add_instrument("agilent_left", init_agilent)
+        # self.instrument_handler.add_instrument("agilent_right", init_agilent)
+        # self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
 
-        self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
-        self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
+        # self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
+        # self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
+        
 
         self.abort_signal = threading.Event()
 
@@ -121,7 +141,7 @@ class tuner_gui:
             with splitter1.before:
 
                 with ui.dropdown_button('', icon = 'menu', auto_close=True):
-                    ui.item('Load Config Files', on_click=lambda : ui.notify("Fetching Configuration Files..."))
+                    ui.item('Load Config Files', on_click=lambda : self.on_load_config())
                     ui.item('Instrument Information', on_click=lambda : ui.notify("Loading Instrument Information..."))
                     ui.item('Device Information', on_click=lambda : ui.notify("Loading Device Information..."))
 
@@ -488,7 +508,9 @@ class tuner_gui:
         colors = ['tab:blue', 'tab:red', 'tab:orange', 'tab:purple', 'tab:green']
         linestyles = ['-', '--', '-.', ':']
 
-        retval = self.instrument_handler.get_buffer()
+        #TODO: uncomment the below line when the instrument handler is implemented
+        # retval = self.instrument_handler.get_buffer()
+        retval = None
         if retval is None:
             return
         else:
@@ -604,3 +626,25 @@ class tuner_gui:
         self.autotuning_handler.autotuning_thread.join()
         self.experiment_handler.experiment_thread.join()
         self.instrument_handler.shutdown_instruments()
+
+    async def on_load_config(self) -> None:
+        """
+        This method is used to load the config files for the device and update the Station object.
+        It uses the local_file_picker script, obtained from the examples from the nicegui library on github. 
+        Source: 
+        """
+        ui.notify("Loading Config Files...")
+        config_files = await local_file_picker(directory = CONFIG_FOLDER, upper_limit = CONFIG_FOLDER)
+        self.station.load_config_files(*config_files)
+
+    def on_save_config(self):
+        """
+        This method is used to save the config files for the device.
+        """
+        pass
+
+    def on_load_instrument_info(self):
+        """
+        This method is used to load and display the device information. 
+        """
+        pass

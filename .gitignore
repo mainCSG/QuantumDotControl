@@ -6,6 +6,13 @@ autotuning/fine_tuning/data/*
 autotuning/bootstrapping/data
 !autotuning/data/csd/custom
 
+# ignore all data files
+Data/*       
+*.csv          
+
+# ignore protocol files
+Protocols/*
+
 # MacOS Files
 .DS_Store
 *MACOSX*
@@ -27,6 +34,7 @@ __pycache__/
 
 # Any generated json
 *vgg.json
+*.json
 
 # Ignore detectron2 training files
 *output

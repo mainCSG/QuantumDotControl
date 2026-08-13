@@ -418,11 +418,10 @@ class Bootstrapping(Protocol):
         '''
         Grounds the device by smoothly setting all gate electrodes from their current voltages to 0 V. 
 
-        Paramters
+        Parameters
         ---------
         instr_handler : instrument_handler instance
             The instance from the gui of the instrument_handler
-
         exp_handler : experiment_handler instance
             The instance from the gui of the experiment_handler
         '''

@@ -51,6 +51,7 @@ from qcodes.parameters import ParameterBase
 
 from nicegui import ui
 from tunerlog import TunerLog
+from gui_bridge import tuning_bridge
 
 logger = TunerLog('Data Analysis')
   
@@ -323,6 +324,16 @@ def extract_turn_on_voltage(x_data: np.array,
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
+    metrics = {'Turn-On Voltage (V)': turnon_voltage}
+
+    payload = {
+                'stage': 'Bootstrapping',
+                'step_name': 'Turn-On',
+                'figure_object': fig,
+                'results': metrics,
+            }
+    tuning_bridge.plot_queue.put(payload)
+
     plt.close(fig)
 
     # --- Print summary ---
@@ -334,6 +345,7 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
                                    y_data: np.array,
                                    noisefloor: float,
                                    gate_type: str,
+                                   gate_name: str,
                                    filepath: str,
                                    filename: str
                                    ):
@@ -360,6 +372,8 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
         baseline noise of the gate-sweep
     gate_type : str
         the type of gate being pinched off, options are 'Accumulation', 'Barrier', and 'Plunger'
+    gate_name: str
+        name of the gate being pinched-off
     filepath : str
         name of directory to save pinch-off plot in
     filename : str
@@ -577,15 +591,26 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
 
     plt.tight_layout()
 
+    # Define a voltage/pinch-off window to return for next step in protocol
+    voltage_window = (pinch_off_voltage, sat_voltage)
+
     # Save final plot
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
+    metrics = {'Pinch-Off Voltage (V)': voltage_window[0],
+               'Saturation Voltage (V)': voltage_window[1]}
+
+    payload = {
+                'stage': 'Bootstrapping',
+                'step_name': f'{gate_name} Pinch-Off',
+                'figure_object': fig,
+                'results': metrics,
+            }
+    tuning_bridge.plot_queue.put(payload)
+
     plt.close(fig)
     # plt.show()
-
-    # Define a voltage/pinch-off window to return for next step in protocol
-    voltage_window = (pinch_off_voltage, sat_voltage)
 
     return voltage_window
 
@@ -792,6 +817,16 @@ def extract_max_conductance_points(x_data: np.array,
     # Saves final plot
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+
+    metrics = {'Best Sensitivity Point': best_sens_pts}
+
+    payload = {
+                'stage': 'Bootstrapping',
+                'step_name': 'All Coulomb Blockade Peaks with All Sensivity Points',
+                'figure_object': fig,
+                'results': metrics,
+            }
+    tuning_bridge.plot_queue.put(payload)
 
     plt.close(fig)
 
@@ -1554,6 +1589,16 @@ def extract_working_point(lb_data: np.array,
 
         logger.info("Figure saved!")
 
+        metrics = {'Best Working Point': best_shifted_point}
+
+        payload = {
+                    'stage': 'Bootstrapping',
+                    'step_name': 'Barrier-Barrier Scan',
+                    'figure_object': fig,
+                    'results': metrics,
+                }
+        tuning_bridge.plot_queue.put(payload)
+
         plt.close(fig)
         # plt.show()
 
@@ -2202,8 +2247,8 @@ def extract_tunnel_barrier_latching(dp_data: np.array,
     rows = int(np.ceil(num_traces / cols))
     
     # # Adjusted sharey=False because derivative scales can vary across the map
-    # fig, axes = plt.subplots(rows, cols, figsize=(15, 12), sharex=True, sharey=False)
-    # axes = axes.flatten()  # Flatten grid into a 1D list for easy looping
+    fig, axes = plt.subplots(rows, cols, figsize=(15, 12), sharex=True, sharey=False)
+    axes = axes.flatten()  # Flatten grid into a 1D list for easy looping
 
     # Match the exact physical tb_data coordinate value for each indexed row slice
     trace_y_values = unique_tb[y_indices]
@@ -2235,32 +2280,44 @@ def extract_tunnel_barrier_latching(dp_data: np.array,
         best_sens_pts_list.append(best_pts)
         all_sens_pts_list.append(all_pts)
 
-        # # 1. Compute the derivative (dI/d_dp) using the spatial coordinate grid spacing
-        # derivative_vals = np.gradient(z_vals, x_vals)
+        # 1. Compute the derivative (dI/d_dp) using the spatial coordinate grid spacing
+        derivative_vals = np.gradient(z_vals, x_vals)
         
-        # # 2. Plot the derivative line to the corresponding grid cell
-        # axes[i].plot(x_vals, derivative_vals, color='tab:purple', linewidth=1.5)
+        # 2. Plot the derivative line to the corresponding grid cell
+        axes[i].plot(x_vals, derivative_vals, color='tab:purple', linewidth=1.5)
         
-        # # Place LaTeX formatted text overlay relative to the subplot viewport bounds
-        # axes[i].text(
-        #     0.05, 0.93, 
-        #     rf"$V_B$ = {trace_y_values[i]:.3f}", 
-        #     transform=axes[i].transAxes, 
-        #     fontsize=10, 
-        #     verticalalignment='top',
-        #     bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=2)
-        # )
+        # Place LaTeX formatted text overlay relative to the subplot viewport bounds
+        axes[i].text(
+            0.05, 0.93, 
+            rf"$V_B$ = {trace_y_values[i]:.3f}", 
+            transform=axes[i].transAxes, 
+            fontsize=10, 
+            verticalalignment='top',
+            bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=2)
+        )
 
-    # # Clean up empty subplots if any
-    # for j in range(num_traces, len(axes)):
-    #     fig.delaxes(axes[j])
+    # Clean up empty subplots if any
+    for j in range(num_traces, len(axes)):
+        fig.delaxes(axes[j])
 
-    # # Add global canvas labels and updated main title
-    # fig.supxlabel(r"$V_P$ (V)", fontsize=12)
-    # fig.supylabel("G (nS)", fontsize=12)
-    # fig.suptitle("Conductance Traces Extracted Along the Tunnel Barrier", fontsize=14, fontweight='bold')
+    # Add global canvas labels and updated main title
+    fig.supxlabel(r"$V_P$ (V)", fontsize=12)
+    fig.supylabel("G (nS)", fontsize=12)
+    fig.suptitle("Conductance Traces Extracted Along the Tunnel Barrier", fontsize=14, fontweight='bold')
     
-    # plt.tight_layout()
+    plt.tight_layout()
+
+    metrics = {'Best Sensitivity Point': best_sens_pts_list}
+
+    payload = {
+                'stage': 'Global Charge Tuning',
+                'step_name': 'Dot-Lead Tuning',
+                'figure_object': fig,
+                'results': metrics,
+            }
+    tuning_bridge.plot_queue.put(payload)
+
+    plt.close(fig)
     # plt.show()
 
     negative_peak_count = 0
@@ -2632,6 +2689,16 @@ def extract_max_conductance_pair(x_data: np.array,
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
+    metrics = {'Best Conductance Point Pair': conductance_pair}
+
+    payload = {
+                'stage': 'Bootstrapping',
+                'step_name': 'Coulomb Blockade Peaks with Best Sensitivity Points',
+                'figure_object': fig,
+                'results': metrics,
+            }
+    tuning_bridge.plot_queue.put(payload)
+
     plt.close(fig)
 
     return conductance_pair
@@ -2716,10 +2783,11 @@ def extract_charge_transitions(x_data: np.array,
         # Saves data even if no peaks are found, so the user can see why the peak detection failed
         fig = plt.figure()
         plt.plot(x1, y1)
-        plt.close(fig)
 
-        # filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
-        # fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+        filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+        fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
+        plt.close(fig)
 
         raise ValueError("No conductance peaks were found") # Switch to Logging error so protocol doesn't crash
 
@@ -2829,6 +2897,16 @@ def extract_charge_transitions(x_data: np.array,
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
+    metrics = {'Charge Transition Voltage (V)': best_charge_transition_voltage}
+
+    payload = {
+                'stage': 'Global Charge Tuning',
+                'step_name': 'Charge Transitions',
+                'figure_object': fig,
+                'results': metrics,
+            }
+    tuning_bridge.plot_queue.put(payload)
+
     plt.close(fig)
     # plt.show()
 
@@ -2843,6 +2921,8 @@ def hough_transform(x_data: np.array,
                     current_data: np.array,
                     filepath: str,
                     filename: str,
+                    gate_names: tuple(str),
+                    stage: str,
                     transform_trim: list[int] = [0, -1]
                     ):
     """
@@ -2866,6 +2946,10 @@ def hough_transform(x_data: np.array,
         name of directory to save hough transform plot in
     filename : str
         name of file to save the hough transform plot under
+    gate_names: tuple(str)
+        name of the 2 gates being swept as strings
+    stage: str
+        stage in protocol where this function is being called from
     transform_trim : list[int]
         the cut-off values for making the transform a better fit to the data (mainly for manual debugging)
 
@@ -2959,6 +3043,16 @@ def hough_transform(x_data: np.array,
     # Save Analyzed Data
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+
+    metrics = {'Slope': slope, 'Y-Intercept': intercept}
+
+    payload = {
+                'stage': stage,
+                'step_name': f'{gate_names[0]}-{gate_names[1]} Cross talk',
+                'figure_object': fig,
+                'results': metrics,
+            }
+    tuning_bridge.plot_queue.put(payload)
 
     plt.close(fig)
     # plt.show()
@@ -3522,6 +3616,15 @@ def extract_coulomb_diamonds(x_data: np.array,
 
     filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
     fig_raw.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
+
+    payload = {
+                'stage': 'Bootstrapping',
+                'step_name': 'Raw Coulomb Diamonds Plot',
+                'figure_object': fig_raw,
+                'results': {},
+            }
+    tuning_bridge.plot_queue.put(payload)
+
     plt.close(fig_raw)
 
     # Fill any pixel the scan never visited by interpolating along the gate axis
@@ -4170,6 +4273,7 @@ def extract_coulomb_diamonds(x_data: np.array,
         'average_negative_slope': float(np.mean(negative_slopes)),
         'average_diamond_height': float(np.mean(diamond_heights)),
         'average_diamond_width': float(np.mean(diamond_widths)),
+        'Number of Coulomb Diamonds': len(diamond_slopes)
     }
 
     # ------------------------------------------------------------- reporting
@@ -4241,6 +4345,15 @@ def extract_coulomb_diamonds(x_data: np.array,
 
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
     fig_dia.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
+
+    payload = {
+                'stage': 'Bootstrapping',
+                'step_name': 'Analyzed Coulomb Diamonds',
+                'figure_object': fig_dia,
+                'results': diamond_properties,
+            }
+    tuning_bridge.plot_queue.put(payload)
+
     plt.close(fig_dia)
 
     if debug:
@@ -4267,8 +4380,82 @@ def extract_coulomb_diamonds(x_data: np.array,
 
         filepath_debugged = os.path.join(filepath, "debugged_" + filename)
         fig_dbg.savefig(filepath_debugged, dpi = 'figure', bbox_inches='tight')
+
+        payload = {
+                'stage': 'Bootstrapping',
+                'step_name': 'Debugged Coulomb Diamonds',
+                'figure_object': fig_dbg,
+                'results': diamond_properties,
+            }
+        tuning_bridge.plot_queue.put(payload)
+
         plt.close(fig_dbg)
 
     # plt.show()
 
     return diamond_slopes, diamond_properties
+
+def run_test_plot():
+    """Queue three test panels: a 1D scan, a Matplotlib figure, and a 2D heatmap.
+
+    The second panel passes a Matplotlib figure through ``figure_object`` rather
+    than raw arrays. The GUI reads the data back out of that figure and redraws it
+    with Plotly, so it ends up just as interactive as the raw-array panels.
+    """
+
+    # ---- 1D scan, raw arrays
+    x = np.linspace(0, 5, 100)
+    y = np.sin(x)
+    tuning_bridge.plot_queue.put({
+        'stage': 'Bootstrapping',
+        'step_name': 'Turn-On (1D, raw arrays)',
+        'plot_data': {
+            'kind': 'line',
+            'x': x,
+            'y': y,
+            'x_label': 'Gate Voltage (V)',
+            'y_label': 'Current (nA)',
+            'name': 'Sine Wave',
+            'title': 'Test Plot: Sine Wave',
+        },
+        'results': {'Turn-On Voltage (V)': 2.5},
+    })
+
+    # ---- 1D scan, passed as a Matplotlib figure
+    fig, ax = plt.subplots(figsize=(8, 6))
+    ax.plot(x, y, label='Sine Wave')
+    ax.plot(x, np.cos(x), label='Cosine Wave')
+    ax.legend()
+    ax.set_xlabel('Gate Voltage (V)')
+    ax.set_ylabel('Current (nA)')
+    ax.set_title('Test Plot: passed as a Matplotlib figure')
+    tuning_bridge.plot_queue.put({
+        'stage': 'Bootstrapping',
+        'step_name': 'Turn-On (1D, Matplotlib figure)',
+        'figure_object': fig,
+        'results': {'Traces': 2},
+    })
+
+    # ---- 2D heatmap, raw arrays
+    gate = np.linspace(1.20, 1.50, 120)
+    bias = np.linspace(-0.20, 0.20, 100)
+    GX, GY = np.meshgrid(gate, bias)
+    current = np.sin(2 * np.pi * (GX - 1.20) / 0.04) * np.exp(-(GY / 0.06) ** 2) + 5 * GY
+    tuning_bridge.plot_queue.put({
+        'stage': 'Bootstrapping',
+        'step_name': 'Coulomb Diamonds (2D heatmap)',
+        'plot_data': {
+            'kind': 'heatmap',
+            'x': gate,
+            'y': bias,
+            'z': current,
+            'x_label': 'Plunger Gate (V)',
+            'y_label': 'SD Bias (V)',
+            'z_label': 'I (nA)',
+            'title': 'Test Plot: 2D heatmap',
+        },
+        'results': {'Diamonds Found': 7},
+    })
+
+    plt.close(fig)
+

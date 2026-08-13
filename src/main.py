@@ -31,6 +31,7 @@ if datafolder is None:
 from nicegui import app, ui
 from gui import tuner_gui
 from tunerlog import TunerLog
+from gui_bridge import tuning_bridge
 
 gui = None
 logger = None
@@ -44,7 +45,7 @@ def start_tuner_gui():
     logger = TunerLog("main")
     logger.info("Starting GUI...")
 
-    gui = tuner_gui()
+    gui = tuner_gui(tuning_bridge)
 
     print("Gui Startup Complete! Welcome to the QAT!")
 

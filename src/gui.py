@@ -31,8 +31,6 @@ from experiment_base import SweepParam, SweepLayer, Sweep
 from autotuning_protocol import Protocol
 from tunerlog import TunerLog
 
-from data_analysis import run_test_plot
-
 logger = TunerLog('GUI')
 
 
@@ -85,7 +83,7 @@ class tuner_gui:
 
         self.station_path = os.path.join("configs", "dummy_station.yaml")
 
-        self.station = Station(config_file = r"C:\Users\dhruv\GitHub\QuantumDotControl\configs\dummy_station.yaml")
+        self.station = Station(config_file = self.station_path)
         self.station_lock = threading.Lock()
 
         self.instrument_handler = create_buffer_instance(self.station, self.station_lock) 
@@ -152,7 +150,7 @@ class tuner_gui:
 
                         self.autotune = ui.button(
                                             'Autotune',
-                                            on_click = Protocol(device_config = r"C:\Users\dhruv\GitHub\QuantumDotControl\configs\Intel_Config.yaml")
+                                            on_click = Protocol(device_config = device_config)
                                                  )
 
                     with ui.tab_panel('Bootstrapping'):
@@ -219,10 +217,10 @@ class tuner_gui:
                             on_click = self.run_virtual_gating
                         )
 
-                        ui.button(
-                            'Run Plot Test',
-                            on_click = run_test_plot
-                        )
+                        # ui.button(
+                        #     'Run Plot Test',
+                        #     on_click = run_test_plot
+                        # )
 
                         self.debug_status = ui.label('Idle')
 

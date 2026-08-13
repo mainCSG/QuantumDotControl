@@ -59,10 +59,8 @@ class Protocol:
         ---------
         device_config : str
             The filepath to the device config, as a literal string. The expected file type is a .yaml file
-        
         instr_handler : instrument_handler instance
             The instance from the gui of the instrument_handler
-
         exp_handler : experiment_handler instance
             The instance from the gui of the experiment_handler
         '''

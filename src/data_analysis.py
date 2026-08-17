@@ -2344,185 +2344,6 @@ def extract_tunnel_barrier_latching(dp_data: np.array,
 
     return best_sens_pts_list, all_sens_pts_list, barrier_voltage_set_point
 
-def extract_lever_arms(data: pd.DataFrame,
-                       plot_process: bool = False
-                       ) -> dict:
-    """
-    Description
-    -----------
-    Estimate lever arms from a 2D transconductance map.
-
-    This function pivots the input dataframe to a grid, computes the
-    gradient in the current data, applies filtering, and optionally plots
-    the intermediate transconductance results.
-
-    Parameters
-    -----------
-    data : pd.DataFrame
-        data as pandas DataFrame object
-    plot_process : bool
-        plots the data through process at every step
-
-    Returns
-    -----------
-    results : dict
-        extracted dot parameters; centroid, addition voltage, charging voltage, dot capacitance, total capacitance, lever arm, dot size
-    """
-    
-    # Load in data and separate 
-    X_name, Y_name, Z_name = data.columns
-    Xdata, Ydata = np.unique(data[X_name]), np.unique(data[Y_name])
-
-    df_pivoted = data.pivot_table(values=Z_name, index=Y_name, columns=X_name).fillna(0)
-    Zdata = df_pivoted.to_numpy()
-
-    # Calculate conductance where G = dI / dVp 
-    G = np.gradient(Zdata)[1]
-
-    if plot_process:
-        plt.imshow(G, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
-        plt.title("Transconductance")
-        plt.colorbar()
-        plt.show()
-        
-    # Apply filter to bring out edges better
-    def U(x,y):
-        sigX, sigY = 5,5
-        return (1/(2 * np.pi * sigX * sigY)) * np.exp(- 0.5* ((x/sigX)**2 + (y/sigY)**2))
-    def adjusted(G,G0):
-        return np.sign(G) * np.log((np.abs(G)/G0) + 1)
-    def F(U, G, G0):
-        # G = adjusted(G,G0)
-        return (G - convolve(G,U)) / np.sqrt((convolve(G,U))**2 + G0**2)
-
-    N=2
-    U_kernal = np.array([[U(x, y) for y in range(-(N-1)//2,(N-1)//2 + 1)] for x in range(-(N-1)//2,(N-1)//2 + 1)])
-    cond_quant = 3.25 * 1e-5
-    filtered_G = np.abs(F(U_kernal, G, G0=10**-7 * cond_quant))
-
-    if plot_process:
-        plt.imshow(filtered_G, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
-        plt.title("Filtered Transconductance")
-        plt.colorbar()
-        plt.show()
-
-    # Apply binary threshold to bring out diamonds better
-    thresh = threshold_otsu(filtered_G)
-    binary_image = filtered_G < thresh
-
-    if plot_process:
-        plt.imshow(binary_image, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
-        plt.title("Filtered Transconductance Binary")
-        plt.colorbar()
-        plt.show()
-
-    # Erode any artifacts and keep just the diamond shapes
-    footprint = rectangle(13, 6)
-    erode = skimage.morphology.erosion(binary_image,footprint)
-
-    footprint = diamond(1)
-    erode = skimage.morphology.erosion(erode,footprint)
-    
-    if plot_process:
-        plt.imshow(erode, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
-        plt.title("Filtered Transconductance Binary Eroded")
-        plt.show()
-
-    # Attempt to find contours
-    contours = skimage.measure.find_contours(erode, 0.8)
-
-    if len(contours) == 0:
-        return 
-    
-    # Display the image and plot all contours found
-    fig, ax = plt.subplots()
-
-    ax.imshow(Zdata, origin='lower', extent=[Xdata.min(), Xdata.max(), Ydata.min() , Ydata.max()], aspect=(Xdata.max() - Xdata.min())/(Ydata.max() - Ydata.min()))
-    ax.set_title(r'$I_{SD}$')
-    ax.set_ylabel(r'$V_{SD}$ (V)')
-    ax.set_xlabel(r'$V_{P}$ (V)')
-    ax.set_aspect('auto')
-
-    addition_voltages = []
-    charging_voltages = []
-    results = {}
-
-
-    for i, contour in enumerate(contours):
-        if len(contour) < 350: 
-            continue
-
-        # Convert to proper units for calculations
-        image_units = []
-        for coordinate in contour:
-            image_units.append([Ydata[int(coordinate[0])], Xdata[int(coordinate[1])]])
-        image_units = np.array(image_units)
-        
-        Y = image_units[:,0]
-        X = image_units[:,1]
-
-        Xmax = max(X)
-        Xmin = min(X)
-        Ymax = max(Y)
-        Ymin = min(Y)
-
-        # Get centroid
-        centroidX, centroidY = 0.5*(Xmax + Xmin), 0.5 * (Ymax + Ymin)
-
-        dX = Xmax - Xmin
-        dY = Ymax - Ymin
-
-        divider = 1e-3
-        alpha= (Ymax * divider /2) / dX
-
-        e = 1.60217663e-19 # C
-
-        eps0 = 8.8541878128e-12 # F/m
-        epsR = 11.7 # Silicon
-
-        Vadd = Xmax - Xmin # V
-        Vc = dY * divider /2 # V
-        addition_voltages += [Vadd]
-        charging_voltages += [Vc] 
-        C_P = e / Vadd # F
-        C_sigma = e / Vc # F
-        dot_size = C_sigma / (8 * eps0 * epsR) # m
-        alpha = (dY * divider /2) / dX # eV/V
-
-        results[i]= {
-            'centroid': (centroidX, centroidY), 
-            'Vadd': Vadd, 
-            'Vcharge': Vc, 
-            'Cp': C_P,
-            'CSigma': C_sigma,
-            'lever arm': alpha,
-            'dot size': dot_size
-            }
-
-        ax.plot(image_units[:, 1], image_units[:, 0], linewidth=1, linestyle='-', c='k')
-        label_text = r'$\alpha$ =' + str(round(alpha,3))
-        ax.text(0.98*centroidX, 1.2 * Ymax, label_text, color='k', fontsize=8, verticalalignment='bottom')
-
-        label_text = r'$V_{add}$ =' + str(round(Vadd*1e3,1)) + 'mV'
-        ax.text(0.95*centroidX, 1.3 * Ymin, label_text, color='k', fontsize=8, verticalalignment='bottom')
-
-        label_text = r'$V_{charge}$ =' + str(round(Vc * 1e3,1)) + 'mV'
-        ax.text(0.95*centroidX, 1.5 * Ymin, label_text, color='k', fontsize=8, verticalalignment='bottom')
-
-        label_text = r'$C_{P}$ =' + str(round((e / Vadd) * 1e18,2)) + 'aF'
-        ax.text(0.95*centroidX, 1.7 * Ymin, label_text, color='k', fontsize=8, verticalalignment='bottom')
-
-        label_text = r'$C_{\Sigma}$ =' + str(round((e / Vc) * 1e18,2)) + 'aF'
-        ax.text(0.95*centroidX, 1.9 * Ymin, label_text, color='k', fontsize=8, verticalalignment='bottom')
-        ax.scatter([centroidX], [centroidY], marker='*', s=30, c='k')
-
-        label_text = r'$R_{dot}$ =' + str(round(dot_size * 1e9,2)) + 'nm'
-        ax.text(0.95*centroidX, 2.1 * Ymin, label_text, color='k', fontsize=8, verticalalignment='bottom')
-        ax.scatter([centroidX], [centroidY], marker='*', s=30, c='k')
-
-    plt.show()
-    return results
-
 def extract_max_conductance_pair(x_data: np.array,
                                  y_data: np.array,
                                  filepath: str,
@@ -2916,15 +2737,15 @@ def extract_charge_transitions(x_data: np.array,
 
     return best_charge_transition_voltage
 
-def hough_transform(x_data: np.array,
-                    y_data: np.array,
-                    current_data: np.array,
-                    filepath: str,
-                    filename: str,
-                    gate_names: tuple(str),
-                    stage: str,
-                    transform_trim: list[int] = [0, -1]
-                    ):
+def extract_lever_arms(x_data: np.array,
+                       y_data: np.array,
+                       current_data: np.array,
+                       filepath: str,
+                       filename: str,
+                       gate_names: tuple(str),
+                       stage: str,
+                       transform_trim: list[int] = [0, -1]
+                       ):
     """
     Description
     -----------
@@ -3401,7 +3222,6 @@ def extract_coulomb_diamonds(x_data: np.array,
     -----------
     Locate the Coulomb diamonds in a 2D bias-vs-gate scan and outline them.
 
-    The routine is fully deterministic: identical input always produces identical output.
     It works from the numerical derivative of the current with respect to the gate axis,
     ``dI/dVg``. Because the ohmic/leakage background of such a scan depends
     almost entirely on the bias, differentiating along the gate axis removes it
@@ -3581,7 +3401,7 @@ def extract_coulomb_diamonds(x_data: np.array,
         edge family, or if no complete (not cut off) diamond is found.
     """
 
-    # ------------------------------------------------------------------ inputs
+    # --- inputs ---
     # Coerce to numpy arrays even when they already are
     x1 = np.array(x_data, dtype=float)
     y1 = np.array(y_data, dtype=float)
@@ -3639,7 +3459,7 @@ def extract_coulomb_diamonds(x_data: np.array,
                                          np.flatnonzero(~missing),
                                          row[~missing])
 
-    # ------------------------------------------------- derivative / edge map
+    # --- derivative / edge map ---
     # Differentiating along the gate axis cancels the bias-only ohmic background
     Z_smooth = gaussian_filter(Z_matrix, sigma=smoothing, mode='nearest')
     dI_dx = np.gradient(Z_smooth, unique_x, axis=1)
@@ -3659,7 +3479,7 @@ def extract_coulomb_diamonds(x_data: np.array,
                          edge_map / np.where(row_scale > 0, row_scale, 1.0),
                          0.0)
 
-    # --------------------------------------------------------- ridge points
+    # --- ridge points ---
     bias_half = np.max(np.abs(unique_y))
     y_inner = zero_bias_exclusion * bias_half
     y_outer = bias_window * bias_half
@@ -3710,7 +3530,7 @@ def extract_coulomb_diamonds(x_data: np.array,
                          f"map, which is too few to define any diamond. Try lowering "
                          f"edge_threshold or smoothing.")
 
-    # ------------------------------------------------------- slope search
+    # --- slope search ---
     # Every diamond edge extrapolates to a charge-degeneracy point on the zero
     # bias axis, so the correct slope is the one whose intercepts pile up.
     bin_width = gate_step
@@ -3873,7 +3693,7 @@ def extract_coulomb_diamonds(x_data: np.array,
             f"m_neg = {m_neg_global:+.3f}. Run with debug=True to see the edge map, "
             f"the detected edge points and the intercept accumulator.")
 
-    # --------------------------------------------- charge-degeneracy points
+    # --- charge-degeneracy points ---
     # Both edge families intercept the zero-bias axis at degeneracy points, combined
     # here with a geometric mean rather than a sum. A real degeneracy point
     # terminates one edge of each family, so it appears in both accumulators,
@@ -3932,7 +3752,7 @@ def extract_coulomb_diamonds(x_data: np.array,
                          f"zero-bias axis; at least 2 are needed to bracket a diamond. "
                          f"Try lowering degeneracy_prominence or edge_threshold.")
 
-    # ---------------------------------------------- per-diamond refinement
+    # --- per-diamond refinement ---
     upper = ridge_y > 0
     lower = ridge_y < 0
 
@@ -4009,7 +3829,7 @@ def extract_coulomb_diamonds(x_data: np.array,
     searched[np.ix_((np.abs(unique_y) >= y_inner) & (np.abs(unique_y) <= y_outer), in_x)] = True
     region_mean = float(edge_norm[searched].mean()) if searched.any() else float(edge_norm.mean())
 
-    # ------------------------------------------------------------- orientation
+    # --- orientation ---
     # The two slope magnitudes could be assigned either way round: putting the
     # steeper one on the top-left/bottom-right pair leans the parallelogram one way,
     # putting it on the top-right/bottom-left pair leans it the other. Both
@@ -4119,7 +3939,7 @@ def extract_coulomb_diamonds(x_data: np.array,
                   f"m_neg={m_neg_global:+.3f} (blockade {depth_direct:.4f} vs "
                   f"{depth_swapped:.4f})")
 
-    # ------------------------------------------------------------- alignment
+    # --- alignment ---
     # The accumulator locates the degeneracy points from the edge ridges, and those
     # can sit systematically off by a fraction of a period, which slides every
     # outline off its diamond. A diamond is ultimately defined by the blockaded
@@ -4253,7 +4073,7 @@ def extract_coulomb_diamonds(x_data: np.array,
                          f"{degeneracy.size - 1} candidate diamond(s), all rejected "
                          f"({breakdown}).")
 
-    # --------------------------------------------------------- averaged properties
+    # --- averaged properties ---
     # The two positive edges of every diamond (top-left and bottom-right) belong to
     # one slope family and the two negative edges (top-right and bottom-left) to the
     # other, so each family is averaged over every edge of every diamond.
@@ -4276,7 +4096,7 @@ def extract_coulomb_diamonds(x_data: np.array,
         'Number of Coulomb Diamonds': len(diamond_slopes)
     }
 
-    # ------------------------------------------------------------- reporting
+    # --- reporting ---
     if debug:
         print(f"slope search range: |m| in [{lo_m:.2f}, {hi_m:.2f}]")
         print(f"global slopes (joint search): m_pos = {m_pos_global:+.3f}, "
@@ -4299,7 +4119,7 @@ def extract_coulomb_diamonds(x_data: np.array,
               f"height {diamond_properties['average_diamond_height']:.5f} V, "
               f"width {diamond_properties['average_diamond_width']:.5f} V")
 
-    # ---------------------------------------------------------------- plotting
+    # --- plotting ---
     # The diamond signal can be only a per-cent-level modulation on the ohmic
     # background, which is invisible on a full-range colour scale. Subtracting each
     # bias row's median removes the background (which depends on bias only) and

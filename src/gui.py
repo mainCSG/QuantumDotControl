@@ -35,7 +35,10 @@ logger = TunerLog('GUI')
 
 
 class RandomDummy(DummyInstrument):
+
     '''
+    Description
+    -----------
     A dummy instrument for testing the readout buffer
     '''
     def __init__(self,
@@ -61,13 +64,19 @@ class RandomDummy(DummyInstrument):
                 get_cmd=lambda : random.Random(time.monotonic()).random())
 
 class tuner_gui:
-    
-    # The below methods define the layout of the GUI
+
+    '''
+    Description
+    -----------
+    The below methods define the layout of the GUI
+    '''
 
     def __init__(self, bridge):
         
         '''
-        Creates an instance of the tuner gui
+        Description
+        -----------
+        Creates an instance of the tuner gui. Initializes the setup with the station config.
         '''
 
         # Store the shared event bridge reference
@@ -101,24 +110,22 @@ class tuner_gui:
             instrument.add_spi_module(7, 'D5a', 'module2')
             return
 
-        # self.instrument_handler.add_instrument("agilent_left", init_agilent)
-        # self.instrument_handler.add_instrument("agilent_right", init_agilent)
-        # self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
+        self.instrument_handler.add_instrument("agilent_left", init_agilent)
+        self.instrument_handler.add_instrument("agilent_right", init_agilent)
+        self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
 
-        # self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
-        # self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
+        self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
+        self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
 
         self.abort_signal = threading.Event()
-
-    # The below methods define the layout of the GUI
 
     def root_page(self):
 
         """
-        The method that intialises the gui. As of now, it also defines the main page of the within itself.
-
-        params: 
-            self:
+        Description
+        -----------
+        The method that intializes the gui's main page. As of now, it also defines the main page within itself.
+        Contains tabs for each stage of the auto tuning process. Each tab contains a scrollable area that will be populated with plots and metrics as the auto tuner runs.
         """
 
         self.header()
@@ -238,10 +245,10 @@ class tuner_gui:
                         self.logger.add_ui_handler(self.ui_log)
                         self.logger.info("Added NiceGUI UI handler to logger.")
 
-                ui.timer(0.025, self.update_liveplot)
-                ui.timer(0.5, self.watchdog_timer)
+                ui.timer(0.025, self.update_liveplot) # updates the liveplot every 25ms
+                ui.timer(0.5, self.watchdog_timer) # updates the watchdog timer every 500ms
 
-                ui.timer(0.2, self.check_for_tuning_plots)
+                ui.timer(0.2, self.check_for_tuning_plots) # checks the plot queue for new plots every 200ms
 
     # Height of every tuning plot, in CSS pixels. The element is given a definite
     # height so the chart never has to infer its own size from its contents.
@@ -249,7 +256,11 @@ class tuner_gui:
 
     @staticmethod
     def figure_to_plot_data(fig) -> dict:
-        """Pull the plotted data back out of a Matplotlib figure.
+
+        """
+        Description
+        -----------
+        Pull the plotted data back out of a Matplotlib figure.
 
         Lets a caller build a figure as usual and still get an interactive chart:
         the numbers are extracted here and redrawn by Plotly. Rendering the
@@ -263,7 +274,21 @@ class tuner_gui:
 
         ``contourf`` is not supported: it keeps only the contour polygons, not the
         grid they came from, so the original array cannot be recovered.
+
+        Parameters
+        ----------
+        fig : matplotlib.figure.Figure
+            The figure to extract data from.
+        
+        Returns
+        -------
+        plot_data : dict
+            A dict with keys ``kind``, ``x_label``, ``y_label``, ``title`` and either
+            ``series`` (for 1D line plots) or ``z``, ``x``, ``y`` and optionally
+            ``overlays`` (for 2D heatmaps). The dict can be passed to
+            ``build_plotly_spec()`` to get a Plotly spec for the same chart.
         """
+
         if not fig.axes:
             raise ValueError("Matplotlib figure has no axes to extract.")
         ax = fig.axes[0]
@@ -275,7 +300,16 @@ class tuner_gui:
         }
 
         def _line_series():
-            """Every drawn line on the axes, as plot-data series."""
+            """
+            Description
+            -----------
+            Every drawn line on the axes, as plot-data series.
+
+            Returns
+            -------
+            series : list[dict]
+                Each dict has keys ``x``, ``y``, ``name``, ``mode`` and optionally ``color``.
+            """
             series = []
             for line in ax.lines:
                 xdata = np.asarray(line.get_xdata(), dtype=float)
@@ -353,11 +387,28 @@ class tuner_gui:
 
     @classmethod
     def build_plotly_spec(cls, plot_data: dict) -> dict:
-        """Build a Plotly spec dict with data, layout and interaction config.
+
+        """
+        Description
+        -----------
+        Build a Plotly spec dict with data, layout and interaction config.
 
         The dict form is used rather than a ``go.Figure`` because only the dict
         carries a ``config`` entry, which is where the zoom and double-click
         behaviour is set.
+
+        Parameters
+        ----------
+        plot_data : dict
+            A dict with keys ``kind``, ``x_label``, ``y_label``, ``title`` and either
+            ``series`` (for 1D line plots) or ``z``, ``x``, ``y`` and optionally
+            ``overlays`` (for 2D heatmaps). The dict can be produced by
+            ``figure_to_plot_data()`` or constructed directly.
+
+        Returns
+        -------
+        spec : dict
+            A Plotly spec dict with keys ``data``, ``layout`` and ``config``.
         """
         kind = plot_data.get('kind', 'line')
         title = plot_data.get('title', '')
@@ -474,14 +525,35 @@ class tuner_gui:
 
     @classmethod
     def build_plotly_figure(cls, plot_data: dict):
-        """Backwards-compatible alias returning the spec dict."""
+
+        """
+        Description
+        -----------
+        Backwards-compatible alias returning the spec dict.
+        
+        Parameters
+        ----------
+        plot_data : dict
+            A dict with keys ``kind``, ``x_label``, ``y_label``, ``title`` and either
+            ``series`` (for 1D line plots) or ``z``, ``x``, ``y`` and optionally
+            ``overlays`` (for 2D heatmaps). The dict can be produced by
+            ``figure_to_plot_data()`` or constructed directly.
+        
+        Returns
+        -------
+        spec : dict
+            A Plotly spec dict with keys ``data``, ``layout`` and ``config``.
+        """
+
         return cls.build_plotly_spec(plot_data)
 
     def check_for_tuning_plots(self):
+
         """
+        Description
+        -----------
         Periodically polls the thread-safe bridge queue. 
-        Creates a collapsible expansion panel, renders the figure, 
-        and extracts tuning metrics to display directly below the chart.
+        Creates a collapsible expansion panel, renders the figure, and extracts tuning metrics to display directly below the chart.
         """
 
         while not self.bridge.plot_queue.empty():
@@ -554,6 +626,13 @@ class tuner_gui:
 
     def run_test_sweep(self):
 
+        '''
+        Description
+        -----------
+        A test sweep that sweeps two DACs and measures two Agilent voltages.
+        This is a simple example of how to use the Sweep class and the ExperimentHandler to run a sweep.
+        '''
+
         self.debug_status.set_text("Running sweep...")
         self.logger.info("Sweep job queued")
 
@@ -598,6 +677,13 @@ class tuner_gui:
         check_result()
 
     def run_test_sweep_2(self):
+
+        '''
+        Description
+        -----------
+        A test sweep that sweeps three DACs and measures two Agilent voltages.
+        This is a simple example of how to use the Sweep class and the ExperimentHandler to run a sweep.
+        '''
 
         self.debug_status.set_text("Running sweep...")
         self.logger.info("Sweep job queued")
@@ -658,6 +744,13 @@ class tuner_gui:
 
     def run_test_sweep_3(self):
 
+        '''
+        Description
+        -----------
+        A test sweep that sweeps three DACs and measures two Agilent voltages.
+        This is a simple example of how to use the Sweep class and the ExperimentHandler to run a sweep.
+        '''
+
         self.debug_status.set_text("Running sweep...")
         self.logger.info("Sweep job queued")
 
@@ -707,6 +800,12 @@ class tuner_gui:
 
     def run_bootstrapping(self):
 
+        '''
+        Description
+        -----------
+        A method that runs the bootstrapping stage of the auto tuning process.
+        '''
+
         self.debug_status.set_text("Running Bootstrapping...")
         self.logger.info("Bootstrapping Jobs queued")
 
@@ -720,6 +819,12 @@ class tuner_gui:
 
     def run_global_charge_tuning(self):
 
+        '''
+        Description
+        -----------
+        A method that runs the global charge tuning stage of the auto tuning process.
+        '''
+
         self.debug_status.set_text("Running Global Charge Tuning...")
         self.logger.info("Global Charge Tuning Jobs queued")
 
@@ -732,6 +837,12 @@ class tuner_gui:
                                                                  )
 
     def run_virtual_gating(self):
+
+        '''
+        Description
+        -----------
+        A method that runs the virtual gating stage of the auto tuning process.
+        '''
 
         self.debug_status.set_text("Running Virtual Gating...")
         self.logger.info("Virtual Gating Jobs queued")
@@ -747,10 +858,9 @@ class tuner_gui:
     def header(self):
         
         """
+        Description
+        -----------
         The method that defines the header of the gui.
-
-        params: 
-            self:
         """
 
         # Uses bg-primary to match the default NiceGUI footer color
@@ -760,10 +870,9 @@ class tuner_gui:
     def footer(self):
         
         """
+        Description
+        -----------
         The method that intialises the footer of the gui.
-
-        params: 
-            self:
         """
 
         with ui.footer(value=True).classes('items-center'):
@@ -780,14 +889,10 @@ class tuner_gui:
     def results_plot_panel(self):
 
         """
+        Description
+        -----------
         The method that defines the results plots. This method takes the output plots from data_analysis 
         and displays them in its corresponding autotuning stage tab.
-
-        params:
-            self:
-            results:
-
-
         """
 
         with ui.matplotlib().figure as fig:
@@ -801,11 +906,9 @@ class tuner_gui:
     def live_plot_window(self):
 
         """
+        Description
+        -----------
         The method that defines the live plot window, which streams the measurement of our readout instrument.
-
-        params:
-            self:
-        
         """
 
         self.liveplot = ui.matplotlib(figsize = (8,6))
@@ -823,6 +926,12 @@ class tuner_gui:
         self.liveplot.update()
 
     def update_liveplot(self): 
+
+        '''
+        Description
+        -----------
+        This method updates the live plot window with the latest data from the readout instrument.
+        '''
         colors = ['tab:blue', 'tab:red', 'tab:orange', 'tab:purple', 'tab:green']
         linestyles = ['-', '--', '-.', ':']
 
@@ -870,10 +979,22 @@ class tuner_gui:
 
     def experiment_progress_bar(self):
 
+        '''
+        Description
+        -----------
+        This method creates a progress bar for the experiment, which is updated by the update_experiment_progress_bar method.
+        '''
+
         self.pb = ui.linear_progress(show_value = False)
         self.instr.disable()
 
     def update_experiment_progress_bar(self):
+
+        '''
+        Description
+        -----------
+        This method updates the experiment progress bar.
+        '''
 
         if self.pb.value < 1.02:
             self.pb.value += 0.01
@@ -886,16 +1007,21 @@ class tuner_gui:
     def split_view(self, page1, page2, horizontal_split: bool = False):
         
         """
+        Description
+        -----------
         This method creates a split view of two specified pages. 
 
-        params:
-            self:
-            page1: The first page of the split. Depending on if horizontal_split is True or False, 
-                   this page will be on the top, or the left, respectively.
-            page2: The second page of the split. Depending on if horizontal_split is True or False, 
-                   this page will be on the bottom, or the right, respectively.
-            horizontal_split: Determines whether the split creates a left/right splitting, or a top/bottom splitting. True implies
-                              the split is horizontal, meaning it will be top/bottom. False means a vertical split, or left/right splitting.
+        Parameters
+        ----------
+        page1 : object containing the page
+            The first page of the split. Depending on if horizontal_split is True or False, 
+            this page will be on the top, or the left, respectively.
+        page2 : object containing the page
+            The second page of the split. Depending on if horizontal_split is True or False, 
+            this page will be on the bottom, or the right, respectively.
+        horizontal_split : bool, optional
+            Determines whether the split creates a left/right splitting, or a top/bottom splitting. True implies
+            the split is horizontal, meaning it will be top/bottom. False means a vertical split, or left/right splitting.
         """
 
         with ui.splitter(horizontal = horizontal_split) as splitter:
@@ -909,11 +1035,12 @@ class tuner_gui:
     def on_connect(self):
         
         """
+        Description
+        -----------
         This method will connect to the load_config_files method in write control and XXX in buffered readout, to initialise connections 
         to the instruments for setting voltages, and the buffered readout to start capturing data on the live plotting window.
 
-        params:
-            self:
+        Not currently implemented, as the load_config_files method is not yet implemented in write control.
         """
         
         pass
@@ -921,18 +1048,24 @@ class tuner_gui:
     def on_autotune(self):
         
         """
+        Description
+        -----------
         This method starts the defined autotuning protocol. Currently, the autotuning protocol is specific to the Intel Tunnel Falls
         devices, by following the autotuning_protocol.py file. This will be updated to allow for application to general devices.
 
-
-        params:
-            self:
-
+        Not currently implemented, as the autotuning protocol is not yet fully defined.
         """
         
         pass
 
     def watchdog_timer(self):
+
+        '''
+        Description
+        -----------
+        This method checks the watchdog of the readout buffer, and if it fails, it will trigger a reset of the GUI.
+        '''
+
         if not self.instrument_handler.watchdog():
             logger.info("Watchdog Failed!")
             # Trigger a reset
@@ -941,6 +1074,12 @@ class tuner_gui:
             #os.execv(python, [python] + sys.argv)
 
     def on_abort(self):
+
+        '''
+        Description
+        -----------
+        This method is called when the user requests to abort the current operation through a button on the GUI.
+        '''
         ui.notify('Aborting...')
         self.logger.warning("Abort requested: draining all worker queues")
         self.autotuning_handler.autotuning_thread.abort()
@@ -948,6 +1087,12 @@ class tuner_gui:
         self.instrument_handler.abort_instruments()
 
     def on_shutdown(self):
+
+        '''
+        Description
+        -----------
+        This method is called when the user requests to shutdown the GUI. It will abort any currently running experiments, and shutdown the instruments.
+        '''
         self.abort_signal.set() # Abort any currently running experiments.
         self.autotuning_handler.autotuning_thread.join()
         self.experiment_handler.experiment_thread.join()

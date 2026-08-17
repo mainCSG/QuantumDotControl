@@ -1,3 +1,4 @@
+# Imports
 import logging
 import os
 import colorlog
@@ -7,6 +8,7 @@ import datetime
 from qcodes.instrument import Instrument
 from nicegui import ui
 
+# Initialize global variables
 logfile = None
 consoleHandler = None
 fileHandler = None
@@ -14,11 +16,19 @@ uiHandler = None
 history = None
 loggers : dict[str, logging.Logger] = {}
 
+# Define formats
 formatstr = '[%(levelname)-5s %(asctime)s] %(name)s: %(message)s'
 formatstr_colored = '%(log_color)s[%(levelname)-5s %(asctime)s] %(name)s:%(reset)s %(message)s'
 datefmt = '%m-%d-%Y %H:%M:%S'
 
 class StorageHandler(logging.Handler):
+
+    '''
+    Description
+    -----------
+    A logging handler that stores all log records in memory. This is useful for sending the log history to a UI element when it is created.
+    '''
+
     def __init__(self, level : int):
         self.history : List[logging.LogRecord] = []
         super().__init__(level)
@@ -26,7 +36,12 @@ class StorageHandler(logging.Handler):
         self.history.append(record)
 
 class LogElementHandler(logging.Handler):
-    """A logging handler that emits messages to a log element."""
+
+    """
+    Description
+    -----------
+    A logging handler that emits messages to a log element.
+    """
 
     def __init__(self, element: ui.log, level: int = logging.NOTSET) -> None:
         self.element = element
@@ -49,8 +64,17 @@ class LogElementHandler(logging.Handler):
             self.handleError(record)
 
 class TunerLog(logging.Logger):
+
     def __init__(self, name : str, level : Literal['debug', 'info', 'warning', 'error'] = 'debug'):
+
+        '''
+        Description
+        -----------
+        A custom logger that logs to a file, the console, and a UI element. It also stores the log history in memory for later use.
+        '''
+
         global logfile, consoleHandler, fileHandler, loggers, formatstr, formatstr_colored, datefmt, history
+
         try:
             level_num = getattr(logging, level.upper())
         except:
@@ -75,6 +99,7 @@ class TunerLog(logging.Logger):
 
             original_dir = os.getcwd()
 
+            # Creates a log file
             if logfile is None:
 
                 os.chdir("..")
@@ -82,6 +107,7 @@ class TunerLog(logging.Logger):
                 logfile = f"QDot_tuner_{datetime.datetime.now().strftime('%m-%d-%Y')}.log"
                 logfile = os.path.join(logfile_dir, logfile)
 
+            # Creates the log file directory if it does not exist
             if fileHandler is None:
                 fileHandler = logging.FileHandler(logfile)
                 fileHandler.setLevel(level_num)
@@ -104,11 +130,16 @@ class TunerLog(logging.Logger):
     def add_ui_handler(self, element: ui.log, level: Literal['debug', 'info', 'warning', 'error'] = 'info'):
         
         """
+        Description
+        -----------
         Add the UI handler to all loggers, and make sure all the previous history gets sent to the ui logger.
 
-        Args:
-            element (ui.log): _description_
-            level (Literal[&#39;debug&#39;, &#39;info&#39;, &#39;warning&#39;, &#39;error&#39;], optional): _description_. Defaults to 'info'.
+        Parameters
+        ----------
+        element : ui.log
+            The UI element to which log messages will be emitted.
+        level : Literal['debug', 'info', 'warning', 'error'], optional
+            The logging level for the UI handler. Defaults to 'info'.
         """
         
         level_num = getattr(logging, level.upper())
@@ -132,6 +163,20 @@ class TunerLog(logging.Logger):
                 uiHandler.emit(record)
 
     def instrument_snapshot(self, instrument : Instrument, level : Literal['debug', 'info', 'warning', 'error'] = 'info'):
+
+        '''
+        Description
+        -----------
+        Print a snapshot of the instrument's parameters and their values to the log.
+
+        Parameters
+        ----------
+        instrument : Instrument
+            The instrument to snapshot.
+        level : Literal['debug', 'info', 'warning', 'error'], optional
+            The logging level for the snapshot. Defaults to 'info'.
+        '''
+        
         params = []
         maxlenl = len("Parameter") + 3
         maxlenr = len("Value") + 3

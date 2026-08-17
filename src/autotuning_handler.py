@@ -28,6 +28,13 @@ _AutotuningHandlerInstance = None
 logger = TunerLog('Autotuning Handler')
 
 def create_autotuning_thread():
+
+    '''
+    Description
+    -----------
+    Creates an instance of the autotuning thread that the autotuning protocol runs on. All sweeps and protocol jobs run on this thread.
+    '''
+
     global _AutotuningThreadInstance
 
     if _AutotuningThreadInstance is None:
@@ -37,6 +44,14 @@ def create_autotuning_thread():
     return _AutotuningThreadInstance
 
 def get_autotuning_handler():
+
+    '''
+    Description
+    -----------
+    Creates an instance of the autotuning handler that has all the functions to run each stage of the autotuning protocol.
+    Also creates a autotuning thread if not created already.
+    '''
+
     global _AutotuningHandlerInstance
 
     if _AutotuningHandlerInstance is None:
@@ -70,18 +85,37 @@ class AutotuningThread:
 
     def __init__(self):
 
-        self.job_event = threading.Event()
-        self.abort_event =  threading.Event()
-        self.shutdown_event = threading.Event()
-        self.job_queue = PriorityQueue()
-        self.THREAD_NAME = "AutotuningThread"
+        '''
+        Description
+        -----------
+        Initializes the thread by setting events and queues. 
+        '''
+
+        self.job_event = threading.Event() # Triggers when a job come sin through the thread
+        self.abort_event =  threading.Event() # Triggers when the thread is getting aborted, when the abort button is pressed
+        self.shutdown_event = threading.Event() # Triggers during the shutdown of the GUI
+        self.job_queue = PriorityQueue() # Creates a priority queue for the jobs that come into the thread
+        self.THREAD_NAME = "AutotuningThread" 
+        # Starts a loop for the thread so it continuously checks the job queue or any events
         self.thread = threading.Thread(target = self.__thread_loop__, name = self.THREAD_NAME)
     
     def run(self):
 
+        '''
+        Description
+        -----------
+        Starts the autotuning thread
+        '''
+
         self.thread.start()
     
     def join(self):
+
+        '''
+        Description
+        -----------
+        Stops the autotuning thread by shutting down the code.
+        '''
 
         print("Stopping the autotuning thread...")
         self.shutdown_event.set()
@@ -90,14 +124,45 @@ class AutotuningThread:
     
     def __assert_correct_thread__(self):
 
+        '''
+        Description
+        -----------
+        Asserts that the thread name is correct for the autotuning thread.
+        '''
+
         assert threading.current_thread().name == self.THREAD_NAME, f"The current thread, {threading.current_thread().name}, is not the Autotuning Thread." 
 
     def add_job(self,
-            f: Callable,
-            args: tuple = (),
-            priority: int = 1,
-            wait: bool = True,
-            timeout: float = None):
+                f: Callable,
+                args: tuple = (),
+                priority: int = 1,
+                wait: bool = True,
+                timeout: float = None
+                ):
+
+        '''
+        Description
+        -----------
+        Adds a job to the thread, where it'll be processed in the loop.
+
+        Parameters
+        ----------
+        f : Callable
+            job to be adding to queue
+        args : tuple, optional
+            arguments of the job, defaults to empty tuple
+        priority : int, optional
+            priority of the job in queue, defaults to 1 (highest priority)
+        wait : bool, optional
+            sets a delay before the job is added to queue, defaults to True
+        timeout : float
+            sets a period of time that the job is delayed for, default is None
+
+        Returns
+        -------
+        future : Future Object
+            returns the object that has been added to queue saying that the job is added
+        '''
     
         future = TunerFuture()
 
@@ -113,10 +178,22 @@ class AutotuningThread:
     
     def abort(self):
 
+        '''
+        Description
+        -----------
+        Aborts the autotuning thread by clearing it.
+        '''
+
         self.abort_event.set()
         self.job_event.set()
 
     def _drain_queue(self):
+
+        '''
+        Description
+        -----------
+        Empties the autotuning job queue.
+        '''
 
         while True:
             try:
@@ -129,6 +206,12 @@ class AutotuningThread:
         self.abort_event.clear()
 
     def __thread_loop__(self):
+
+        '''
+        Description
+        -----------
+        Loops through the thread queue and processes jobs or events as they come in. Logs any information about events or jobs.
+        '''
 
         print("Starting the Autotuning Thread Worker")
 
@@ -167,16 +250,67 @@ class autotuning_handler:
 
     def __init__(self, autotuning_thread):
 
+        '''
+        Description
+        -----------
+        Makes the autotuning thread accessible to all the functions.
+
+        Paramaters
+        ----------
+        autotuning_thread : instance of thread
+            instance of autotuning thread that the following functions during the protocol can add jobs to
+        '''
+
         self.autotuning_thread = autotuning_thread
 
     def run_bootstrapping(self,
-                device_config,
-                instrument_handler,
-                experiment_handler,
-                wait: bool = True,
-                timeout: float = 6000):
+                          device_config,
+                          instrument_handler,
+                          experiment_handler,
+                          wait: bool = True,
+                          timeout: float = 6000
+                          ):
+
+        '''
+        Description
+        -----------
+        Runs the sweep functions to conduct bootstrapping.
+
+        Parameters
+        ----------
+        device_config : yaml file
+            file containing the device information and setup
+        instrument_handler : instance of handler
+            instance of instruemnt handler to process and control instruments
+        experiment_handler : instance of handler
+            instance of experiment handler to process the autotuning steps in bootstrapping stage
+        wait : bool, optional
+            sets a delay to every job, defaults to True
+        timeout : float, optional
+            sets a time period to delay each job for, defaults to 6000s
+        
+        Returns
+        -------
+        The sweep job for the bootstrapping stage.
+        '''
 
         def sweep_fn(abort_event):
+
+            '''
+            Description
+            -----------
+            Creates a sweep function to run the bootstrapping steps.
+
+            Parameters
+            ----------
+            abort_event : Event
+                triggers an abort for the sweep
+
+            Returns
+            -------
+            result :
+                the results from the bootstrapping stage
+            '''
 
             result = Bootstrapping(device_config = device_config,
                                    instr_handler = instrument_handler,
@@ -199,13 +333,53 @@ class autotuning_handler:
                                              )
         
     def run_global_charge_tuning(self,
-                device_config,
-                instrument_handler,
-                experiment_handler,
-                wait: bool = True,
-                timeout: float = 6000):
+                                 device_config,
+                                 instrument_handler,
+                                 experiment_handler,
+                                 wait: bool = True,
+                                 timeout: float = 6000
+                                 ):
+
+        '''
+        Description
+        -----------
+        Runs the sweep functions to conduct global charge tuning.
+
+        Parameters
+        ----------
+        device_config : yaml file
+            file containing the device information and setup
+        instrument_handler : instance of handler
+            instance of instruemnt handler to process and control instruments
+        experiment_handler : instance of handler
+            instance of experiment handler to process the autotuning steps in global charge tuning stage
+        wait : bool, optional
+            sets a delay to every job, defaults to True
+        timeout : float, optional
+            sets a time period to delay each job for, defaults to 6000s
+        
+        Returns
+        -------
+        The sweep job for the global charge tuning stage.
+        '''
 
         def sweep_fn(abort_event):
+
+            '''
+            Description
+            -----------
+            Creates a sweep function to run the global charge tuning steps.
+
+            Parameters
+            ----------
+            abort_event : Event
+                triggers an abort for the sweep
+
+            Returns
+            -------
+            result :
+                the results from the global charge tuning stage
+            '''
             
             result = GlobalChargeTuning(device_config = device_config,
                                         instr_handler = instrument_handler,
@@ -233,9 +407,49 @@ class autotuning_handler:
                            instrument_handler,
                            experiment_handler,
                            wait: bool = True,
-                           timeout: float = 6000):
+                           timeout: float = 6000
+                           ):
+
+        '''
+        Description
+        -----------
+        Runs the sweep functions to conduct virtual gating.
+
+        Parameters
+        ----------
+        device_config : yaml file
+            file containing the device information and setup
+        instrument_handler : instance of handler
+            instance of instruemnt handler to process and control instruments
+        experiment_handler : instance of handler
+            instance of experiment handler to process the autotuning steps in virtual gating stage
+        wait : bool, optional
+            sets a delay to every job, defaults to True
+        timeout : float, optional
+            sets a time period to delay each job for, defaults to 6000s
+        
+        Returns
+        -------
+        The sweep job for the virtual gating stage.
+        '''
 
         def sweep_fn(abort_event):
+
+            '''
+            Description
+            -----------
+            Creates a sweep function to run the virtual gating steps.
+
+            Parameters
+            ----------
+            abort_event : Event
+                triggers an abort for the sweep
+
+            Returns
+            -------
+            result :
+                the results from the virtual gating stage
+            '''
             
             result = VirtualGating(device_config = device_config,
                                    instr_handler = instrument_handler,
@@ -260,13 +474,54 @@ class autotuning_handler:
                                              )
     
     def run_charge_state_tuning(self,
-                sweep,
-                instrument_handler,
-                current_setpoints = {},
-                wait: bool = True,
-                timeout: float = 60):
+                                sweep,
+                                instrument_handler,
+                                current_setpoints = {},
+                                wait: bool = True,
+                                timeout: float = 60
+                                ):
+
+        '''
+        Description
+        -----------
+        Runs the sweep functions to conduct charge state tuning.
+
+        Parameters
+        ----------
+        device_config : yaml file
+            file containing the device information and setup
+        instrument_handler : instance of handler
+            instance of instruemnt handler to process and control instruments
+        experiment_handler : instance of handler
+            instance of experiment handler to process the autotuning steps in charge state tuning stage
+        wait : bool, optional
+            sets a delay to every job, defaults to True
+        timeout : float, optional
+            sets a time period to delay each job for, defaults to 60s
+        
+        Returns
+        -------
+        The sweep job for the charge state tuning stage.
+        '''
 
         def sweep_fn(abort_event):
+
+            '''
+            Description
+            -----------
+            Creates a sweep function to run the charge state tuning steps.
+
+            Parameters
+            ----------
+            abort_event : Event
+                triggers an abort for the sweep
+
+            Returns
+            -------
+            result :
+                the results from the charge state tuning stage
+            '''
+
             result = ChargeStateTuning()
             return result
 
@@ -278,13 +533,54 @@ class autotuning_handler:
                                              )
     
     def run_qubit_tuning(self,
-                sweep,
-                instrument_handler,
-                current_setpoints = {},
-                wait: bool = True,
-                timeout: float = 60):
+                         sweep,
+                         instrument_handler,
+                         current_setpoints = {},
+                         wait: bool = True,
+                         timeout: float = 60
+                         ):
+
+        '''
+        Description
+        -----------
+        Runs the sweep functions to conduct qubit tuning.
+
+        Parameters
+        ----------
+        device_config : yaml file
+            file containing the device information and setup
+        instrument_handler : instance of handler
+            instance of instruemnt handler to process and control instruments
+        experiment_handler : instance of handler
+            instance of experiment handler to process the autotuning steps in qubit tuning stage
+        wait : bool, optional
+            sets a delay to every job, defaults to True
+        timeout : float, optional
+            sets a time period to delay each job for, defaults to 60s
+        
+        Returns
+        -------
+        The sweep job for the qubit tuning stage.
+        '''
 
         def sweep_fn(abort_event):
+
+            '''
+            Description
+            -----------
+            Creates a sweep function to run the qubit tuning steps.
+
+            Parameters
+            ----------
+            abort_event : Event
+                triggers an abort for the sweep
+
+            Returns
+            -------
+            result :
+                the results from the qubit tuning stage
+            '''
+
             result = QubitTuning()
             return result
 

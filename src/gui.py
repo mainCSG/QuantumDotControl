@@ -12,7 +12,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from nicegui import ui, app
-from local_file_picker import local_file_picker
+
 import threading
 import time
 from instrument_handler import create_buffer_instance
@@ -30,11 +30,10 @@ from autotuning_protocol import Protocol
 from tunerlog import TunerLog
 import yaml
 
-from instrument_init import INITIALIZERS, init_agilent, init_spi_rack
 from paths import *
+from instrument_registry import *
 
 logger = TunerLog('GUI')
-
 
 class RandomDummy(DummyInstrument):
     '''
@@ -93,31 +92,6 @@ class tuner_gui:
         self.experiment_handler = get_experiment_handler()
         self.autotuning_handler = get_autotuning_handler()
 
-        instruments = self.station.config['instruments']
-        for instrument in instruments.keys():
-            print(instrument)
-            print(instruments[instrument]['initializer'])
-            self.instrument_handler.add_instrument(instrument, INITIALIZERS[instruments[instrument]['initializer']])
-        print(self.station.components)
-        
-        # def init_agilent(instrument: Instrument, *args):
-        #     instrument.NPLC(1.0)
-        #     instrument.range_auto('on')
-
-        # def init_spi_rack(instrument: Instrument, *args):
-            
-        #     instrument.add_spi_module(8, 'D5a', 'module1')
-        #     instrument.add_spi_module(7, 'D5a', 'module2')
-        #     return
-
-        # self.instrument_handler.add_instrument("agilent_left", init_agilent)
-        # self.instrument_handler.add_instrument("agilent_right", init_agilent)
-        # self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
-
-        # self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
-        # self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
-        
-
         self.abort_signal = threading.Event()
 
     # The below methods define the layout of the GUI
@@ -142,7 +116,7 @@ class tuner_gui:
 
                 with ui.dropdown_button('', icon = 'menu', auto_close=True):
                     ui.item('Load Config Files', on_click=lambda : self.on_load_config())
-                    ui.item('Instrument Information', on_click=lambda : ui.notify("Loading Instrument Information..."))
+                    ui.item('Instrument Information', on_click=lambda : self.on_load_instrument_info())
                     ui.item('Device Information', on_click=lambda : ui.notify("Loading Device Information..."))
 
                 stages = ['Debug', 'Setup','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
@@ -156,7 +130,7 @@ class tuner_gui:
             
                     with ui.tab_panel('Setup'):
 
-                        device_config = os.path.join("configs", "Intel_Config.yaml")
+                        device_config = "Intel_Config.yaml"
 
                         self.autotune = ui.button(
                                             'Autotune',
@@ -509,7 +483,7 @@ class tuner_gui:
         linestyles = ['-', '--', '-.', ':']
 
         #TODO: uncomment the below line when the instrument handler is implemented
-        # retval = self.instrument_handler.get_buffer()
+        retval = self.instrument_handler.get_buffer()
         retval = None
         if retval is None:
             return
@@ -634,8 +608,23 @@ class tuner_gui:
         Source: 
         """
         ui.notify("Loading Config Files...")
-        config_files = await local_file_picker(directory = CONFIG_FOLDER, upper_limit = CONFIG_FOLDER)
+        config_files = await local_file_picker(directory = STATION_CONFIG, upper_limit = STATION_CONFIG)
         self.station.load_config_files(*config_files)
+        logger.info('printing loaded config')
+        
+        configured = set(self.station.config['instruments'])
+        connected = set(self.instrument_handler.instrument_threads.keys())
+
+        # remove elements that were connected but should not be
+        for name in connected - configured:
+            self.instrument_handler.remove_instrument(name)
+
+        # add components
+        for name in configured - connected:
+            self.instrument_handler.add_instrument(name, INITIALIZERS.get(name))
+
+            if name in MONITORS:
+                self.instrument_handler.monitor_parameter(name, MONITORS.get(name))
 
     def on_save_config(self):
         """
@@ -647,4 +636,75 @@ class tuner_gui:
         """
         This method is used to load and display the device information. 
         """
-        pass
+        ui.notify("Loading Instrument Information...")
+
+    # The below classes
+
+class local_file_picker(ui.dialog):
+
+    def __init__(self, directory: str, *,
+                 upper_limit: str | None = ...,) -> None:
+        """Local File Picker
+
+        This is a simple file picker that allows you to select a file from the local filesystem where NiceGUI is running.
+
+        :param directory: The directory to start in.
+        :param upper_limit: The directory to stop at (None: no limit, default: same as the starting directory).
+        :param multiple: Whether to allow multiple files to be selected.
+        :param show_hidden_files: Whether to show hidden files.
+        """
+        super().__init__()
+
+        self.directory = directory
+        with self, ui.card().classes('q-pa-md q-ma-sm bg-primary text-white'):
+            ui.label(f"Select a file from {self.directory}")
+            self.grid = ui.aggrid({
+                'columnDefs': [
+                    {'headerName': 'File', 'field': 'file'}
+                ],
+                'rowData': [
+                    {'file': f.name} for f in Path(self.directory).iterdir()
+                    ],
+                'rowSelection': {'mode': 'multiRow'}
+            })
+            with ui.row():
+                self.cancel_button = ui.button("Cancel", on_click=self.close)
+                self.select_button = ui.button("Select", on_click=self._select)
+        self.update_grid()
+
+    def update_grid(self):
+        self.grid.update()
+
+    async def _select(self):
+        selected_rows = await self.grid.get_selected_rows()
+        self.submit([str(STATION_CONFIG / row['file']) for row in selected_rows])
+
+class InstrumentManager(ui.dialog):
+    def __init__(self, instrument_handler):
+        self.instrument_handler = instrument_handler
+
+    def show(self):
+        if not self.instrument_handler.station.config:
+            configured = set(['nothing configured'])
+        else:
+            configured = set(self.instrument_handler.station.config['instruments'].keys())
+        print(configured)
+        connected = set(self.instrument_handler.instrument_threads.keys())
+        print(configured | connected)
+        with self, ui.card().classes('q-pa-md q-ma-sm bg-primary text-white'):
+            ui.label('Instrument Manager')
+            self.grid = ui.aggrid({
+                'columnsDef': [
+                    {'headerName': 'Instrument', 'field': 'name'},
+                    {'headerName': 'Status', 'field': 'status'},
+                    {'headerName': 'Action', 'field': 'action'}
+                ],
+                'rowData':[{'name': name, 'status': 'None', 'action': 'None'} for name in configured | connected]
+                })
+            
+            ui.button('Close', on_click=self.close)
+        self.update_grid()
+        self.open()
+
+    def update_grid(self):
+        self.grid.update()

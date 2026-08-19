@@ -31,7 +31,6 @@ def create_buffer_instance(station : Station, station_lock : threading.Lock):
     global _Instance, logger
     if _Instance is None:
         _Instance = instrument_handler(station, station_lock)
-
     return _Instance
 
 def make_list(strings : str | List[str] | Literal['all']) -> List[str]:
@@ -73,11 +72,9 @@ class TunerFuture:
             logger.info("Timeout Reached!")
             raise TimeoutError("Future timed out while waiting for result")
 
-
 class AbortException(Exception):
     """Raised on the TunerFuture of a queued job discarded by an abort."""
     pass
-
 
 @dataclass
 class instrument_job:
@@ -264,7 +261,7 @@ class instrument_thread:
         logger.instrument_snapshot(self.instrument)
         # Start the readout loop
         self._update_status("Running")
-        
+        logger.info('status updated')
         loop_times = deque(maxlen = 500) # A deque for tracking the average loop time
         tprev = self.timefunc()
         while not self.shutdown_signal.is_set() and not self.global_shutdown.is_set():
@@ -410,7 +407,6 @@ class instrument_thread:
         job.future.set_result(None)
         return True               
             
-
 class instrument_handler:
     def __init__(self, station : Station, station_lock : threading.Lock):
         '''
@@ -445,10 +441,12 @@ class instrument_handler:
         self.station = station
         self.station_lock = station_lock
 
+        # self.initialize_instruments(self.station)
+
         self.global_shutdown = threading.Event() # A global shutdown signal for all child threads.
 
         self.monitored_parameters : List[str] = []
-        
+
     def read_buffer(self, var_name : str | List[str], t_avg : float = 0.0, t_stop : float = -1) -> Dict[str, float]:
         '''
         Sample one or more of the asynchronous instrument buffers, and average over a specified amount of time
@@ -774,7 +772,7 @@ class instrument_handler:
             return inst_thread.get_status()
         else:
             return "DNE"
-        
+
     def watchdog(self) -> bool:
         '''
         This is the watchdog timer callback for the buffered_readout object. It 

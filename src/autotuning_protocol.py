@@ -30,6 +30,8 @@ from qcodes.dataset import AbstractSweep, Measurement
 from qcodes.dataset.dond.do_nd_utils import ActionsT
 from qcodes.parameters import ParameterBase
 
+from paths import *
+
 # Local Imports
 from data_analysis import (
     extract_lever_arms,
@@ -74,9 +76,9 @@ class Protocol:
 
         logger.info("Loading Device Config file...")
 
-        device_config = os.path.join(os.getcwd(), device_config)
+        # device_config = os.path.join(DEVICE_CONFIG, device_config)
 
-        self._load_config_file(device_config)
+        self._load_config_file(DEVICE_CONFIG / device_config)
 
         self.directory = os.path.join(f"Protocol_Run_{datetime.now().strftime('%m-%d-%Y')}", "Data")
 
@@ -101,7 +103,7 @@ class Protocol:
 
         # Read the tuner config information
 
-        self.config = yaml.safe_load(Path(device_config).read_text())
+        self.config = yaml.safe_load(device_config.read_text())
 
         # Read the config information
 

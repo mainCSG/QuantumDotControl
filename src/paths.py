@@ -24,5 +24,9 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # fix config folder path
 CONFIG_FOLDER = ROOT / "configs"
+# device configuration path
+DEVICE_CONFIG = CONFIG_FOLDER / 'device configs'
+# station configuration path 
+STATION_CONFIG = CONFIG_FOLDER / 'station configs'
 # fix protocols folder path
 PROTOCOLS = ROOT / "Protocols"

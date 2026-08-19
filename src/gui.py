@@ -637,6 +637,7 @@ class tuner_gui:
         This method is used to load and display the device information. 
         """
         ui.notify("Loading Instrument Information...")
+        instrument_manager = InstrumentManager
 
     # The below classes
 
@@ -681,16 +682,10 @@ class local_file_picker(ui.dialog):
 
 class InstrumentManager(ui.dialog):
     def __init__(self, instrument_handler):
+        super().__init__()
         self.instrument_handler = instrument_handler
-
-    def show(self):
-        if not self.instrument_handler.station.config:
-            configured = set(['nothing configured'])
-        else:
-            configured = set(self.instrument_handler.station.config['instruments'].keys())
-        print(configured)
+        configured = set(self.instrument_handler.config['instruments'])
         connected = set(self.instrument_handler.instrument_threads.keys())
-        print(configured | connected)
         with self, ui.card().classes('q-pa-md q-ma-sm bg-primary text-white'):
             ui.label('Instrument Manager')
             self.grid = ui.aggrid({
@@ -699,7 +694,7 @@ class InstrumentManager(ui.dialog):
                     {'headerName': 'Status', 'field': 'status'},
                     {'headerName': 'Action', 'field': 'action'}
                 ],
-                'rowData':[{'name': name, 'status': 'None', 'action': 'None'} for name in configured | connected]
+                'rowData':[{'name': name, 'status': 'connected', 'action': 'None'} for name in configured - connected]
                 })
             
             ui.button('Close', on_click=self.close)

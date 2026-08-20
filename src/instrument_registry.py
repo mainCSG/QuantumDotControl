@@ -6,7 +6,7 @@ def init_agilent(instrument: Instrument, *args):
     instrument.range_auto('on')
 
 
-def init_spi_rack(instrument: Instrument, logger):
+def init_spi_rack(instrument: Instrument):
     instrument.add_spi_module(8, 'D5a', 'module1')
     instrument.add_spi_module(7, 'D5a', 'module2')
 

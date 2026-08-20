@@ -29,9 +29,10 @@ from experiment_base import SweepParam, SweepLayer, Sweep
 from autotuning_protocol import Protocol
 from tunerlog import TunerLog
 import yaml
+from pathlib import Path
 
-from paths import *
-from instrument_registry import *
+from paths import CONFIG_FOLDER, STATION_CONFIG
+from instrument_registry import INITIALIZERS, MONITORS, init_agilent, init_spi_rack
 
 logger = TunerLog('GUI')
 
@@ -128,14 +129,14 @@ class tuner_gui:
 
                 with ui.tab_panels(tabs, value='Home').classes('w-full'):
             
-                    with ui.tab_panel('Setup'):
+                    # with ui.tab_panel('Setup'):
 
-                        device_config = "Intel_Config.yaml"
+                    #     self.device_config = "Intel_Config.yaml"
 
-                        self.autotune = ui.button(
-                                            'Autotune',
-                                            on_click = Protocol(device_config = device_config)
-                                                 )
+                    #     self.autotune = ui.button(
+                    #                         'Autotune',
+                    #                         on_click = Protocol(device_config = self.device_config)
+                    #                              )
 
                     with ui.tab_panel('Bootstrapping'):
 
@@ -484,7 +485,7 @@ class tuner_gui:
 
         #TODO: uncomment the below line when the instrument handler is implemented
         retval = self.instrument_handler.get_buffer()
-        retval = None
+        # retval = None
         if retval is None:
             return
         else:
@@ -608,9 +609,9 @@ class tuner_gui:
         Source: 
         """
         ui.notify("Loading Config Files...")
-        config_files = await local_file_picker(directory = STATION_CONFIG, upper_limit = STATION_CONFIG)
-        self.station.load_config_files(*config_files)
-        logger.info('printing loaded config')
+        self.device_config = await local_file_picker(directory = STATION_CONFIG, upper_limit = STATION_CONFIG)
+        self.station.load_config_files(*self.device_config)
+        # logger.info('printing loaded config')
         
         configured = set(self.station.config['instruments'])
         connected = set(self.instrument_handler.instrument_threads.keys())

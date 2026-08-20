@@ -30,7 +30,7 @@ from qcodes.dataset import AbstractSweep, Measurement
 from qcodes.dataset.dond.do_nd_utils import ActionsT
 from qcodes.parameters import ParameterBase
 
-from paths import *
+from paths import DEVICE_CONFIG
 
 # Local Imports
 from data_analysis import (

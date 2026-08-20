@@ -8,7 +8,7 @@ Entry point to the auto tuner.
 
 import datetime
 import os
-from paths import *
+from paths import ROOT, PROTOCOLS
 
 os.chdir(ROOT)
 

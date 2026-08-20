@@ -1,0 +1,58 @@
+[INFO  08-20-2026 10:45:12] Instr. Control: Initalizing logger Instr. Control with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:45:12] Expt. Control: Initalizing logger Expt. Control with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:45:15] Data Analysis: Initalizing logger Data Analysis with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:45:32] Instr. Control: Initalizing logger Instr. Control with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:45:32] Expt. Control: Initalizing logger Expt. Control with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:45:34] Data Analysis: Initalizing logger Data Analysis with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:07] Instr. Control: Initalizing logger Instr. Control with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:07] Expt. Control: Initalizing logger Expt. Control with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:09] Data Analysis: Initalizing logger Data Analysis with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:09] Exp. Base: Initalizing logger Exp. Base with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:09] Autotuning Protocol: Initalizing logger Autotuning Protocol with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:09] Autotuning Handler: Initalizing logger Autotuning Handler with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:09] GUI: Initalizing logger GUI with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:12] Instr. Control: Initalizing logger Instr. Control with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:12] Expt. Control: Initalizing logger Expt. Control with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:14] Data Analysis: Initalizing logger Data Analysis with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:14] Exp. Base: Initalizing logger Exp. Base with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:14] Autotuning Protocol: Initalizing logger Autotuning Protocol with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:14] Autotuning Handler: Initalizing logger Autotuning Handler with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:14] GUI: Initalizing logger GUI with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:14] main: Initalizing logger main with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[INFO  08-20-2026 10:49:14] main: Starting GUI...
+[INFO  08-20-2026 10:49:14] TunerGUI: Initalizing logger TunerGUI with log file 'Protocol_Run_08-20-2026\QDot_tuner_08-20-2026.log'
+[DEBUG 08-20-2026 10:49:14] Instr. Control: Thread 'agilent_leftThread' updating status to 'Initializing'
+[DEBUG 08-20-2026 10:49:14] Instr. Control: Thread 'agilent_rightThread' updating status to 'Initializing'
+[INFO  08-20-2026 10:49:14] Instr. Control: Attemting to load instrument 'agilent_left'.
+[DEBUG 08-20-2026 10:49:14] Instr. Control: Thread 'spi_rackThread' updating status to 'Initializing'
+[INFO  08-20-2026 10:49:14] Instr. Control: Attemting to load instrument 'agilent_right'.
+[INFO  08-20-2026 10:49:14] Instr. Control: Attemting to load instrument 'spi_rack'.
+[ERROR 08-20-2026 10:49:14] Instr. Control: Initialization exception for agilent_left with initialization function <function tuner_gui.__init__.<locals>.init_agilent at 0x00000298079EE520> and args ().
+Traceback (most recent call last):
+  File "C:\Users\BaughLaflamme\Documents\GitHub\QuantumDotControl\src\instrument_handler.py", line 447, in _worker
+    self.instrument = station.load_instrument(instrument_name)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\BaughLaflamme\anaconda3\Lib\site-packages\qcodes\station.py", line 561, in load_instrument
+    raise RuntimeError(
+RuntimeError: Instrument agilent_left not found in instrument config file
+[ERROR 08-20-2026 10:49:14] Instr. Control: Initialization exception for agilent_right with initialization function <function tuner_gui.__init__.<locals>.init_agilent at 0x00000298079EE520> and args ().
+Traceback (most recent call last):
+  File "C:\Users\BaughLaflamme\Documents\GitHub\QuantumDotControl\src\instrument_handler.py", line 447, in _worker
+    self.instrument = station.load_instrument(instrument_name)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\BaughLaflamme\anaconda3\Lib\site-packages\qcodes\station.py", line 561, in load_instrument
+    raise RuntimeError(
+RuntimeError: Instrument agilent_right not found in instrument config file
+[ERROR 08-20-2026 10:49:14] Instr. Control: Initialization exception for spi_rack with initialization function <function tuner_gui.__init__.<locals>.init_spi_rack at 0x00000298079EE5C0> and args (<TunerLog TunerGUI (DEBUG)>,).
+Traceback (most recent call last):
+  File "C:\Users\BaughLaflamme\Documents\GitHub\QuantumDotControl\src\instrument_handler.py", line 447, in _worker
+    self.instrument = station.load_instrument(instrument_name)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\BaughLaflamme\anaconda3\Lib\site-packages\qcodes\station.py", line 561, in load_instrument
+    raise RuntimeError(
+RuntimeError: Instrument spi_rack not found in instrument config file
+[DEBUG 08-20-2026 10:49:14] Instr. Control: Thread 'agilent_leftThread' updating status to 'Failed to initialize'
+[DEBUG 08-20-2026 10:49:14] Instr. Control: Thread 'agilent_rightThread' updating status to 'Failed to initialize'
+[DEBUG 08-20-2026 10:49:14] Instr. Control: Thread 'spi_rackThread' updating status to 'Failed to initialize'
+[INFO  08-20-2026 10:50:14] Instr. Control: Timeout Reached!
+[WARNING 08-20-2026 10:52:08] main: Stopping the GUI...

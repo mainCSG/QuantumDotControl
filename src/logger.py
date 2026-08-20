@@ -34,6 +34,8 @@ class Logger:
     def initialise_logger(self):
 
         """
+        Description
+        -----------
         This method creates new logging categories which the user can see while the autotuner runs, as well as outputs
         a log of everything that occured during the experiment. This method is when an InstrumentControl object is initialised.
         """

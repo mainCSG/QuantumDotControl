@@ -26,6 +26,18 @@ _ExperimentHandlerInstance = None
 logger = TunerLog('Expt. Control')
 
 def create_experiment_thread():
+
+    '''
+    Description
+    -----------
+    Creates a new experiment thread if one does not already exist. If one does exist, it returns the existing instance.
+
+    Returns
+    -------
+    ExperimentThread
+        The instance of the experiment thread.
+    '''
+
     global _ExperimentThreadInstance
 
     if _ExperimentThreadInstance is None:
@@ -35,6 +47,18 @@ def create_experiment_thread():
     return _ExperimentThreadInstance
 
 def get_experiment_handler():
+
+    '''
+    Description
+    -----------
+    Creates a new experiment handler if one does not already exist. If one does exist, it returns the existing instance.
+
+    Returns
+    -------
+    experiment_handler
+        The instance of the experiment handler.
+    '''
+
     global _ExperimentHandlerInstance
 
     if _ExperimentHandlerInstance is None:
@@ -68,6 +92,12 @@ class ExperimentThread:
 
     def __init__(self):
 
+        '''
+        Description
+        -----------
+        Initializes the thread by setting events and queues. 
+        '''
+
         self.job_event = threading.Event()
         self.abort_event =  threading.Event()
         self.shutdown_event = threading.Event()
@@ -77,9 +107,21 @@ class ExperimentThread:
     
     def run(self):
 
+        '''
+        Description
+        -----------
+        Starts the experiment thread
+        '''
+
         self.thread.start()
     
     def join(self):
+
+        '''
+        Description
+        -----------
+        Stops the experiment thread by shutting down the code.
+        '''
 
         print("Stopping the experiment thread...")
         self.shutdown_event.set()
@@ -88,14 +130,45 @@ class ExperimentThread:
     
     def __assert_correct_thread__(self):
 
+        '''
+        Description
+        -----------
+        Asserts that the thread name is correct for the experiment thread.
+        '''
+
         assert threading.current_thread().name == self.THREAD_NAME, f"The current thread, {threading.current_thread().name}, is not the Experiment Thread." 
 
     def add_job(self,
-            f: Callable,
-            args: tuple = (),
-            priority: int = 1,
-            wait: bool = True,
-            timeout: float = None):
+                f: Callable,
+                args: tuple = (),
+                priority: int = 1,
+                wait: bool = True,
+                timeout: float = None
+                ):
+
+        '''
+        Description
+        -----------
+        Adds a job to the thread, where it'll be processed in the loop.
+
+        Parameters
+        ----------
+        f : Callable
+            job to be adding to queue
+        args : tuple, optional
+            arguments of the job, defaults to empty tuple
+        priority : int, optional
+            priority of the job in queue, defaults to 1 (highest priority)
+        wait : bool, optional
+            sets a delay before the job is added to queue, defaults to True
+        timeout : float
+            sets a period of time that the job is delayed for, default is None
+
+        Returns
+        -------
+        future : Future Object
+            returns the object that has been added to queue saying that the job is added
+        '''
 
         future = TunerFuture()
         self.job_queue.put((priority, (f, args, future)))
@@ -109,10 +182,22 @@ class ExperimentThread:
 
     def abort(self):
 
+        '''
+        Description
+        -----------
+        Aborts the experiment thread by clearing it.
+        '''
+
         self.abort_event.set()
         self.job_event.set()
 
     def _drain_queue(self):
+
+        '''
+        Description
+        -----------
+        Empties the experiment job queue.
+        '''
 
         while True:
             try:
@@ -125,6 +210,12 @@ class ExperimentThread:
         self.abort_event.clear()
 
     def __thread_loop__(self):
+
+        '''
+        Description
+        -----------
+        Loops through the thread queue and processes jobs or events as they come in. Logs any information about events or jobs.
+        '''
 
         print("Starting worker")
 
@@ -161,20 +252,59 @@ class ExperimentThread:
 class experiment_handler:
 
     def __init__(self, experiment_thread):
+
+        '''
+        Description
+        -----------
+        Makes the experiment thread accessible to all the functions.
+
+        Paramaters
+        ----------
+        experiment_thread : instance of thread
+            instance of experiment thread that the following functions during the protocol can add jobs to
+        '''
+
         self.experiment_thread = experiment_thread
 
     def do_sweep(self,
-                sweep,
-                instrument_handler,
-                filename,
+                 sweep,
+                 instrument_handler,
+                 filename,
+                 filepath,
                 current_setpoints = {},
-                wait: bool = True,
-                timeout: float = 60000):
+                 wait: bool = True,
+                 timeout: float = 600000):
+
+        '''
+        Description
+        -----------
+        Conducts a sweep on intruments and saves it.
+
+        Parameters
+        ----------
+        sweep : SweepFunction
+            runs the sweep designed
+        instrument_handler : HandlerInstance
+            instance of the instrument handler contianing all instruments
+        filename : str
+            name of the file to save this sweep data to
+        current_setpoints : dict, optional
+            dictionary containing the voltages the gates need to be set to, default is an empty dictionary
+        wait : bool, optional
+            delay for the sweep to be added to job queue, defaults to True
+        timeout : float, optional
+            time period to delay the addition to queue for, defaults to 60000s
+
+        Returns
+        -------
+        self.experiment_thread.add_job() : add_job function
+            Adds the job to the queue to highest priority
+        '''
 
         logger.info("Sweep Start!")
 
         def sweep_fn(abort_event):
-            result = sweep.run(instrument_handler, abort_event, filename, current_setpoints)
+            result = sweep.run(instrument_handler, abort_event, filename, filepath, current_setpoints)
 
             return result
 
@@ -186,13 +316,54 @@ class experiment_handler:
                                              )
         
     def set_voltage_configuration(self,
-                sweep,
-                instrument_handler,
-                current_setpoints = {},
-                wait: bool = True,
-                timeout: float = 60000):
+                                  sweep,
+                                  instrument_handler,
+                                  current_setpoints = {},
+                                  wait: bool = True,
+                                  timeout: float = 600000):
+
+        '''
+        Description
+        -----------
+        Sets the voltage configuration of the gates.
+
+        Parameters
+        ----------
+        sweep : SweepFunction
+            creates the voltage config
+        instrument_handler : HandlerInstance
+            instance of the instrument handler contianing all instruments
+        current_setpoints : dict, optional
+            dictionary containing the voltages the gates need to be set to, default is an empty dictionary
+        wait : bool, optional
+            delay for the sweep to be added to job queue, defaults to True
+        timeout : float, optional
+            time period to delay the addition to queue for, defaults to 60000s
+
+        Returns
+        -------
+        self.experiment_thread.add_job() : add_job function
+            Adds the job to the queue with highest priority
+        '''
 
         def sweep_fn(abort_event):
+
+            '''
+            Description
+            -----------
+            Creates the voltage configuration for the sweep.
+
+            Parameters
+            ----------
+            abort_event : Event
+                event trigger that wil lterminate this job if set
+
+            Returns
+            -------
+            result : dict
+                Contains the voltage configuration
+            '''
+
             result = sweep.set_voltage_configuration(instrument_handler, abort_event, current_setpoints)
             return result
 

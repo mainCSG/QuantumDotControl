@@ -23,12 +23,27 @@ logger = TunerLog('Exp. Base')
 
 @dataclass
 class SweepParam:
+
+    '''
+    Description
+    -----------
+    A dataclass that defines a single parameter to sweep over.
+    '''
+
     parameter: str
     start: float
     end: float
 
 @dataclass
 class SweepLayer:
+
+    '''
+    Description
+    -----------
+    A dataclass that defines a single layer of a sweep. A layer is defined as a set of parameters to sweep over,
+    the number of points to sweep over, and the time to wait after setting the parameters before measuring.
+    '''
+
     targets: list[SweepParam]
     num_points: int
     measurement_time: float
@@ -40,6 +55,19 @@ class SweepLayer:
 class Sweep:
 
     def __init__(self, layers, measure):
+
+        '''
+        Description
+        -----------
+        A class that defines a sweep. A sweep is defined as a set of layers to sweep over, and a measurement function
+
+        Parameters
+        ----------
+        layers : list[SweepLayer]
+            A list of SweepLayer objects that define the layers of the sweep.
+        measure : callable
+            A function that takes in the instrument handler and the current setpoints, and returns the measurement
+        '''
         
         self.layers = layers
         self.measure = measure
@@ -51,12 +79,21 @@ class Sweep:
             for p in layer.targets
         ]
 
-        self.directory = os.path.join(os.getcwd(), f"Protocol_Run_{datetime.now().strftime('%m-%d-%Y')}", "Data")
-
         self._csv_file = None
         self._csv_writer = None
 
     def _open_csv(self, filename):
+
+        '''
+        Description
+        -----------
+        A method that opens a csv file to write the results of the sweep to. The csv file is created in the directory defined in the __init__ method.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the csv file to create. If the file already exists, it will be overwritten.
+        '''
 
         keys = [
             'agilent_left.volt',
@@ -68,7 +105,10 @@ class Sweep:
         self._header = ap + keys
 
         self.filename = filename
-        self.csv_path = os.path.join(self.directory, self.filename)
+
+        filepath = filepath
+
+        self.csv_path = os.path.join(os.getcwd(), filepath, self.filename)
 
         self._csv_file = open(self.csv_path, "w", newline="")
 
@@ -76,10 +116,33 @@ class Sweep:
         self._csv_writer.writerow(self._header)
 
     def _close_csv(self):
+
+        '''
+        Description
+        -----------
+        A method that closes the csv file.
+        '''
+
         if self._csv_file is not None:
             self._csv_file.close()
 
     def set_voltage_configuration(self, instr_handler, abort_event, current_setpoints = {}):
+
+        '''
+        Description
+        -----------
+        A method that sets the voltage configuration of the sweep without measuring.
+        This is useful for setting the voltages in between experiments, as well as for resetting the voltages after a sweep has been completed.
+
+        Parameters
+        ----------
+        instr_handler : instance of the instrument handler
+            The instrument_handler instance that instantiates when the gui is run.
+        abort_event : Event Object
+            The abort event that can be dynamically updated to abort any experiment job if needed.
+        current_setpoints : dict, optional
+            The current values set on the instrument. Defaults to empty.
+        '''
 
         try:
             self.set_voltage_layer(
@@ -95,24 +158,22 @@ class Sweep:
     def set_voltage_layer(self, idx, instr_handler, abort_event, current_setpoints):
 
         """
+        Description
+        -----------
         A method that sets a particular voltage configuration without measurement. The intended use of this method
         is to set voltage configurations in between experiments, as well as allow for smooth resetting of voltages
         once a layer has been completely swept. THIS METHOD DOES NOT RECURSE.
 
         Parameters
         ----------
-        name: idx
+        name : idx
             The layer index for the sweep. In set_voltage_configuration, this is always set to 0 initially.
-
-        instr_handler:  
-            The instrument_handler instance that instantiates when the gui is run. 
-        
-        abort_event:
+        instr_handler : instance of the instrument handler
+            The instrument_handler instance that instantiates when the gui is run.
+        abort_event : Event Object
             The abort event that can be dynamically updated to abort any experiment job if needed.
-
-        current_setpoints:
+        current_setpoints : dict, optional
             The current values set on the instrument. Defaults to empty.
-
         """
 
         if idx != 0:
@@ -163,11 +224,28 @@ class Sweep:
             new_setpoints = current_setpoints.copy()
             new_setpoints.update(step_values)
 
-    def run(self, instr_handler, abort_event, filename, current_setpoints = {}):        
+    def run(self, instr_handler, abort_event, filename, current_setpoints = {}):    
+
+        '''
+        Description
+        -----------
+        A method that runs the sweep and records the results to a csv file.
+
+        Parameters
+        ----------
+        instr_handler : instance of the instrument handler
+            The instrument_handler instance that instantiates when the gui is run.
+        abort_event : Event Object
+            The abort event that can be dynamically updated to abort any experiment job if needed.
+        filename : str
+            The name of the csv file to create. If the file already exists, it will be overwritten.
+        current_setpoints : dict, optional
+            The current values set on the instrument. Defaults to empty.
+        '''    
 
         try:
 
-            self._open_csv(filename = filename)
+            self._open_csv(filename = filename, filepath = filepath)
 
             self._run_layer(
                 0,
@@ -182,6 +260,29 @@ class Sweep:
             logger.info("Data Recorded!")
 
     def _run_layer(self, idx, instr_handler, abort_event, current_setpoints):
+
+        """
+        Description
+        -----------
+        A method that sets a particular voltage configuration without measurement. The intended use of this method
+        is to set voltage configurations in between experiments, as well as allow for smooth resetting of voltages
+        once a layer has been completely swept. THIS METHOD DOES NOT RECURSE.
+
+        Parameters
+        ----------
+        name : idx
+            The layer index for the sweep. In set_voltage_configuration, this is always set to 0 initially.
+        instr_handler : instance of the instrument handler
+            The instrument_handler instance that instantiates when the gui is run.
+        abort_event : Event Object
+            The abort event that can be dynamically updated to abort any experiment job if needed.
+        current_setpoints : dict, optional
+            The current values set on the instrument. Defaults to empty.
+
+        Return
+        ------
+        None
+        """ 
 
         if idx == len(self.layers):
             if abort_event.is_set():
@@ -303,8 +404,26 @@ class Sweep:
     def _build_reset_layers(self, idx, start_setpoints, end_setpoints, num_points=100):
         
         """
+        Description
+        -----------
         Build a temporary list of layers that sweep from end_setpoints back to start_setpoints
         using the same parameter structure as self.layers[idx:].
+
+        Parameters
+        ----------
+        idx : int
+            The index of the layer to reset.
+        start_setpoints : dict
+            The starting setpoints for the reset sweep.
+        end_setpoints : dict
+            The ending setpoints for the reset sweep.
+        num_points : int, optional
+            The number of points to sweep. Defaults to 100.
+
+        Returns
+        -------
+        reset_layer : list[SweepLayer]
+            A list of layers for the reset sweep.
         """
 
         reset_layer = []

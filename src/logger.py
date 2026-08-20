@@ -21,12 +21,6 @@ from qcodes.dataset.dond.do_nd_utils import ActionsT
 from qcodes.parameters import ParameterBase
 import numpy.typing as npt
 
-import skimage
-from skimage.transform import probabilistic_hough_line
-from skimage.feature import canny
-from skimage.filters import threshold_otsu
-from skimage.morphology import diamond, rectangle  # noqa
-
 import logging
 from colorlog import ColoredFormatter
 import sys
@@ -40,6 +34,8 @@ class Logger:
     def initialise_logger(self):
 
         """
+        Description
+        -----------
         This method creates new logging categories which the user can see while the autotuner runs, as well as outputs
         a log of everything that occured during the experiment. This method is when an InstrumentControl object is initialised.
         """

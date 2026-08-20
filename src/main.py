@@ -2,13 +2,92 @@
 File: main.py
 Authors: Benjamin Van Osch (bvanosch@uwaterloo.ca), Mason Daub (mjdaub@uwaterloo.ca)
 
-Entry point to the auto tuner. This
-
+Entry point to the auto tuner.
 '''
-from gui import tuner_gui
 
-if __name__ in {"__main__", "__mp_main__"}:
-    print("Creating")
-    gui = tuner_gui()
-    print("Starting")
-    gui.start()
+import datetime
+import os
+from paths import ROOT, PROTOCOLS
+
+os.chdir(ROOT)
+
+protocol_folder = None
+datafolder = None
+
+# Defines the protocol folder to put the log file and data in for that specific protocol run
+if protocol_folder is None:
+    protocol_folder = PROTOCOLS / f"Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}"
+os.makedirs(protocol_folder, exist_ok=True)
+
+# Defines the data folder to store all the data inside of in the protocol folder
+if datafolder is None:
+    datafolder = protocol_folder / "Data"
+    os.makedirs(datafolder, exist_ok=True)
+
+from nicegui import app, ui
+from gui import tuner_gui
+from tunerlog import TunerLog
+from gui_bridge import tuning_bridge
+
+gui = None
+logger = None
+
+@app.on_startup
+def start_tuner_gui():
+
+    '''
+    Description
+    -----------
+    This method is called when the program starts up. It will initialize the logger, and start the GUI.
+    '''
+
+    global gui, logger, datafolder
+
+    print("Starting Program")
+
+    logger = TunerLog("main")
+    logger.info("Starting GUI...")
+
+    gui = tuner_gui(tuning_bridge)
+
+    print("Gui Startup Complete! Welcome to the QAT!")
+
+@app.on_shutdown
+def stop_tuner_gui():
+
+    '''
+    Description
+    -----------
+    This method is called when the program is shutting down. It will stop the GUI, and shuts down the logger.
+    '''
+
+    global gui, logger, datafolder
+
+    if logger is not None:
+        logger.warning("Stopping the GUI...")
+
+    if gui is not None:
+        gui.on_shutdown()
+
+@ui.page('/')
+def tuner_gui_root_page():
+
+    '''
+    Description
+    -----------
+    This method is called when the user navigates to the root page of the GUI. It will display a message to the user that the GUI is still starting, and to refresh shortly.
+    '''
+
+    global gui, logger, datafolder
+
+    if gui is None:
+        ui.label("GUI is still starting... please refresh shortly")
+        return
+
+    if logger is not None:
+        logger.debug("Defining the server root page")
+
+    gui.root_page()
+
+# Runs the GUI
+ui.run(port = 8081)

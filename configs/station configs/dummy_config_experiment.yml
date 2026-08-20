@@ -1,0 +1,88 @@
+# the dummy_station.yaml file initializes an overly complicated station to test the gui
+instruments:
+  DummyInst:
+    type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument
+  DummyInst2:
+    type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument
+  DummyInst3:
+    type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument
+  DummyInst4:
+    type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument
+
+
+device:
+
+  characteristics:
+    name: 3D1S_w151_1
+    charge_carrier: e
+    operation_mode: acc
+
+  constraints:
+    abs_max_current_triple_dot: 20e-9
+    abs_max_current_SET: 10e-9
+    abs_max_gate_differential: 1.5
+    abs_max_gate_voltage: 1.5
+    abs_max_ohmic_bias: 1e-3
+    screening_initial_voltages: 0.2
+    initial_ohmic_bias: -2e-4
+
+  gates:
+    S0:
+      label: Left Dot Ohmic
+      type: Dot Ohmic
+      channel: spi_rack.module1.dac6.voltage
+    SG1:
+      label: Horizontal Screening Gate
+      type: Central Screening
+      channel: spi_rack.module1.dac10.voltage
+    CG0a:
+      label: Dot Screening Gate
+      type:  Dot Screening
+      channel: spi_rack.module1.dac11.voltage
+    AC0:
+      label: Left Dot Accumulation Gate
+      type:  Dot Accumulation
+      channel: spi_rack.module1.dac12.voltage
+    AC1:
+      label: Right Dot Accumulation Gate
+      type:  Dot Accumulation
+      channel: spi_rack.module1.dac13.voltage
+    B0:
+      label: Left Barrier Gate
+      type: Dot Barrier
+      channel: spi_rack.module2.dac13.voltage
+    B1:
+      label: Dot 1-2 Barrier Gate
+      type: Dot Barrier
+      channel: spi_rack.module2.dac14.voltage
+    B2:
+      label: Dot 2-3 Barrier Gate
+      type: Dot Barrier
+      channel: spi_rack.module2.dac11.voltage
+    B3:
+      label: Right Barrier Gate
+      type: Dot Barrier
+      channel: spi_rack.module2.dac12.voltage
+    P0:
+      label: Left Dot Plunger
+      type: Dot Plunger
+      channel: spi_rack.module1.dac14.voltage
+    P1:
+      label: Middle Dot Plunger
+      type: Dot Plunger
+      channel: spi_rack.module1.dac15.voltage
+    P2:
+      label: Right Dot Plunger
+      type: Dot Plunger
+      channel: spi_rack.module2.dac15.voltage
+setup:
+  triple_dot_preamp:
+    preamp_bias: 0.0
+    preamp_sensitivity: 1.0e-8
+  SET_preamp:
+    preamp_bias: 0.0
+    preamp_sensitivity: 1.0e-8
+  voltage_dividers:
+    voltage_divider_triple_dot: 1.0e-2
+    voltage_divider_SET: 1.0e-2
+

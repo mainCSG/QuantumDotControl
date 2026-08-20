@@ -1,0 +1,468 @@
+'''
+File: experiment_base.py
+Authors: Benjamin Van Osch (bvanosch@uwaterloo.ca), Mason Daub (mjdaub@uwaterloo.ca)
+
+Defines SweepLayer objects and the Sweep class to handle all the running of all sweeps used in the Autotuner. 
+
+'''
+
+# Imports
+
+from __future__ import annotations
+
+import csv
+import os
+from datetime import datetime
+
+import time
+import numpy as np
+from dataclasses import dataclass
+from tunerlog import TunerLog
+
+logger = TunerLog('Exp. Base')
+
+@dataclass
+class SweepParam:
+
+    '''
+    Description
+    -----------
+    A dataclass that defines a single parameter to sweep over.
+    '''
+
+    parameter: str
+    start: float
+    end: float
+
+@dataclass
+class SweepLayer:
+
+    '''
+    Description
+    -----------
+    A dataclass that defines a single layer of a sweep. A layer is defined as a set of parameters to sweep over,
+    the number of points to sweep over, and the time to wait after setting the parameters before measuring.
+    '''
+
+    targets: list[SweepParam]
+    num_points: int
+    measurement_time: float
+
+    def __post_init__(self):
+        if self.num_points <= 0:
+            raise ValueError("num_points must be > 0")
+
+class Sweep:
+
+    def __init__(self, layers, measure):
+
+        '''
+        Description
+        -----------
+        A class that defines a sweep. A sweep is defined as a set of layers to sweep over, and a measurement function
+
+        Parameters
+        ----------
+        layers : list[SweepLayer]
+            A list of SweepLayer objects that define the layers of the sweep.
+        measure : callable
+            A function that takes in the instrument handler and the current setpoints, and returns the measurement
+        '''
+        
+        self.layers = layers
+        self.measure = measure
+        self.results = []
+
+        self.all_params = [
+            p.parameter
+            for layer in self.layers
+            for p in layer.targets
+        ]
+
+        self._csv_file = None
+        self._csv_writer = None
+
+    def _open_csv(self, filename):
+
+        '''
+        Description
+        -----------
+        A method that opens a csv file to write the results of the sweep to. The csv file is created in the directory defined in the __init__ method.
+
+        Parameters
+        ----------
+        filename : str
+            The name of the csv file to create. If the file already exists, it will be overwritten.
+        '''
+
+        keys = [
+            'agilent_left.volt',
+            'agilent_right.volt'
+        ]
+
+        ap = list(self.all_params)
+        
+        self._header = ap + keys
+
+        self.filename = filename
+
+        filepath = filepath
+
+        self.csv_path = os.path.join(os.getcwd(), filepath, self.filename)
+
+        self._csv_file = open(self.csv_path, "w", newline="")
+
+        self._csv_writer = csv.writer(self._csv_file)
+        self._csv_writer.writerow(self._header)
+
+    def _close_csv(self):
+
+        '''
+        Description
+        -----------
+        A method that closes the csv file.
+        '''
+
+        if self._csv_file is not None:
+            self._csv_file.close()
+
+    def set_voltage_configuration(self, instr_handler, abort_event, current_setpoints = {}):
+
+        '''
+        Description
+        -----------
+        A method that sets the voltage configuration of the sweep without measuring.
+        This is useful for setting the voltages in between experiments, as well as for resetting the voltages after a sweep has been completed.
+
+        Parameters
+        ----------
+        instr_handler : instance of the instrument handler
+            The instrument_handler instance that instantiates when the gui is run.
+        abort_event : Event Object
+            The abort event that can be dynamically updated to abort any experiment job if needed.
+        current_setpoints : dict, optional
+            The current values set on the instrument. Defaults to empty.
+        '''
+
+        try:
+            self.set_voltage_layer(
+                0,
+                instr_handler,
+                abort_event,
+                current_setpoints=current_setpoints
+            )
+
+        finally:
+            print()
+
+    def set_voltage_layer(self, idx, instr_handler, abort_event, current_setpoints):
+
+        """
+        Description
+        -----------
+        A method that sets a particular voltage configuration without measurement. The intended use of this method
+        is to set voltage configurations in between experiments, as well as allow for smooth resetting of voltages
+        once a layer has been completely swept. THIS METHOD DOES NOT RECURSE.
+
+        Parameters
+        ----------
+        name : idx
+            The layer index for the sweep. In set_voltage_configuration, this is always set to 0 initially.
+        instr_handler : instance of the instrument handler
+            The instrument_handler instance that instantiates when the gui is run.
+        abort_event : Event Object
+            The abort event that can be dynamically updated to abort any experiment job if needed.
+        current_setpoints : dict, optional
+            The current values set on the instrument. Defaults to empty.
+        """
+
+        if idx != 0:
+            raise ValueError("Setting a voltage layer should only have one layer!")
+
+        if idx == len(self.layers):
+            if abort_event.is_set():
+                raise RuntimeError("Sweep aborted")
+            return
+
+        layer = self.layers[idx]
+
+        values_per_param = [
+            np.linspace(p.start, p.end, layer.num_points)
+            for p in layer.targets
+        ]
+
+        for i in range(layer.num_points):
+
+            if abort_event.is_set():
+                raise RuntimeError("Sweep aborted")
+
+            step_values = {}
+
+            for p, values in zip(layer.targets, values_per_param):
+                val = float(values[i])
+
+                instr, param = p.parameter.split('.', 1)
+
+                logger.info(f"[SWEEP] {p.parameter} -> {val}")
+
+                instr_handler.set_parameter(
+                    instr,
+                    {param: val},
+                    wait=True
+                )
+
+                step_values[p.parameter] = val
+
+                # Wait
+
+                t0 = time.monotonic()
+                while time.monotonic() - t0 < layer.measurement_time:
+                    if abort_event.is_set():
+                        raise RuntimeError("Sweep aborted")
+                    time.sleep(0.001)
+
+            new_setpoints = current_setpoints.copy()
+            new_setpoints.update(step_values)
+
+    def run(self, instr_handler, abort_event, filename, current_setpoints = {}):    
+
+        '''
+        Description
+        -----------
+        A method that runs the sweep and records the results to a csv file.
+
+        Parameters
+        ----------
+        instr_handler : instance of the instrument handler
+            The instrument_handler instance that instantiates when the gui is run.
+        abort_event : Event Object
+            The abort event that can be dynamically updated to abort any experiment job if needed.
+        filename : str
+            The name of the csv file to create. If the file already exists, it will be overwritten.
+        current_setpoints : dict, optional
+            The current values set on the instrument. Defaults to empty.
+        '''    
+
+        try:
+
+            self._open_csv(filename = filename, filepath = filepath)
+
+            self._run_layer(
+                0,
+                instr_handler,
+                abort_event,
+                current_setpoints=current_setpoints
+            )
+
+        finally:
+            self._close_csv()
+
+            logger.info("Data Recorded!")
+
+    def _run_layer(self, idx, instr_handler, abort_event, current_setpoints):
+
+        """
+        Description
+        -----------
+        A method that sets a particular voltage configuration without measurement. The intended use of this method
+        is to set voltage configurations in between experiments, as well as allow for smooth resetting of voltages
+        once a layer has been completely swept. THIS METHOD DOES NOT RECURSE.
+
+        Parameters
+        ----------
+        name : idx
+            The layer index for the sweep. In set_voltage_configuration, this is always set to 0 initially.
+        instr_handler : instance of the instrument handler
+            The instrument_handler instance that instantiates when the gui is run.
+        abort_event : Event Object
+            The abort event that can be dynamically updated to abort any experiment job if needed.
+        current_setpoints : dict, optional
+            The current values set on the instrument. Defaults to empty.
+
+        Return
+        ------
+        None
+        """ 
+
+        if idx == len(self.layers):
+            if abort_event.is_set():
+                raise RuntimeError("Sweep aborted")
+            
+            data, keys = self.measure(instr_handler, current_setpoints.copy())
+
+            self.results.append({
+                "setpoints": current_setpoints.copy(),
+                "data": data
+            })
+
+            row = [current_setpoints.get(p, None) for p in self.all_params]
+
+            if isinstance(data, dict):
+                for k in keys:
+                    val = data.get(k, None)
+                    row.append(float(val) if val is not None else "")
+            else:
+                try:
+                    row.append(float(data))
+                except (TypeError, ValueError):
+                    row.append("")
+            self._csv_writer.writerow(row)
+            self._csv_file.flush()
+
+            return
+
+        layer = self.layers[idx]
+
+        values_per_param = [
+            np.linspace(p.start, p.end, layer.num_points)
+            for p in layer.targets
+        ]
+
+        for i in range(layer.num_points):
+
+            if abort_event.is_set():
+                raise RuntimeError("Sweep aborted")
+
+            step_values = {}
+
+            for p, values in zip(layer.targets, values_per_param):
+                val = float(values[i])
+
+                instr, param = p.parameter.split('.', 1)
+
+                logger.info(f"[SWEEP] {p.parameter} -> {val}")
+
+                instr_handler.set_parameter(
+                    instr,
+                    {param: val},
+                    wait=True
+                )
+
+                step_values[p.parameter] = val
+
+                # Wait
+
+                t0 = time.perf_counter()
+
+                while time.perf_counter() - t0 < layer.measurement_time:
+                    if abort_event.is_set():
+                        raise RuntimeError("Sweep aborted")
+                    time.sleep(0.001)
+
+            new_setpoints = current_setpoints.copy()
+            new_setpoints.update(step_values)
+
+            # Recurse
+
+            self._run_layer(
+                idx + 1,
+                instr_handler,
+                abort_event,
+                new_setpoints
+            )
+
+            if idx < len(self.layers) - 1 and i < layer.num_points - 1:
+
+                reset_layer = self.layers[idx - 1]
+
+                logger.info(f"{reset_layer}")
+
+                reset_targets = reset_layer.targets[0]
+
+                reset_start = reset_targets.end
+
+                reset_end = reset_targets.start
+
+                logger.info(f"start: {reset_start}, end: {reset_end}")
+
+                reset_layer = self._build_reset_layers(
+                    idx,
+                    reset_start,
+                    reset_end,
+                    num_points=50
+                )
+
+                # Save original layers
+                original_layers = self.layers
+
+                try:
+                    # Swap in reset layers
+                    self.layers = reset_layer
+
+                    # Call your existing function
+                    self.set_voltage_layer(
+                        0,
+                        instr_handler,
+                        abort_event,
+                        new_setpoints
+                    )
+
+                finally:
+                    # Restore original layers
+                    self.layers = original_layers
+
+    def _build_reset_layers(self, idx, start_setpoints, end_setpoints, num_points=100):
+        
+        """
+        Description
+        -----------
+        Build a temporary list of layers that sweep from end_setpoints back to start_setpoints
+        using the same parameter structure as self.layers[idx:].
+
+        Parameters
+        ----------
+        idx : int
+            The index of the layer to reset.
+        start_setpoints : dict
+            The starting setpoints for the reset sweep.
+        end_setpoints : dict
+            The ending setpoints for the reset sweep.
+        num_points : int, optional
+            The number of points to sweep. Defaults to 100.
+
+        Returns
+        -------
+        reset_layer : list[SweepLayer]
+            A list of layers for the reset sweep.
+        """
+
+        reset_layer = []
+
+        new_targets = []
+
+        for layer in self.layers[idx + 1:]:
+
+            for p in layer.targets:
+                param = p.parameter
+
+                v_start = start_setpoints
+                v_end = end_setpoints
+
+                if v_start is None or v_end is None:
+                    continue
+
+                # Create a shallow copy-like object with reversed sweep
+                new_p = type(p)(
+                    parameter=p.parameter,
+                    start=v_start,
+                    end=v_end
+                )
+
+                new_targets.append(new_p)
+
+        # Recreate layer
+        
+        new_layer = type(layer)(
+            targets=new_targets,
+            num_points=num_points,
+            measurement_time=layer.measurement_time
+        )
+
+        reset_layer.append(new_layer)
+
+        logger.info(
+            f"RESET: {new_p.parameter} "
+            f"{new_p.start} -> {new_p.end}"
+        )
+
+        return reset_layer

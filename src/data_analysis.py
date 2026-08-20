@@ -54,6 +54,11 @@ from tunerlog import TunerLog
 from gui_bridge import tuning_bridge
 
 logger = TunerLog('Data Analysis')
+
+#TODO: delete this
+def test_run():
+    logger.info('we were able to run a function from this thing')
+    return
   
 def logarithmic(x, a, b, x0, y0):
     """
@@ -394,7 +399,6 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
     """
 
     # --- Data definitions ---
-    
     # Ensures numpy array 
     x1 = np.array(x_data)
     y1 = np.array(y_data)
@@ -2751,7 +2755,7 @@ def extract_lever_arms(x_data: np.array,
                        current_data: np.array,
                        filepath: str,
                        filename: str,
-                       gate_names: tuple(str),
+                       gate_names: tuple,
                        stage: str,
                        transform_trim: list[int] = [0, -1]
                        ):

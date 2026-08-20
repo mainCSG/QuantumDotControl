@@ -30,7 +30,7 @@ from qcodes.dataset import AbstractSweep, Measurement
 from qcodes.dataset.dond.do_nd_utils import ActionsT
 from qcodes.parameters import ParameterBase
 
-from paths import DEVICE_CONFIG
+from paths import CONFIG_FOLDER, DATA
 
 # Local Imports
 from data_analysis import (
@@ -73,13 +73,13 @@ class Protocol:
 
         logger.info("Loading Device Config file...")
 
-        # device_config = os.path.join(DEVICE_CONFIG, device_config)
+        # device_config = os.path.join(CONFIG_FOLDER, device_config)
 
-        self._load_config_file(DEVICE_CONFIG / device_config)
-
-        self.directory = os.path.join(f"Protocol_Run_{datetime.now().strftime('%m-%d-%Y')}", "Data")
+        self._load_config_file(CONFIG_FOLDER / device_config)
 
         # Now, we create a dictionary to house a map between gate names and dacs
+
+        logger.info("Defining Gate to DAC Connections...")
 
         self.gates_to_dacs = {}
 
@@ -249,7 +249,6 @@ class Bootstrapping(Protocol):
             Toggles developer mode. dev mode is meant to check that voltage values are being set properly,
             i.e. analysis functions are disabled and any subsequent voltage values are hardcoded instead
         '''
-
         # First, we reset the noise floor
 
         self.noise_floor = None
@@ -282,7 +281,6 @@ class Bootstrapping(Protocol):
         logger.info(f"{self.means}")
 
         # Now, we attempt to turn on the device
-
         turn_on_voltages = self.turn_on(ohmic_bias = self.initial_ohmic_bias,
                                         screening_voltage = self.screening_initial_voltages,
                                         gate_voltage = self.abs_max_gate_voltage,
@@ -496,14 +494,16 @@ class Bootstrapping(Protocol):
 
         for gate, dac_and_val in dacs_and_vals.items():
             for dac, starting_val in dac_and_val.items():
+                if starting_val == 0.0:
+                    continue
+                else:
+                    param = SweepParam(
+                        parameter = "spi_rack." + dac,
+                        start = starting_val,
+                        end = 0.0
+                    )
 
-                param = SweepParam(
-                    parameter = "spi_rack." + dac,
-                    start = starting_val,
-                    end = 0.0
-                )
-
-                targets.append(param)
+                    targets.append(param)
 
         sweep_layer = SweepLayer(
             targets = targets,
@@ -690,7 +690,7 @@ class Bootstrapping(Protocol):
         logger.info("Setting Ohmic Bias...")
 
         future = self.experiment_handler.set_voltage_configuration(sweep = sweep,
-                                                                  instrument_handler = self.instrument_handler)
+                                                                   instrument_handler = self.instrument_handler)
 
         logger.info("Ohmic Bias Set!")
 
@@ -784,9 +784,9 @@ class Bootstrapping(Protocol):
         filename = "Turn_On_" + time + ".csv"
 
         future = self.experiment_handler.do_sweep(sweep = sweep,
-                                                 instrument_handler = self.instrument_handler,
-                                                 filename = filename,
-                                                 filepath = self.directory)
+                                                  instrument_handler = self.instrument_handler,
+                                                  filename = filename
+                                                 )
 
         logger.info("Device Turn-On Sweep Complete! Confirming Turn-On...")
 
@@ -830,9 +830,7 @@ class Bootstrapping(Protocol):
 
             # Here, we get the data from the CSV
 
-            filepath = os.path.join(self.directory, filename)
-
-            logger.info(f"{filepath}")
+            filepath = os.path.join(DATA, filename)
 
             df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -869,7 +867,7 @@ class Bootstrapping(Protocol):
                     turnon_voltage = extract_turn_on_voltage(x_data = turn_on_sweep,
                                                              y_data = current_data[i],
                                                              noisefloor = current_means[i],
-                                                             filepath = self.directory,
+                                                             filepath = DATA,
                                                              filename = turn_on_filenames[i]
                                                             )
 
@@ -1043,7 +1041,7 @@ class Bootstrapping(Protocol):
         logger.info("Setting Saturation Voltages...")
 
         future = self.experiment_handler.set_voltage_configuration(sweep = sweep,
-                                                                  instrument_handler = self.instrument_handler)
+                                                                   instrument_handler = self.instrument_handler)
 
         logger.info("Saturation Voltages Set!")
 
@@ -1132,8 +1130,8 @@ class Bootstrapping(Protocol):
         )
 
         sweep_layer = SweepLayer(targets = [sparam], 
-                                    num_points = num_points, 
-                                    measurement_time = 0.2
+                                 num_points = num_points, 
+                                 measurement_time = 0.2
         )
         
         measure = lambda ih, sp: (
@@ -1155,8 +1153,8 @@ class Bootstrapping(Protocol):
 
         self.experiment_handler.do_sweep(sweep = sweep,
                                             instrument_handler = self.instrument_handler,
-                                            filename = filename,
-                                            filepath = self.directory)
+                                            filename = filename
+                                        )
         
         logger.info(f"{gate_name} Pinch-Off Complete! Confirming Pinch-Off...")
 
@@ -1215,7 +1213,7 @@ class Bootstrapping(Protocol):
 
             logger.info(f"{gate_name} Pinch-Off confirmed! Finding Pinch-Off Window...")
 
-            filepath = os.path.join(self.directory, filename)
+            filepath = os.path.join(DATA, filename)
             df = pd.read_csv(filepath, delimiter=",", header=None, skiprows=1)
 
             pinch_off_sweep = df.iloc[:, 0]
@@ -1226,14 +1224,14 @@ class Bootstrapping(Protocol):
             logger.info(f"Gate Type: {gate_type_no_side}")
 
             if not dev_mode:
-
                 pinch_off_window = extract_pinch_off_curve_ranges(x_data = pinch_off_sweep,
-                                                                y_data = data[noise_floor_idx],
-                                                                noisefloor = self.means[noise_floor_idx],
-                                                                gate_type = gate_type_no_side,
-                                                                filepath = self.directory,
-                                                                filename = filename2
-                                                                )
+                                                                  y_data = data[noise_floor_idx],
+                                                                  noisefloor = self.means[noise_floor_idx],
+                                                                  gate_type = gate_type_no_side,
+                                                                  gate_name = gate_name,
+                                                                  filepath = DATA,
+                                                                  filename = filename2
+                                                                 )
 
             else:
 
@@ -1596,14 +1594,14 @@ class Bootstrapping(Protocol):
 
             future = self.experiment_handler.do_sweep(sweep = sweep,
                                                       instrument_handler = self.instrument_handler,
-                                                      filename = filename,
-                                                      filepath = self.directory)
+                                                      filename = filename
+                                                     )
 
             # Here, we find the set points for the dot barrier-barrier scans
 
             logger.info("Dot Barrier Scan Complete! Finding Set Points...")
 
-            filepath = os.path.join(self.directory, filename)
+            filepath = os.path.join(DATA, filename)
 
             df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -1622,7 +1620,7 @@ class Bootstrapping(Protocol):
                                                                             gates = gates,
                                                                             DotTuning = "Triple Dot",
                                                                             barrier_pinch_offs = [lower_voltages[i], lower_voltages[i + 1]],                          
-                                                                            filepath = self.directory,
+                                                                            filepath = DATA,
                                                                             filename = filename
                                                                         )
 
@@ -1763,14 +1761,14 @@ class Bootstrapping(Protocol):
 
             future = self.experiment_handler.do_sweep(sweep = sweep,
                                                       instrument_handler = self.instrument_handler,
-                                                      filename = filename,
-                                                      filepath = self.directory)
+                                                      filename = filename
+                                                     )
 
             # Here, we determine the working points for the charge sensor
 
             logger.info("Sensor Barrier-Barrier Scan Complete! Finding Working Points...")
 
-            filepath = os.path.join(self.directory, filename)
+            filepath = os.path.join(DATA, filename)
 
             df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -1789,7 +1787,7 @@ class Bootstrapping(Protocol):
                                                                                 gates = gates,
                                                                                 DotTuning = "SET",
                                                                                 barrier_pinch_offs = [lower_voltages[-i -2], lower_voltages[-i - 1]],                          
-                                                                                filepath = self.directory,
+                                                                                filepath = DATA,
                                                                                 filename = filename
                                                                             )
 
@@ -1998,13 +1996,12 @@ class Bootstrapping(Protocol):
 
                 future = self.experiment_handler.do_sweep(sweep = sweep,
                                                           instrument_handler = self.instrument_handler,
-                                                          filename = filename,
-                                                          filepath = self.directory
+                                                          filename = filename
                                                          )
         
                 logger.info("Charge Sensor Plunger Sweep Complete! Finding Sensing Point...")
 
-                filepath = os.path.join(self.directory, filename)
+                filepath = os.path.join(DATA, filename)
 
                 df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -2018,7 +2015,7 @@ class Bootstrapping(Protocol):
 
                     conductance_points = extract_max_conductance_pair(x_data = plunger_data, 
                                                                       y_data = current_data, 
-                                                                      filepath = self.directory, 
+                                                                      filepath = DATA, 
                                                                       filename = filename
                                                                      )
 
@@ -2277,10 +2274,11 @@ class Bootstrapping(Protocol):
                 f"{sensor_plunger_targets[i].start} -> {sensor_plunger_targets[i].end}"
             )
 
+            filename = f"{sensor_plunger_names[0]}_{sensor_ohmic_names[0]}_Diamonds.csv"
+
             future = self.experiment_handler.do_sweep(sweep = sweep,
                                                       instrument_handler = self.instrument_handler,
-                                                      filename = filename,
-                                                      filepath = self.directory
+                                                      filename = filename
                                                      )
             
             logger.info("Coulomb Diamond Sweep Complete! Finding Diamonds...")
@@ -2637,13 +2635,12 @@ class GlobalChargeTuning(Bootstrapping):
 
                 future = self.experiment_handler.do_sweep(sweep = sweep,
                                                           instrument_handler = self.instrument_handler,
-                                                          filename = filename,
-                                                          filepath = self.directory
+                                                          filename = filename
                                                          )
         
                 logger.info("Charge Sensor Plunger Sweep Complete! Finding Sensing Point...")
 
-                filepath = os.path.join(self.directory, filename)
+                filepath = os.path.join(DATA, filename)
 
                 df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -2655,7 +2652,7 @@ class GlobalChargeTuning(Bootstrapping):
 
                 conductance_points = extract_max_conductance_pair(x_data = plunger_data, 
                                                                   y_data = current_data, 
-                                                                  filepath = self.directory, 
+                                                                  filepath = DATA, 
                                                                   filename = filename
                                                                  )
 
@@ -2958,13 +2955,12 @@ class GlobalChargeTuning(Bootstrapping):
 
                 future = self.experiment_handler.do_sweep(sweep = sweep,
                                                           instrument_handler = self.instrument_handler,
-                                                          filename = filename,
-                                                          filepath = self.directory
+                                                          filename = filename
                                                          )
         
                 logger.info("Scan Complete! Finding cross-talk coefficient...")
 
-                filepath = os.path.join(self.directory, filename)
+                filepath = os.path.join(DATA, filename)
 
                 df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -2978,7 +2974,7 @@ class GlobalChargeTuning(Bootstrapping):
                 slope, intercept = extract_lever_arms(x_data = sensor_data,
                                         y_data = dot_data,
                                         current_data = current_data,
-                                        filepath = self.directory,
+                                        filepath = DATA,
                                         filename = filename
                                        )
                 
@@ -3250,13 +3246,12 @@ class GlobalChargeTuning(Bootstrapping):
 
                 future = self.experiment_handler.do_sweep(sweep = sweep,
                                                           instrument_handler = self.instrument_handler,
-                                                          filename = filename,
-                                                          filepath = self.directory
+                                                          filename = filename
                                                          )
 
                 logger.info(f"{gate_name} Sweep Complete! Confirming Transition Detection...")
 
-                filepath = os.path.join(self.directory, filename)
+                filepath = os.path.join(DATA, filename)
 
                 df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -3268,7 +3263,7 @@ class GlobalChargeTuning(Bootstrapping):
 
                 best_sensing_point = extract_charge_transitions(x_data = plunger_data, 
                                                                 y_data = current_data, 
-                                                                filepath = self.directory, 
+                                                                filepath = DATA, 
                                                                 filename = filename
                                                                )
 
@@ -3559,14 +3554,13 @@ class GlobalChargeTuning(Bootstrapping):
             filename = f"{plunger_names[i]}_{barrier_names[i]}_Scan_{time_str}.csv"
 
             future = self.experiment_handler.do_sweep(sweep = sweep,
-                                                        instrument_handler = self.instrument_handler,
-                                                        filename = filename,
-                                                        filepath = self.directory
-                                                        )
+                                                      instrument_handler = self.instrument_handler,
+                                                      filename = filename
+                                                     )
             
             logger.info(f"{plunger_names[i]} vs. {barrier_names[i]} scan complete! Finding appropriate barrier voltage...")
 
-            filepath = os.path.join(self.directory, filename)
+            filepath = os.path.join(DATA, filename)
 
             df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -3579,7 +3573,7 @@ class GlobalChargeTuning(Bootstrapping):
             best_sens_pts_list, all_sens_pts_list, barrier_voltage_set_point = extract_tunnel_barrier_latching(dp_data = plunger_data,
                                                                                                                tb_data = barrier_data,
                                                                                                                current_data = current_data,
-                                                                                                               filepath = filepath,
+                                                                                                               filepath = DATA,
                                                                                                                filename = filename
                                                                                                               )
             
@@ -3974,14 +3968,14 @@ class GlobalChargeTuning(Bootstrapping):
 
             future = self.experiment_handler.do_sweep(sweep = sweep,
                                                       instrument_handler = self.instrument_handler,
-                                                      filename = filename,
-                                                      filepath = self.directory)
+                                                      filename = filename
+                                                     )
 
             # Here, we find the set points for the dot barrier-barrier scans
 
             logger.info("Dot Plunger Scan Complete! Plotting CSD...")
 
-            filepath = os.path.join(self.directory, filename)
+            filepath = os.path.join(DATA, filename)
 
             df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -4303,15 +4297,14 @@ class VirtualGating(GlobalChargeTuning):
 
             future = self.experiment_handler.do_sweep(sweep = crosstalk_sweep,
                                                       instrument_handler = self.instrument_handler,
-                                                      filename = filename,
-                                                      filepath = self.directory
+                                                      filename = filename
                                                      )
 
             # Now, we extract the slope from the scan
 
             logger.info("Scan Complete! Finding cross-talk coefficient...")
 
-            filepath = os.path.join(self.directory, filename)
+            filepath = os.path.join(DATA, filename)
 
             df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -4325,7 +4318,7 @@ class VirtualGating(GlobalChargeTuning):
             slope, intercept = extract_lever_arms(x_data = sensor_data,
                                     y_data = dot_data,
                                     current_data = current_data,
-                                    filepath = self.directory,
+                                    filepath = DATA,
                                     filename = filename
                                     )
             
@@ -4560,16 +4553,15 @@ class VirtualGating(GlobalChargeTuning):
                     filename = f"{sensor_name[0]}_{gate_names[i]}_Scan_{time_str}.csv"
 
                     future = self.experiment_handler.do_sweep(sweep = crosstalk_sweep,
-                                                            instrument_handler = self.instrument_handler,
-                                                            filename = filename,
-                                                            filepath = self.directory
-                                                            )
+                                                              instrument_handler = self.instrument_handler,
+                                                              filename = filename
+                                                             )
 
                     # Now, we extract the slope from the scan
 
                     logger.info("Scan Complete! Finding cross-talk coefficient...")
 
-                    filepath = os.path.join(self.directory, filename)
+                    filepath = os.path.join(DATA, filename)
 
                     df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
@@ -4580,12 +4572,12 @@ class VirtualGating(GlobalChargeTuning):
 
                     filename = filename.removesuffix('.csv') + ".png"
 
-                    slope, intercept = hough_transform(x_data = sensor_data,
-                                            y_data = dot_data,
-                                            current_data = current_data,
-                                            filepath = self.directory,
-                                            filename = filename
-                                            )
+                    slope, intercept = extract_lever_arms(x_data = sensor_data,
+                                                          y_data = dot_data,
+                                                          current_data = current_data,
+                                                          filepath = DATA,
+                                                          filename = filename
+                                                         )
 
                     crosstalk_vals.append(slope)
 

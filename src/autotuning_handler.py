@@ -318,7 +318,7 @@ class autotuning_handler:
         The sweep job for the bootstrapping stage.
         '''
 
-        def sweep_fn(abort_event):
+        def autotuning_fn(abort_event):
 
             '''
             Description
@@ -387,7 +387,7 @@ class autotuning_handler:
         The sweep job for the global charge tuning stage.
         '''
 
-        def sweep_fn(abort_event):
+        def autotuning_fn(abort_event):
 
             '''
             Description
@@ -420,7 +420,7 @@ class autotuning_handler:
             return result
 
         return self.autotuning_thread.add_job(
-                                              sweep_fn,
+                                              autotuning_fn,
                                               args=(),
                                               wait=wait,
                                               timeout=timeout
@@ -457,7 +457,7 @@ class autotuning_handler:
         The sweep job for the virtual gating stage.
         '''
 
-        def sweep_fn(abort_event):
+        def autotuning_fn(abort_event):
 
             '''
             Description
@@ -491,7 +491,7 @@ class autotuning_handler:
             return result
 
         return self.autotuning_thread.add_job(
-                                              sweep_fn,
+                                              autotuning_fn,
                                               args=(),
                                               wait=wait,
                                               timeout=timeout
@@ -528,7 +528,7 @@ class autotuning_handler:
         The sweep job for the charge state tuning stage.
         '''
 
-        def sweep_fn(abort_event):
+        def autotuning_fn(abort_event):
 
             '''
             Description
@@ -550,7 +550,7 @@ class autotuning_handler:
             return result
 
         return self.autotuning_thread.add_job(
-                                              sweep_fn,
+                                              autotuning_fn,
                                               args=(),
                                               wait=wait,
                                               timeout=timeout
@@ -587,7 +587,7 @@ class autotuning_handler:
         The sweep job for the qubit tuning stage.
         '''
 
-        def sweep_fn(abort_event):
+        def autotuning_fn(abort_event):
 
             '''
             Description
@@ -609,7 +609,7 @@ class autotuning_handler:
             return result
 
         return self.autotuning_thread.add_job(
-                                              sweep_fn,
+                                              autotuning_fn,
                                               args=(),
                                               wait=wait,
                                               timeout=timeout

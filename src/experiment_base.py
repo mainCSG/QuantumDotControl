@@ -18,6 +18,7 @@ import time
 import numpy as np
 from dataclasses import dataclass
 from tunerlog import TunerLog
+from paths import DATA
 
 logger = TunerLog('Exp. Base')
 
@@ -106,9 +107,7 @@ class Sweep:
 
         self.filename = filename
 
-        filepath = filepath
-
-        self.csv_path = os.path.join(os.getcwd(), filepath, self.filename)
+        self.csv_path = os.path.join(DATA, self.filename)
 
         self._csv_file = open(self.csv_path, "w", newline="")
 
@@ -245,7 +244,7 @@ class Sweep:
 
         try:
 
-            self._open_csv(filename = filename, filepath = filepath)
+            self._open_csv(filename = filename)
 
             self._run_layer(
                 0,

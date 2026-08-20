@@ -33,7 +33,7 @@ from tunerlog import TunerLog
 import yaml
 from pathlib import Path
 
-from paths import CONFIG_FOLDER, STATION_CONFIG
+from paths import CONFIG_FOLDER
 from instrument_registry import INITIALIZERS, MONITORS, init_agilent, init_spi_rack
 
 logger = TunerLog('GUI')
@@ -85,7 +85,7 @@ class tuner_gui:
 
         # Store the shared event bridge reference
         self.bridge = bridge
-        
+        self.device_config = None
         # Dictionary to store references to scroll areas for each stage tab
         self.tab_containers = {}
 
@@ -136,7 +136,8 @@ class tuner_gui:
                     ui.item('Instrument Information', on_click=lambda : self.on_load_instrument_info())
                     ui.item('Device Information', on_click=lambda : ui.notify("Loading Device Information..."))
 
-                stages = ['Debug', 'Setup','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
+                # stages = ['Debug', 'Setup','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
+                stages = ['Debug','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
 
                 with ui.tabs() as tabs:
                     
@@ -808,9 +809,7 @@ class tuner_gui:
         self.debug_status.set_text("Running Bootstrapping...")
         self.logger.info("Bootstrapping Jobs queued")
 
-        device_config = os.path.join("configs", "Intel_Config.yaml")
-
-        future = self.autotuning_handler.run_bootstrapping(device_config = device_config,
+        future = self.autotuning_handler.run_bootstrapping(device_config = self.device_config,
                                                            instrument_handler = self.instrument_handler,
                                                            experiment_handler = self.experiment_handler,
                                                            wait = False
@@ -827,9 +826,7 @@ class tuner_gui:
         self.debug_status.set_text("Running Global Charge Tuning...")
         self.logger.info("Global Charge Tuning Jobs queued")
 
-        device_config = os.path.join("configs", "Intel_Config.yaml")
-
-        future = self.autotuning_handler.run_global_charge_tuning(device_config = device_config,
+        future = self.autotuning_handler.run_global_charge_tuning(device_config = self.device_config,
                                                                   instrument_handler = self.instrument_handler,
                                                                   experiment_handler = self.experiment_handler,
                                                                   wait = False
@@ -846,9 +843,7 @@ class tuner_gui:
         self.debug_status.set_text("Running Virtual Gating...")
         self.logger.info("Virtual Gating Jobs queued")
 
-        device_config = os.path.join("configs", "Intel_Config.yaml")
-
-        future = self.autotuning_handler.run_virtual_gating(device_config = device_config,
+        future = self.autotuning_handler.run_virtual_gating(device_config = self.device_config,
                                                                   instrument_handler = self.instrument_handler,
                                                                   experiment_handler = self.experiment_handler,
                                                                   wait = False
@@ -856,9 +851,8 @@ class tuner_gui:
 
     def run_snapshot(self):
 
-        device_config = os.path.join("configs", "Intel_Config.yaml")
 
-        future = self.autotuning_handler.run_snapshot(device_config = device_config,
+        future = self.autotuning_handler.run_snapshot(device_config = self.device_config,
                                                       instrument_handler = self.instrument_handler,
                                                       experiment_handler = self.experiment_handler,
                                                       wait = False
@@ -924,13 +918,14 @@ class tuner_gui:
 
         fig = self.liveplot.figure
         self.ax = fig.subplots(1,1)
-        self.ax.set_xlabel("Time (s)")
-        self.ax.set_ylabel('Signal (V)')
         xs = np.linspace(-1, 1)
         self.lines = self.ax.plot(xs, np.sin(xs))
         self.ax.set_xlabel('time (s)', fontsize = 16)
         self.ax.set_ylabel('Signal (V)', fontsize = 16)
         self.ax.tick_params(labelsize = 12)
+        # Force scientific notation on both x and y axes
+        self.ax.ticklabel_format(axis='y', style='sci', scilimits=(0,0))
+
         fig.tight_layout()
         self.liveplot.update()
 
@@ -964,6 +959,9 @@ class tuner_gui:
                 self.lines = self.ax.get_lines()
 
             all_times = []
+            y_min = []
+            y_max = []
+            eps = 1e-4
             for j in range(num_keys):
                 key = keys[j]
                 values = retval[key]
@@ -978,12 +976,15 @@ class tuner_gui:
                 else:
                     self.lines[j].set_ydata(data)
                     self.lines[j].set_xdata(np.array([0.0]))
+                y_min.append(np.min(data))
+                y_max.append(np.max(data))
 
             if all_times:
                 newest_time = max(all_times)
                 window_seconds = 10.0
                 self.ax.set_xlim(-window_seconds, 0.5)
-                self.ax.set_ylim(-0.1, 1.4)
+                # self.ax.set_ylim(-0.1, 1.4)
+                self.ax.set_ylim(np.min(y_min)-eps, np.max(y_max)+eps)
 
             self.ax.legend(self.lines, keys, )
             self.liveplot.update()
@@ -1116,10 +1117,10 @@ class tuner_gui:
         Source: 
         """
         ui.notify("Loading Config Files...")
-        self.device_config = await local_file_picker(directory = STATION_CONFIG, upper_limit = STATION_CONFIG)
-        self.station.load_config_files(*self.device_config)
+        self.device_config = await local_file_picker(directory = CONFIG_FOLDER, upper_limit = CONFIG_FOLDER)
+        self.station.load_config_files(self.device_config)
         # logger.info('printing loaded config')
-        
+        logger.info(f"{self.device_config}")
         configured = set(self.station.config['instruments'])
         connected = set(self.instrument_handler.instrument_threads.keys())
 
@@ -1174,7 +1175,7 @@ class local_file_picker(ui.dialog):
                 'rowData': [
                     {'file': f.name} for f in Path(self.directory).iterdir()
                     ],
-                'rowSelection': {'mode': 'multiRow'}
+                'rowSelection': {'mode': 'singleRow'}
             })
             with ui.row():
                 self.cancel_button = ui.button("Cancel", on_click=self.close)
@@ -1186,7 +1187,8 @@ class local_file_picker(ui.dialog):
 
     async def _select(self):
         selected_rows = await self.grid.get_selected_rows()
-        self.submit([str(STATION_CONFIG / row['file']) for row in selected_rows])
+        self.submit(str(CONFIG_FOLDER / selected_rows[0]['file']))
+        # self.submit([str(CONFIG_FOLDER / row['file']) for row in selected_rows])
 
 class InstrumentManager(ui.dialog):
     def __init__(self, instrument_handler):

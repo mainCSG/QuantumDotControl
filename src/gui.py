@@ -30,9 +30,13 @@ from tunerlog import TunerLog
 from experiment_base import SweepParam, SweepLayer, Sweep
 from autotuning_protocol import Protocol
 from tunerlog import TunerLog
+import yaml
+from pathlib import Path
+
+from paths import CONFIG_FOLDER, STATION_CONFIG
+from instrument_registry import INITIALIZERS, MONITORS, init_agilent, init_spi_rack
 
 logger = TunerLog('GUI')
-
 
 class RandomDummy(DummyInstrument):
 
@@ -88,34 +92,24 @@ class tuner_gui:
         self.logger = TunerLog("TunerGUI")
         self.start_time = time.monotonic()
 
-        os.chdir("..")
+        ## try to instantiate Station() from most recent settings, if fail then instantiate empty station
+        try: 
+            with open(CONFIG_FOLDER / 'config_gui.yaml') as f:
+                settings = yaml.safe_load(f)
 
-        self.station_path = os.path.join("configs", "dummy_station.yaml")
+            last_config = settings['last_station_config']
+            self.station = Station(config_file=str(CONFIG_FOLDER / last_config))
+            print(f'Loading {CONFIG_FOLDER/ last_config} succesful')
 
-        self.station = Station(config_file = self.station_path)
+        except Exception as e:
+            print(f"Could not load previous Station: {e}")
+            self.station = Station()
+
         self.station_lock = threading.Lock()
 
         self.instrument_handler = create_buffer_instance(self.station, self.station_lock) 
-
         self.experiment_handler = get_experiment_handler()
         self.autotuning_handler = get_autotuning_handler()
-
-        def init_agilent(instrument: Instrument, *args):
-            instrument.NPLC(1.0)
-            instrument.range_auto('on')
-
-        def init_spi_rack(instrument: Instrument, *args):
-            
-            instrument.add_spi_module(8, 'D5a', 'module1')
-            instrument.add_spi_module(7, 'D5a', 'module2')
-            return
-
-        self.instrument_handler.add_instrument("agilent_left", init_agilent)
-        self.instrument_handler.add_instrument("agilent_right", init_agilent)
-        self.instrument_handler.add_instrument("spi_rack", init_spi_rack, self.logger)
-
-        self.instrument_handler.monitor_parameter('agilent_left', ['volt'])
-        self.instrument_handler.monitor_parameter('agilent_right', ['volt'])
 
         self.abort_signal = threading.Event()
 
@@ -138,8 +132,8 @@ class tuner_gui:
             with splitter1.before:
 
                 with ui.dropdown_button('', icon = 'menu', auto_close=True):
-                    ui.item('Load Config Files', on_click=lambda : ui.notify("Fetching Configuration Files..."))
-                    ui.item('Instrument Information', on_click=lambda : ui.notify("Loading Instrument Information..."))
+                    ui.item('Load Config Files', on_click=lambda : self.on_load_config())
+                    ui.item('Instrument Information', on_click=lambda : self.on_load_instrument_info())
                     ui.item('Device Information', on_click=lambda : ui.notify("Loading Device Information..."))
 
                 stages = ['Debug', 'Setup','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
@@ -151,14 +145,14 @@ class tuner_gui:
 
                 with ui.tab_panels(tabs, value='Home').classes('w-full'):
             
-                    with ui.tab_panel('Setup'):
+                    # with ui.tab_panel('Setup'):
 
-                        device_config = os.path.join("configs", "Intel_Config.yaml")
+                    #     self.device_config = "Intel_Config.yaml"
 
-                        self.autotune = ui.button(
-                                            'Autotune',
-                                            on_click = Protocol(device_config = device_config)
-                                                 )
+                    #     self.autotune = ui.button(
+                    #                         'Autotune',
+                    #                         on_click = Protocol(device_config = self.device_config)
+                    #                              )
 
                     with ui.tab_panel('Bootstrapping'):
 
@@ -950,7 +944,9 @@ class tuner_gui:
         colors = ['tab:blue', 'tab:red', 'tab:orange', 'tab:purple', 'tab:green']
         linestyles = ['-', '--', '-.', ':']
 
+        #TODO: uncomment the below line when the instrument handler is implemented
         retval = self.instrument_handler.get_buffer()
+        # retval = None
         if retval is None:
             return
         else:
@@ -1112,3 +1108,106 @@ class tuner_gui:
         self.autotuning_handler.autotuning_thread.join()
         self.experiment_handler.experiment_thread.join()
         self.instrument_handler.shutdown_instruments()
+
+    async def on_load_config(self) -> None:
+        """
+        This method is used to load the config files for the device and update the Station object.
+        It uses the local_file_picker script, obtained from the examples from the nicegui library on github. 
+        Source: 
+        """
+        ui.notify("Loading Config Files...")
+        self.device_config = await local_file_picker(directory = STATION_CONFIG, upper_limit = STATION_CONFIG)
+        self.station.load_config_files(*self.device_config)
+        # logger.info('printing loaded config')
+        
+        configured = set(self.station.config['instruments'])
+        connected = set(self.instrument_handler.instrument_threads.keys())
+
+        # remove elements that were connected but should not be
+        for name in connected - configured:
+            self.instrument_handler.remove_instrument(name)
+
+        # add components
+        for name in configured - connected:
+            self.instrument_handler.add_instrument(name, INITIALIZERS.get(name))
+
+            if name in MONITORS:
+                self.instrument_handler.monitor_parameter(name, MONITORS.get(name))
+
+    def on_save_config(self):
+        """
+        This method is used to save the config files for the device.
+        """
+        pass
+
+    def on_load_instrument_info(self):
+        """
+        This method is used to load and display the device information. 
+        """
+        ui.notify("Loading Instrument Information...")
+        instrument_manager = InstrumentManager
+
+    # The below classes
+
+class local_file_picker(ui.dialog):
+
+    def __init__(self, directory: str, *,
+                 upper_limit: str | None = ...,) -> None:
+        """Local File Picker
+
+        This is a simple file picker that allows you to select a file from the local filesystem where NiceGUI is running.
+
+        :param directory: The directory to start in.
+        :param upper_limit: The directory to stop at (None: no limit, default: same as the starting directory).
+        :param multiple: Whether to allow multiple files to be selected.
+        :param show_hidden_files: Whether to show hidden files.
+        """
+        super().__init__()
+
+        self.directory = directory
+        with self, ui.card().classes('q-pa-md q-ma-sm bg-primary text-white'):
+            ui.label(f"Select a file from {self.directory}")
+            self.grid = ui.aggrid({
+                'columnDefs': [
+                    {'headerName': 'File', 'field': 'file'}
+                ],
+                'rowData': [
+                    {'file': f.name} for f in Path(self.directory).iterdir()
+                    ],
+                'rowSelection': {'mode': 'multiRow'}
+            })
+            with ui.row():
+                self.cancel_button = ui.button("Cancel", on_click=self.close)
+                self.select_button = ui.button("Select", on_click=self._select)
+        self.update_grid()
+
+    def update_grid(self):
+        self.grid.update()
+
+    async def _select(self):
+        selected_rows = await self.grid.get_selected_rows()
+        self.submit([str(STATION_CONFIG / row['file']) for row in selected_rows])
+
+class InstrumentManager(ui.dialog):
+    def __init__(self, instrument_handler):
+        super().__init__()
+        self.instrument_handler = instrument_handler
+        configured = set(self.instrument_handler.config['instruments'])
+        connected = set(self.instrument_handler.instrument_threads.keys())
+        with self, ui.card().classes('q-pa-md q-ma-sm bg-primary text-white'):
+            ui.label('Instrument Manager')
+            self.grid = ui.aggrid({
+                'columnsDef': [
+                    {'headerName': 'Instrument', 'field': 'name'},
+                    {'headerName': 'Status', 'field': 'status'},
+                    {'headerName': 'Action', 'field': 'action'}
+                ],
+                'rowData':[{'name': name, 'status': 'connected', 'action': 'None'} for name in configured - connected]
+                })
+            
+            ui.button('Close', on_click=self.close)
+        self.update_grid()
+        self.open()
+
+    def update_grid(self):
+        self.grid.update()

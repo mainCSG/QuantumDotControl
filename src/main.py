@@ -7,27 +7,22 @@ Entry point to the auto tuner.
 
 import datetime
 import os
+from paths import ROOT, PROTOCOLS
+
+os.chdir(ROOT)
 
 protocol_folder = None
 datafolder = None
 
 # Defines the protocol folder to put the log file and data in for that specific protocol run
 if protocol_folder is None:
-        
-    current_dir = os.getcwd()
-    os.chdir("..")
-    protocol_folder = f"Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}"
-    os.makedirs(protocol_folder, exist_ok=True)
-    os.chdir(current_dir)
+    protocol_folder = PROTOCOLS / f"Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}"
+os.makedirs(protocol_folder, exist_ok=True)
 
 # Defines the data folder to store all the data inside of in the protocol folder
 if datafolder is None:
-    current_dir = os.getcwd()
-    os.chdir("..")
-    datafolder = f"Protocol_Run_{datetime.datetime.now().strftime('%m-%d-%Y')}"
-    datafolder = os.path.join(datafolder, "Data")
+    datafolder = protocol_folder / "Data"
     os.makedirs(datafolder, exist_ok=True)
-    os.chdir(current_dir)
 
 from nicegui import app, ui
 from gui import tuner_gui

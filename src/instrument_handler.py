@@ -50,7 +50,6 @@ def create_buffer_instance(station : Station, station_lock : threading.Lock):
     global _Instance, logger
     if _Instance is None:
         _Instance = instrument_handler(station, station_lock)
-
     return _Instance
 
 def make_list(strings : str | List[str] | Literal['all']) -> List[str]:
@@ -460,7 +459,7 @@ class instrument_thread:
         logger.instrument_snapshot(self.instrument)
         # Start the readout loop
         self._update_status("Running")
-        
+        logger.info('status updated')
         loop_times = deque(maxlen = 500) # A deque for tracking the average loop time
         tprev = self.timefunc()
         while not self.shutdown_signal.is_set() and not self.global_shutdown.is_set():
@@ -663,7 +662,6 @@ class instrument_thread:
         job.future.set_result(None)
         return True               
             
-
 class instrument_handler:
     
     def __init__(self, station : Station, station_lock : threading.Lock):
@@ -672,7 +670,7 @@ class instrument_handler:
         Description
         -----------
         A class to handle the asynchronous buffered readout of the SET current for
-        autotuning devices. Instruments can be added from the staton by calling the 
+        autotuning devices. Instruments can be added from the station by calling the 
         method add_readout_instrument, where you specify the instrument, the parameters
         you want to monitor, and an initialization callback (if desired)
 
@@ -701,10 +699,12 @@ class instrument_handler:
         self.station = station
         self.station_lock = station_lock
 
+        # self.initialize_instruments(self.station)
+
         self.global_shutdown = threading.Event() # A global shutdown signal for all child threads.
 
         self.monitored_parameters : List[str] = []
-        
+
     def read_buffer(self, var_name : str | List[str], t_avg : float = 0.0, t_stop : float = -1) -> Dict[str, float]:
         
         '''
@@ -885,10 +885,10 @@ class instrument_handler:
         if instr_thread is None:
             self.heartbeats[name] = time.monotonic() # Create the first heartbeat
 
-            self.instrument_threads[name] = instrument_thread(f"{name}Thread", name,\
-                                                        self.station,\
-                                                        self.station_lock,\
-                                                        self.global_shutdown,\
+            self.instrument_threads[name] = instrument_thread(f"{name}Thread", name,
+                                                        self.station,
+                                                        self.station_lock,
+                                                        self.global_shutdown,
                                                         init_func, *init_args)
 
             self.instrument_threads[name].start()
@@ -1168,7 +1168,7 @@ class instrument_handler:
             return inst_thread.get_status()
         else:
             return "DNE"
-        
+
     def watchdog(self) -> bool:
 
         '''

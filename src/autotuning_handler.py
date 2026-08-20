@@ -20,7 +20,7 @@ from typing import Tuple, Dict, Any, Literal, Protocol, Optional, Deque
 from qcodes.instrument import Instrument
 from tunerlog import TunerLog
 
-from autotuning_protocol import Bootstrapping, GlobalChargeTuning, VirtualGating, ChargeStateTuning, QubitTuning
+from autotuning_protocol import Protocol, Bootstrapping, GlobalChargeTuning, VirtualGating, ChargeStateTuning, QubitTuning
 
 _AutotuningThreadInstance = None
 _AutotuningHandlerInstance = None
@@ -263,6 +263,30 @@ class autotuning_handler:
 
         self.autotuning_thread = autotuning_thread
 
+    def run_snapshot(self,
+                     device_config,
+                     instrument_handler,
+                     experiment_handler,
+                     wait: bool = True,
+                     timeout: float = 60000):
+
+        def snapshot_fn(abort_event):
+        
+            result = Protocol(device_config = device_config,
+                              instr_handler = instrument_handler,
+                              exp_handler = experiment_handler
+                             )
+
+            result.parameter_snapshot(name = "Device")
+
+            return result
+        
+        return self.autotuning_thread.add_job(snapshot_fn,
+                                              args=(),
+                                              wait=wait,
+                                              timeout=timeout
+                                             )
+
     def run_bootstrapping(self,
                           device_config,
                           instrument_handler,
@@ -320,13 +344,13 @@ class autotuning_handler:
             result.autotune(instr_handler = instrument_handler,
                             exp_handler = experiment_handler,
                             num_points_bootstrapping = [150, 150, 200, 200, 200],
-                            dev_mode = True
+                            dev_mode = False
                            )
 
             return result
 
         return self.autotuning_thread.add_job(
-                                              sweep_fn,
+                                              autotuning_fn,
                                               args=(),
                                               wait=wait,
                                               timeout=timeout
@@ -390,7 +414,7 @@ class autotuning_handler:
                             exp_handler = experiment_handler,
                             num_points_bootstrapping = [150, 150, 200, 200, 200],
                             num_points_global_charge_tuning = [150, 400, 400],
-                            dev_mode = True
+                            dev_mode = False
                            )
 
             return result

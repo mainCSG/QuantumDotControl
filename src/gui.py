@@ -224,6 +224,11 @@ class tuner_gui:
                             on_click = self.run_virtual_gating
                         )
 
+                        ui.button(
+                            'Take Snapshot',
+                            on_click = self.run_snapshot
+                        )
+
                         # ui.button(
                         #     'Run Plot Test',
                         #     on_click = run_test_plot
@@ -854,6 +859,16 @@ class tuner_gui:
                                                                   experiment_handler = self.experiment_handler,
                                                                   wait = False
                                                                  )
+
+    def run_snapshot(self):
+
+        device_config = os.path.join("configs", "Intel_Config.yaml")
+
+        future = self.autotuning_handler.run_snapshot(device_config = device_config,
+                                                      instrument_handler = self.instrument_handler,
+                                                      experiment_handler = self.experiment_handler,
+                                                      wait = False
+                                                     )
 
     def header(self):
         

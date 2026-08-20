@@ -79,8 +79,6 @@ class Sweep:
             for p in layer.targets
         ]
 
-        self.directory = os.path.join(os.getcwd(), f"Protocol_Run_{datetime.now().strftime('%m-%d-%Y')}", "Data")
-
         self._csv_file = None
         self._csv_writer = None
 
@@ -107,7 +105,10 @@ class Sweep:
         self._header = ap + keys
 
         self.filename = filename
-        self.csv_path = os.path.join(self.directory, self.filename)
+
+        filepath = filepath
+
+        self.csv_path = os.path.join(os.getcwd(), filepath, self.filename)
 
         self._csv_file = open(self.csv_path, "w", newline="")
 
@@ -244,7 +245,7 @@ class Sweep:
 
         try:
 
-            self._open_csv(filename = filename)
+            self._open_csv(filename = filename, filepath = filepath)
 
             self._run_layer(
                 0,

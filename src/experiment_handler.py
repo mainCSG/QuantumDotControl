@@ -270,10 +270,10 @@ class experiment_handler:
                  sweep,
                  instrument_handler,
                  filename,
-                 current_setpoints = {},
+                 filepath,
+                current_setpoints = {},
                  wait: bool = True,
-                 timeout: float = 60000
-                 ):
+                 timeout: float = 600000):
 
         '''
         Description
@@ -304,7 +304,7 @@ class experiment_handler:
         logger.info("Sweep Start!")
 
         def sweep_fn(abort_event):
-            result = sweep.run(instrument_handler, abort_event, filename, current_setpoints)
+            result = sweep.run(instrument_handler, abort_event, filename, filepath, current_setpoints)
 
             return result
 
@@ -320,8 +320,7 @@ class experiment_handler:
                                   instrument_handler,
                                   current_setpoints = {},
                                   wait: bool = True,
-                                  timeout: float = 60000
-                                  ):
+                                  timeout: float = 600000):
 
         '''
         Description

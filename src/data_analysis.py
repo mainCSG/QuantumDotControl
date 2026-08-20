@@ -293,6 +293,9 @@ def extract_turn_on_voltage(x_data: np.array,
 
     # Save raw data
     filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+
+    logger.info(f"{filepath_raw_data}")
+
     fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
 
     # Turn-on point
@@ -322,6 +325,9 @@ def extract_turn_on_voltage(x_data: np.array,
 
     # Save final data
     filepath_analyzed = os.path.join(filepath, "analyzed_" + filename)
+
+    logger.info(f"{filepath_analyzed}")
+
     fig.savefig(filepath_analyzed, dpi = 'figure', bbox_inches='tight')
 
     metrics = {'Turn-On Voltage (V)': turnon_voltage}
@@ -480,7 +486,7 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
     factor = np.log((3 + np.sqrt(5)) / 2)
     fit_midpoint_voltage = np.log(B2) / C2
     fit_pinch_off_voltage = fit_midpoint_voltage - (factor / C2)
-    fit_saturation_voltage = fit_midpoint_voltage + (factor / C2)
+    fit_saturation_voltage = 0.8 * A2
 
     sat_voltage = None
     sat_current = None
@@ -517,6 +523,9 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
 
     # Save raw data
     filepath_raw_data = os.path.join(filepath, "raw_data_" + filename)
+
+    logger.info(f"{filepath_raw_data}")
+    
     fig.savefig(filepath_raw_data, dpi = 'figure', bbox_inches='tight')
 
     # Plot pinch-off and saturation points, and gompaertz sigmoid fit

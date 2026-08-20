@@ -335,6 +335,8 @@ class Bootstrapping(Protocol):
 
         # Here, we also perform a coulomb diamond scan of each charge sensor
 
+        logger.info("Bootstrapping Complete!")
+
         """ self.coulomb_diamonds(lower_sd_voltages = [-0.0002], 
                               upper_sd_voltages = [0.0002], 
                               lower_plunger_voltages = self.plunger_starting_voltages,
@@ -781,7 +783,8 @@ class Bootstrapping(Protocol):
 
         future = self.experiment_handler.do_sweep(sweep = sweep,
                                                  instrument_handler = self.instrument_handler,
-                                                 filename = filename)
+                                                 filename = filename,
+                                                 filepath = self.directory)
 
         logger.info("Device Turn-On Sweep Complete! Confirming Turn-On...")
 
@@ -827,6 +830,8 @@ class Bootstrapping(Protocol):
 
             filepath = os.path.join(self.directory, filename)
 
+            logger.info(f"{filepath}")
+
             df = pd.read_csv(filepath, delimiter = ",", header = None, skiprows = 1)
 
             # Now, we get the data for DMMs and for the set voltages, and convert the data from voltage to current, then to nA. We also convert the mean
@@ -857,12 +862,14 @@ class Bootstrapping(Protocol):
 
                 if not dev_mode:
 
+                    logger.info("Dev Mode False Confirmed!")
+
                     turnon_voltage = extract_turn_on_voltage(x_data = turn_on_sweep,
-                                                            y_data = current_data[i],
-                                                            noisefloor = current_means[i],
-                                                            filepath = self.directory,
-                                                            filename = turn_on_filenames[i],
-                                                            plot_results = True)
+                                                             y_data = current_data[i],
+                                                             noisefloor = current_means[i],
+                                                             filepath = self.directory,
+                                                             filename = turn_on_filenames[i]
+                                                            )
 
                     turn_on_voltages.append(turnon_voltage)
 
@@ -965,7 +972,7 @@ class Bootstrapping(Protocol):
 
         # Now, we set the voltages on these gates to the the saturation voltages
 
-        accumulation_saturation_voltages = [1.25, 1.25, 1.25, 1.25]
+        accumulation_saturation_voltages = [1.25, 1.25, 1.25, 1.25] # This is here only because the flanking gate is tied to an accumulation gate
 
         for i, voltage in enumerate(accumulation_saturation_voltages):
 
@@ -1146,7 +1153,8 @@ class Bootstrapping(Protocol):
 
         self.experiment_handler.do_sweep(sweep = sweep,
                                             instrument_handler = self.instrument_handler,
-                                            filename = filename)
+                                            filename = filename,
+                                            filepath = self.directory)
         
         logger.info(f"{gate_name} Pinch-Off Complete! Confirming Pinch-Off...")
 
@@ -1586,7 +1594,8 @@ class Bootstrapping(Protocol):
 
             future = self.experiment_handler.do_sweep(sweep = sweep,
                                                       instrument_handler = self.instrument_handler,
-                                                      filename = filename)
+                                                      filename = filename,
+                                                      filepath = self.directory)
 
             # Here, we find the set points for the dot barrier-barrier scans
 
@@ -1711,7 +1720,7 @@ class Bootstrapping(Protocol):
 
         if not dev_mode:
 
-            self.SET_current_check(minimum_current = 2, maximum_current = 4)
+            self.SET_current_check(minimum_current = 3, maximum_current = 5)
 
         for i, (first, second) in enumerate(zip(gate_targets_sensors, 
                                                 gate_targets_sensors[1:]
@@ -1752,7 +1761,8 @@ class Bootstrapping(Protocol):
 
             future = self.experiment_handler.do_sweep(sweep = sweep,
                                                       instrument_handler = self.instrument_handler,
-                                                      filename = filename)
+                                                      filename = filename,
+                                                      filepath = self.directory)
 
             # Here, we determine the working points for the charge sensor
 
@@ -1986,7 +1996,8 @@ class Bootstrapping(Protocol):
 
                 future = self.experiment_handler.do_sweep(sweep = sweep,
                                                           instrument_handler = self.instrument_handler,
-                                                          filename = filename
+                                                          filename = filename,
+                                                          filepath = self.directory
                                                          )
         
                 logger.info("Charge Sensor Plunger Sweep Complete! Finding Sensing Point...")
@@ -2266,7 +2277,8 @@ class Bootstrapping(Protocol):
 
             future = self.experiment_handler.do_sweep(sweep = sweep,
                                                       instrument_handler = self.instrument_handler,
-                                                      filename = filename
+                                                      filename = filename,
+                                                      filepath = self.directory
                                                      )
             
             logger.info("Coulomb Diamond Sweep Complete! Finding Diamonds...")
@@ -2317,15 +2329,35 @@ class GlobalChargeTuning(Bootstrapping):
             i.e. analysis functions are disabled and any subsequent voltage values are hardcoded instead
         '''
 
+        '''
+        Description
+        -----------
+        Autotunes device fro mbeginning up to the end of this stage.
+
+        Parameters
+        ----------
+        instr_handler : InstrumentHandler
+            An instance of the InstrumentHandler class.
+        exp_handler : ExperimentHandler
+            An instance of the ExperimentHandler class.
+        num_points_bootstrapping : list[int]
+            number of points for the sweeps in each step in the bootstrapping stage
+        num_points_global_charge_tuning : list[int]
+            number of points for the sweeps in each step in the global charge tuning stage
+        dev_mode : bool, optional
+            Toggles developer mode. dev mode is meant to check that voltage values are being set properly,
+            i.e. analysis functions are disabled and any subsequent voltage values are hardcoded instead
+        '''
+
         super().autotune(instr_handler = instr_handler, 
                          exp_handler = exp_handler, 
                          num_points_bootstrapping = num_points_bootstrapping,
                          dev_mode = dev_mode
                         )
 
-        logger.info("after boot!")
+        logger.info("Global Charge Tuning Started!")
 
-        self.sensor_plunger_starting_voltages = self.sensing_points[0]
+        """ self.sensor_plunger_starting_voltages = self.sensing_points[0]
 
         self.sensor_plunger_ending_voltages = self.sensing_points[1]
 
@@ -2333,11 +2365,27 @@ class GlobalChargeTuning(Bootstrapping):
 
         self.dot_plunger_upper_crosstalk_voltages = [self.dot_plunger_lower_voltages[i] + 0.12 for i in self.dot_plunger_lower_voltages]
 
-        self.dot_plunger_idle_voltages = self.dot_plunger_lower_voltages
+        self.dot_plunger_idle_voltages = [self.dot_plunger_lower_voltages[i] + 0.2 for i in self.dot_plunger_lower_voltages]
 
-        self.dot_plunger_upper_voltages = [self.abs_max_gate_voltage for i in self.dot_plunger_lower_voltages]
+        self.dot_plunger_upper_voltages = [self.abs_max_gate_voltage for i in self.dot_plunger_lower_voltages] """
+
+        self.sensor_plunger_starting_voltages = [1.1]
+
+        self.sensor_plunger_ending_voltages = [1.5]
+
+        self.dot_plunger_lower_crosstalk_voltages = [1.1778523489932886, 1.2583892617449663, 1.238255033557047]
+
+        self.dot_plunger_upper_crosstalk_voltages = [1.1778523489932886 + 0.02, 1.2583892617449663 + 0.02, 1.238255033557047 + 0.02]
+
+        self.dot_plunger_lower_voltages = [1.1778523489932886 - 0.1, 1.2583892617449663 - 0.1, 1.238255033557047 - 0.1]
+
+        self.dot_plunger_idle_voltages = [1.1778523489932886, 1.2583892617449663, 1.238255033557047]
+
+        self.dot_plunger_upper_voltages = [1.5, 1.5, 1.5]
 
         logger.info("In GCT!")
+
+        # self.SET_current_check(minimum_current = 2, maximum_current = 3)
 
         self.plunger_crosstalk_vals = self.calibrate_countersweeping(lower_dot_plunger_voltages = self.dot_plunger_lower_crosstalk_voltages, 
                                                                      upper_dot_plunger_voltages = self.dot_plunger_upper_crosstalk_voltages,
@@ -2346,6 +2394,8 @@ class GlobalChargeTuning(Bootstrapping):
                                                                     )
         
         logger.info(f"{self.plunger_crosstalk_vals}")
+
+        logger.info("Countersweeping Calibration Complete!")
 
         self.first_transitions = self.confirm_charge_transitions(lower_plunger_voltages = self.dot_plunger_lower_voltages, 
                                                                  upper_plunger_voltages = self.dot_plunger_upper_voltages, 
@@ -2356,14 +2406,14 @@ class GlobalChargeTuning(Bootstrapping):
 
         logger.info(f"{self.first_transitions}")
 
-        """ self.dot_plunger_lower_voltages = [1.2587939698492463 - 0.12, 1.2814070351758793 - 0.12, 1.2587939698492463 - 0.12]
-
-        self.plunger_crosstalk_vals = [np.float64(-3.0840343159529215 - 0.5), np.float64(-3.948856914488276 - 0.5), np.float64(-5.174829249744017 - 0.5)] """
+        logger.info("Charge Transitions Confirmed!")
 
         self.tune_lead_dot_tunneling(lower_barrier_voltages = [self.dot_barrier_set_points[0] - 0.01, self.dot_barrier_set_points[2] - 0.01],
                                      upper_barrier_voltages = [self.dot_barrier_set_points[0] + 0.01, self.dot_barrier_set_points[2] + 0.01],
                                      lower_plunger_voltages = [self.dot_plunger_lower_voltages[0], self.dot_plunger_lower_voltages[2]],
                                      upper_plunger_voltages = [self.dot_plunger_upper_voltages[0], self.dot_plunger_upper_voltages[2]])
+
+        logger.info("Lead-Dot Tunneling Complete!")
 
         self.plunger_plunger_sweep(lower_plunger_voltages = self.dot_plunger_lower_voltages, 
                                    idle_plunger_voltages = self.dot_plunger_idle_voltages, 
@@ -2467,6 +2517,8 @@ class GlobalChargeTuning(Bootstrapping):
         '''     
 
         # First, we set our charge sensor plunger gates to their initial values
+
+        logger.info("Sensor Calibration Started!")
 
         charge_sensor_dacs_and_vals = {}
 
@@ -2583,7 +2635,8 @@ class GlobalChargeTuning(Bootstrapping):
 
                 future = self.experiment_handler.do_sweep(sweep = sweep,
                                                           instrument_handler = self.instrument_handler,
-                                                          filename = filename
+                                                          filename = filename,
+                                                          filepath = self.directory
                                                          )
         
                 logger.info("Charge Sensor Plunger Sweep Complete! Finding Sensing Point...")
@@ -2633,7 +2686,7 @@ class GlobalChargeTuning(Bootstrapping):
 
         # First, we get the current plunger gate voltages
 
-        logger.info("in countersweeping!")
+        logger.info("Countersweeping Calibration Started!")
 
         dot_plunger_dacs_and_vals = {}
 
@@ -2899,11 +2952,12 @@ class GlobalChargeTuning(Bootstrapping):
                 time_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                 filename = f"{sensor_name}_{dot_name}_Scan_{time_str}.csv"
 
-                logger.info(f"Determining coupling between {sensor_name} and {dot_name}...")
+                logger.info(f"Determining crosstalk lever arm between {sensor_name} and {dot_name}...")
 
                 future = self.experiment_handler.do_sweep(sweep = sweep,
                                                           instrument_handler = self.instrument_handler,
-                                                          filename = filename
+                                                          filename = filename,
+                                                          filepath = self.directory
                                                          )
         
                 logger.info("Scan Complete! Finding cross-talk coefficient...")
@@ -2980,6 +3034,8 @@ class GlobalChargeTuning(Bootstrapping):
 
         # First, we get the current dot plunger gate voltages
 
+        logger.info("Confirming Charge Transitions Started!")
+
         dot_plunger_dacs_and_vals = {}
 
         for i in self.gates_to_dacs:
@@ -3044,8 +3100,8 @@ class GlobalChargeTuning(Bootstrapping):
 
         # Now, we recalibrate our charge sensor
 
-        sensing_points = self.recalibrate_charge_sensors(lower_voltages = self.plunger_starting_voltages,
-                                                         upper_voltages = self.plunger_ending_voltages,
+        sensing_points = self.recalibrate_charge_sensors(lower_voltages = self.sensor_plunger_starting_voltages,
+                                                         upper_voltages = self.sensor_plunger_ending_voltages,
                                                          num_points = 200
                                                         )
         
@@ -3192,7 +3248,8 @@ class GlobalChargeTuning(Bootstrapping):
 
                 future = self.experiment_handler.do_sweep(sweep = sweep,
                                                           instrument_handler = self.instrument_handler,
-                                                          filename = filename
+                                                          filename = filename,
+                                                          filepath = self.directory
                                                          )
 
                 logger.info(f"{gate_name} Sweep Complete! Confirming Transition Detection...")
@@ -3284,6 +3341,8 @@ class GlobalChargeTuning(Bootstrapping):
         '''
         
         # First, get the lead-barrier voltages, and the dot plunger voltages
+
+        logger.info("Lead-Dot Tunnel Coupling Calibration Started!")
 
         outer_plunger_dacs_and_vals = {}
 
@@ -3499,7 +3558,8 @@ class GlobalChargeTuning(Bootstrapping):
 
             future = self.experiment_handler.do_sweep(sweep = sweep,
                                                         instrument_handler = self.instrument_handler,
-                                                        filename = filename
+                                                        filename = filename,
+                                                        filepath = self.directory
                                                         )
             
             logger.info(f"{plunger_names[i]} vs. {barrier_names[i]} scan complete! Finding appropriate barrier voltage...")
@@ -3590,6 +3650,8 @@ class GlobalChargeTuning(Bootstrapping):
         '''
         
         # First, we get the current dot plunger gate voltages
+
+        logger.info("Plunger-Plunger Sweep Starting!")
 
         dot_plunger_dacs_and_vals = {}
 
@@ -3910,7 +3972,8 @@ class GlobalChargeTuning(Bootstrapping):
 
             future = self.experiment_handler.do_sweep(sweep = sweep,
                                                       instrument_handler = self.instrument_handler,
-                                                      filename = filename)
+                                                      filename = filename,
+                                                      filepath = self.directory)
 
             # Here, we find the set points for the dot barrier-barrier scans
 
@@ -4238,7 +4301,8 @@ class VirtualGating(GlobalChargeTuning):
 
             future = self.experiment_handler.do_sweep(sweep = crosstalk_sweep,
                                                       instrument_handler = self.instrument_handler,
-                                                      filename = filename
+                                                      filename = filename,
+                                                      filepath = self.directory
                                                      )
 
             # Now, we extract the slope from the scan
@@ -4495,7 +4559,8 @@ class VirtualGating(GlobalChargeTuning):
 
                     future = self.experiment_handler.do_sweep(sweep = crosstalk_sweep,
                                                             instrument_handler = self.instrument_handler,
-                                                            filename = filename
+                                                            filename = filename,
+                                                            filepath = self.directory
                                                             )
 
                     # Now, we extract the slope from the scan

@@ -1,5 +1,11 @@
 # the dummy_station.yaml file initializes an overly complicated station to test the gui
 instruments:
+  agilent_left:
+    type: dummy_instruments.DummyAgilent
+  agilent_right:
+    type: dummy_instruments.DummyAgilent
+  spi_rack:
+    type: dummy_instruments.DummySpiRack
   DummyInst:
     type: gui.RandomDummy #qcodes.instrument_drivers.mock_instruments.DummyInstrument
   DummyInst2:

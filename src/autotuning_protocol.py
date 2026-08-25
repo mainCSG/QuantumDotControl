@@ -87,6 +87,11 @@ class Protocol:
 
             self.gates_to_dacs[i] = self.device_gates[i]['channel']
 
+        rack = getattr(self.instrument_handler, 'station', None)
+        rack = rack.components.get('spi_rack') if rack is not None else None
+        if rack is not None and hasattr(rack, 'configure_from_gates'):
+            rack.configure_from_gates(self.device_gates)
+
     def _load_config_file(self, device_config):
         
         '''
@@ -263,6 +268,7 @@ class Bootstrapping(Protocol):
 
         logger.info(f"The noise floor is: {self.noise_floor}")
 
+        #TODO: edit agilent_left.volt to make it dynamic and correspond to device config
         names = self.instrument_handler.read_buffer(
                 ['agilent_left.volt', 'agilent_right.volt'],
             ).keys()
@@ -511,6 +517,7 @@ class Bootstrapping(Protocol):
             measurement_time = 0.1
         )
 
+        #TODO: edit agilent_left.volt to make it dynamica and correspond to device config
         measure = lambda ih, sp: (
                 ih.read_buffer([
                     'agilent_left.volt',
@@ -552,7 +559,7 @@ class Bootstrapping(Protocol):
         # We collect the readout buffer for 1 minute and average the values to measure the noise floor.
 
         logger.info("Starting noise floor measurement...")
-
+        #TODO: edit agilent_left.volt to make it dynamica and correspond to device config
         stats = {
             'agilent_left.volt': {
                 'n': 0,
@@ -569,7 +576,7 @@ class Bootstrapping(Protocol):
         }
 
         for i in range(measurement_time):
-
+        #TODO: edit agilent_left.volt to make it dynamica and correspond to device config
             vals = self.instrument_handler.read_buffer(
                 ['agilent_left.volt', 'agilent_right.volt'],
             )
@@ -674,7 +681,7 @@ class Bootstrapping(Protocol):
             num_points = num_points,
             measurement_time = 0.05
         )
-
+        #TODO: edit agilent_left.volt to make it dynamica and correspond to device config
         measure = lambda ih, sp: (
                 ih.read_buffer([
                     'agilent_left.volt',
@@ -719,7 +726,7 @@ class Bootstrapping(Protocol):
             num_points = num_points,
             measurement_time = 0.05
         )
-        
+        #TODO: edit agilent_left.volt to make it dynamica and correspond to device config
         measure = lambda ih, sp: (
                 ih.read_buffer([
                     'agilent_left.volt',
@@ -764,7 +771,7 @@ class Bootstrapping(Protocol):
             num_points = num_points,
             measurement_time = 0.2
         )
-
+        #TODO: edit agilent_left.volt to make it dynamica and correspond to device config
         measure = lambda ih, sp: (
                 ih.read_buffer([
                     'agilent_left.volt',
@@ -793,7 +800,7 @@ class Bootstrapping(Protocol):
         # Now, to confirm that the device has turned on, we measure the current level and compare to the noise floor
 
         turn_on_measurement = self.measure_noise_floor()
-
+        #TODO: edit agilent_left.volt to make it dynamica and correspond to device config
         names = self.instrument_handler.read_buffer(
                 ['agilent_left.volt', 'agilent_right.volt'],
             ).keys()
@@ -1027,7 +1034,7 @@ class Bootstrapping(Protocol):
             num_points = num_points,
             measurement_time = 0.05
         )
-
+        #TODO: edit agilent_left.volt to make it dynamica and correspond to device config
         measure = lambda ih, sp: (
                 ih.read_buffer([
                     'agilent_left.volt',
@@ -2312,7 +2319,7 @@ class GlobalChargeTuning(Bootstrapping):
         '''
         Description
         -----------
-        Autotunes device fro mbeginning up to the end of this stage.
+        Autotunes device from beginning up to the end of this stage.
 
         Parameters
         ----------

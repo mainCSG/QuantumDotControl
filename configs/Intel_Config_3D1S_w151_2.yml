@@ -15,7 +15,7 @@ instruments:
 device:
 
   characteristics:
-    name: 3D1S_w151_1
+    name: 3D1S_w151_2
     charge_carrier: e
     operation_mode: acc
 

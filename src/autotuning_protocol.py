@@ -87,6 +87,7 @@ class Protocol:
 
             self.gates_to_dacs[i] = self.device_gates[i]['channel']
 
+        # this interesting line is momentarily only used for dummy_station
         rack = getattr(self.instrument_handler, 'station', None)
         rack = rack.components.get('spi_rack') if rack is not None else None
         if rack is not None and hasattr(rack, 'configure_from_gates'):

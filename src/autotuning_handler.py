@@ -355,7 +355,7 @@ class autotuning_handler:
                                               wait=wait,
                                               timeout=timeout
                                              )
-        
+
     def run_global_charge_tuning(self,
                                  device_config,
                                  instrument_handler,
@@ -425,6 +425,72 @@ class autotuning_handler:
                                               wait=wait,
                                               timeout=timeout
                                              )
+
+    def run_gbt_from_cp(self,
+                        device_config,
+                        instrument_handler,
+                        experiment_handler,
+                        checkpoint,
+                        wait: bool = True,
+                        timeout: float = 6000,
+                        ):
+    
+            '''
+            Description
+            -----------
+            Runs the sweep functions to conduct global charge tuning.
+    
+            Parameters
+            ----------
+            device_config : yaml file
+                file containing the device information and setup
+            instrument_handler : instance of handler
+                instance of instruemnt handler to process and control instruments
+            experiment_handler : instance of handler
+                instance of experiment handler to process the autotuning steps in global charge tuning stage
+            wait : bool, optional
+                sets a delay to every job, defaults to True
+            timeout : float, optional
+                sets a time period to delay each job for, defaults to 6000s
+            
+            Returns
+            -------
+            The sweep job for the global charge tuning stage.
+            '''
+
+            def autotuning_fn(abort_event):
+    
+                '''
+                Description
+                -----------
+                Creates a sweep function to run the global charge tuning steps.
+    
+                Parameters
+                ----------
+                abort_event : Event
+                    triggers an abort for the sweep
+    
+                Returns
+                -------
+                result :
+                    the results from the global charge tuning stage
+                '''
+                
+                result = GlobalChargeTuning(device_config = device_config,
+                                            instr_handler = instrument_handler,
+                                            exp_handler = experiment_handler
+                                           )
+
+                result.load_ckpt(checkpoint)
+
+                result.autotune_global_charge_tuning(num_points = [150, 400, 400])
+                return result
+    
+            return self.autotuning_thread.add_job(autotuning_fn,
+                                                  args=(),
+                                                  wait=wait,
+                                                  timeout=timeout
+                                                 )
 
     def run_virtual_gating(self,
                            device_config,

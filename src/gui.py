@@ -33,7 +33,7 @@ from tunerlog import TunerLog
 import yaml
 from pathlib import Path
 
-from paths import CONFIG_FOLDER
+from paths import CONFIG_FOLDER, DATA
 from instrument_registry import INITIALIZERS, MONITORS, init_agilent, init_spi_rack
 
 logger = TunerLog('GUI')
@@ -94,7 +94,7 @@ class tuner_gui:
 
         ## try to instantiate Station() from most recent settings, if fail then instantiate empty station
         try: 
-            with open(CONFIG_FOLDER / 'config_gui.yaml') as f:
+            with open(CONFIG_FOLDER / 'sconfig_gui.yaml') as f:
                 settings = yaml.safe_load(f)
 
             last_config = settings['last_station_config']
@@ -136,7 +136,7 @@ class tuner_gui:
                     ui.item('Instrument Information', on_click=lambda : self.on_load_instrument_info())
                     ui.item('Device Information', on_click=lambda : ui.notify("Loading Device Information..."))
 
-                # stages = ['Debug', 'Setup','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
+
                 stages = ['Debug','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
 
                 with ui.tabs() as tabs:
@@ -145,45 +145,31 @@ class tuner_gui:
                         ui.tab(stage)
 
                 with ui.tab_panels(tabs, value='Home').classes('w-full'):
-            
-                    # with ui.tab_panel('Setup'):
-
-                    #     self.device_config = "Intel_Config.yaml"
-
-                    #     self.autotune = ui.button(
-                    #                         'Autotune',
-                    #                         on_click = Protocol(device_config = self.device_config)
-                    #                              )
 
                     with ui.tab_panel('Bootstrapping'):
 
                         ui.label('Collecting Bootstrapping Information...')
                         self.tab_containers['Bootstrapping'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
-
-                    
+                   
                     with ui.tab_panel('Coarse Tuning'):
                         
                         ui.label('Collecting Coarse Tuning Information...')
                         self.tab_containers['Coarse Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
-
 
                     with ui.tab_panel('Virtual Gating'):
                         
                         ui.label('Collecting Virtual Gating Information...')
                         self.tab_containers['Virtual Gating'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
 
-
                     with ui.tab_panel('Charge State Tuning'):
                         
                         ui.label('Collecting Charge State Tuning...')
                         self.tab_containers['Charge State Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
 
-
                     with ui.tab_panel('Fine Tuning'):
                         
                         ui.label('Collecting Fine Tuning Information...')
                         self.tab_containers['Fine Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
-
 
                     with ui.tab_panel('Debug'):
 
@@ -214,9 +200,20 @@ class tuner_gui:
                             on_click = self.run_global_charge_tuning
                         )
 
+                        
+                        ui.button(
+                            'Run Global Charge Tuning From Checkpoint',
+                            on_click = self.run_gbt_from_cp
+                        )
+
                         ui.button(
                             'Run Virtual Gating',
                             on_click = self.run_virtual_gating
+                        )
+
+                        ui.button(
+                            'Run Virtual Gating From Checkpoint',
+                            on_click = ui.notify('configuring later')
                         )
 
                         ui.button(
@@ -832,6 +829,29 @@ class tuner_gui:
                                                                   wait = False
                                                                  )
 
+    async def run_gbt_from_cp(self):
+        '''
+        Description
+        -----------
+        A method that runs the bootstrapping method from a user provided checkpoint.
+        '''
+        # get checkpoint path
+        self.cp_path = await self.get_file(directory=DATA, file_pattern = 'boothstrapping_*.yml')
+        # load checkpoint metadata
+        with open(self.cp_path, 'r') as file:
+            cp_file = yaml.safe_load(file)
+        # verify metadata is complete else return error
+
+        # perform bootstrapping from checkpoint
+        self.debug_status.set_text("Running Bootstrapping...")
+        self.logger.info("Bootstrapping Jobs queued")
+        
+        future = self.autotuning_handler.run_bootstrapping(device_config = self.device_config,
+                                                            instrument_handler = self.instrument_handler,
+                                                            experiment_handler = self.experiment_handler,
+                                                            wait = False
+                                                            )
+
     def run_virtual_gating(self):
 
         '''
@@ -848,6 +868,29 @@ class tuner_gui:
                                                                   experiment_handler = self.experiment_handler,
                                                                   wait = False
                                                                  )
+
+    async def run_vg_from_cp(self):
+        '''
+        Description
+        -----------
+        A method that runs the bootstrapping method from a user provided checkpoint.
+        '''
+        # get checkpoint path
+        self.cp_path = await self.get_file(directory=DATA, file_pattern = 'globa_charge_tuning_*.yml')
+        # load checkpoint metadata
+        with open(self.cp_path, 'r') as file:
+            cp_file = yaml.save_load(file)
+        # verify metadata is complete else return error
+
+        # perform virtual gating from checkpoint
+        self.debug_status.set_text(f"Running Virtual Gating From {self.cp_path}...")
+        self.logger.info("Virtual Gating Jobs queued")
+        
+        # future = self.autotuning_handler.run_bootstrapping(device_config = self.device_config,
+        #                                                     instrument_handler = self.instrument_handler,
+        #                                                     experiment_handler = self.experiment_handler,
+        #                                                     wait = False
+        #                                                     )
 
     def run_snapshot(self):
 
@@ -1110,6 +1153,10 @@ class tuner_gui:
         self.experiment_handler.experiment_thread.join()
         self.instrument_handler.shutdown_instruments()
 
+    async def get_file(self, directory, file_pattern: str | None = None):
+        file = await local_file_picker(directory, file_pattern)
+        return file
+    
     async def on_load_config(self) -> None:
         """
         This method is used to load the config files for the device and update the Station object.
@@ -1117,23 +1164,25 @@ class tuner_gui:
         Source: 
         """
         ui.notify("Loading Config Files...")
-        self.device_config = await local_file_picker(directory = CONFIG_FOLDER, upper_limit = CONFIG_FOLDER)
-        self.station.load_config_files(self.device_config)
-        # logger.info('printing loaded config')
-        logger.info(f"{self.device_config}")
-        configured = set(self.station.config['instruments'])
-        connected = set(self.instrument_handler.instrument_threads.keys())
+        self.device_config = await self.get_file(directory=CONFIG_FOLDER)
+        if self.device_config:
+            self.station.load_config_files(self.device_config)
+            logger.info(f"Loaded {self.device_config} as new station config")
 
-        # remove elements that were connected but should not be
-        for name in connected - configured:
-            self.instrument_handler.remove_instrument(name)
 
-        # add components
-        for name in configured - connected:
-            self.instrument_handler.add_instrument(name, INITIALIZERS.get(name))
+            configured = set(self.station.config['instruments'])
+            connected = set(self.instrument_handler.instrument_threads.keys())
 
-            if name in MONITORS:
-                self.instrument_handler.monitor_parameter(name, MONITORS.get(name))
+            # remove elements that were connected but should not be
+            for name in connected - configured:
+                self.instrument_handler.remove_instrument(name)
+
+            # add components
+            for name in configured - connected:
+                self.instrument_handler.add_instrument(name, INITIALIZERS.get(name))
+
+                if name in MONITORS:
+                    self.instrument_handler.monitor_parameter(name, MONITORS.get(name))
 
     def on_save_config(self):
         """
@@ -1148,12 +1197,11 @@ class tuner_gui:
         ui.notify("Loading Instrument Information...")
         instrument_manager = InstrumentManager
 
-    # The below classes
+# The below classes are used to define the specific windows within the GUI
 
 class local_file_picker(ui.dialog):
 
-    def __init__(self, directory: str, *,
-                 upper_limit: str | None = ...,) -> None:
+    def __init__(self, directory: str, file_pattern: str | None = None) -> None:
         """Local File Picker
 
         This is a simple file picker that allows you to select a file from the local filesystem where NiceGUI is running.
@@ -1166,6 +1214,11 @@ class local_file_picker(ui.dialog):
         super().__init__()
 
         self.directory = directory
+        files = Path(self.directory).iterdir()
+        if file_pattern:
+            files = [f for f in files if f.match(file_pattern)]
+
+        
         with self, ui.card().classes('q-pa-md q-ma-sm bg-primary text-white'):
             ui.label(f"Select a file from {self.directory}")
             self.grid = ui.aggrid({
@@ -1173,7 +1226,7 @@ class local_file_picker(ui.dialog):
                     {'headerName': 'File', 'field': 'file'}
                 ],
                 'rowData': [
-                    {'file': f.name} for f in Path(self.directory).iterdir()
+                    {'file': f.name} for f in files
                     ],
                 'rowSelection': {'mode': 'singleRow'}
             })
@@ -1187,8 +1240,7 @@ class local_file_picker(ui.dialog):
 
     async def _select(self):
         selected_rows = await self.grid.get_selected_rows()
-        self.submit(str(CONFIG_FOLDER / selected_rows[0]['file']))
-        # self.submit([str(CONFIG_FOLDER / row['file']) for row in selected_rows])
+        self.submit(str(self.directory / selected_rows[0]['file']))
 
 class InstrumentManager(ui.dialog):
     def __init__(self, instrument_handler):

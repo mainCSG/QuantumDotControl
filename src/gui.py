@@ -88,6 +88,10 @@ class tuner_gui:
         self.device_config = None
         # Dictionary to store references to scroll areas for each stage tab
         self.tab_containers = {}
+        # Dict to cache the plotted figures
+        self.stage_plot_cache = {}
+        self.stage_plot_history = {}
+        self.stage_rendered_keys = {}
 
         self.logger = TunerLog("TunerGUI")
         self.start_time = time.monotonic()
@@ -146,87 +150,95 @@ class tuner_gui:
 
                 with ui.tab_panels(tabs, value='Home').classes('w-full'):
 
-                    with ui.tab_panel('Bootstrapping'):
+                    for stage_name in stages:
+                        with ui.tab_panel(stage_name):
+                            ui.label(f'Collecting {stage_name} Information...')
+                            self.tab_containers[stage_name] = ui.column().classes('w-full h-[60vh] overflow-y-auto p-2 min-w-0')
+                            self.stage_plot_history.setdefault(stage_name, [])
+                            self.stage_rendered_keys.setdefault(stage_name, [])
+                            self._render_stage_plots(stage_name)
+                    # # with ui.tab_panel('Bootstrapping'):
 
-                        ui.label('Collecting Bootstrapping Information...')
-                        self.tab_containers['Bootstrapping'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
-                   
-                    with ui.tab_panel('Coarse Tuning'):
+                    # #     ui.label('Collecting Bootstrapping Information...')
+                    # #     self.tab_containers['Bootstrapping'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
+                    # #     self.stage_plot_cache['Bootstrapping'] = {}
+
+                    # # with ui.tab_panel('Coarse Tuning'):
                         
-                        ui.label('Collecting Coarse Tuning Information...')
-                        self.tab_containers['Coarse Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
+                    # #     ui.label('Collecting Coarse Tuning Information...')
+                    # #     self.tab_containers['Coarse Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
 
-                    with ui.tab_panel('Virtual Gating'):
+                    # # with ui.tab_panel('Virtual Gating'):
                         
-                        ui.label('Collecting Virtual Gating Information...')
-                        self.tab_containers['Virtual Gating'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
+                    # #     ui.label('Collecting Virtual Gating Information...')
+                    # #     self.tab_containers['Virtual Gating'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
 
-                    with ui.tab_panel('Charge State Tuning'):
+                    # # with ui.tab_panel('Charge State Tuning'):
                         
-                        ui.label('Collecting Charge State Tuning...')
-                        self.tab_containers['Charge State Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
+                    # #     ui.label('Collecting Charge State Tuning...')
+                    # #     self.tab_containers['Charge State Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
 
-                    with ui.tab_panel('Fine Tuning'):
+                    # # with ui.tab_panel('Fine Tuning'):
                         
-                        ui.label('Collecting Fine Tuning Information...')
-                        self.tab_containers['Fine Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
+                    # #     ui.label('Collecting Fine Tuning Information...')
+                    # #     self.tab_containers['Fine Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
 
-                    with ui.tab_panel('Debug'):
+                    # # with ui.tab_panel('Debug'):
 
-                        ui.label('Debug / Manual Controls')
+                    #     ui.label('Debug / Manual Controls')
 
-                        """ ui.button(
-                            'Run Test Sweep',
-                            on_click=self.run_test_sweep
-                        ) """
+                    #     """ ui.button(
+                    #         'Run Test Sweep',
+                    #         on_click=self.run_test_sweep
+                    #     ) """
                         
-                        ui.button(
-                            'Run Test Sweep 2',
-                            on_click=self.run_test_sweep_2
-                        )
+                    #     ui.button(
+                    #         'Run Test Sweep 2',
+                    #         on_click=self.run_test_sweep_2
+                    #     )
 
-                        """ ui.button(
-                            'Run Test Sweep 3',
-                            on_click=self.run_test_sweep_3
-                        ) """
+                    #     """ ui.button(
+                    #         'Run Test Sweep 3',
+                    #         on_click=self.run_test_sweep_3
+                    #     ) """
 
-                        ui.button(
-                            'Run Bootstrapping',
-                            on_click = self.run_bootstrapping
-                        )
+                    #     ui.button(
+                    #         'Run Bootstrapping',
+                    #         on_click = self.run_bootstrapping
+                    #     )
 
-                        ui.button(
-                            'Run Global Charge Tuning',
-                            on_click = self.run_global_charge_tuning
-                        )
+                    #     ui.button(
+                    #         'Run Global Charge Tuning',
+                    #         on_click = self.run_global_charge_tuning
+                    #     )
 
                         
-                        ui.button(
-                            'Run Global Charge Tuning From Checkpoint',
-                            on_click = self.run_gbt_from_cp
-                        )
+                    #     ui.button(
+                    #         'Run Global Charge Tuning From Checkpoint',
+                    #         on_click = self.run_gbt_from_cp
+                    #     )
 
-                        ui.button(
-                            'Run Virtual Gating',
-                            on_click = self.run_virtual_gating
-                        )
+                    #     ui.button(
+                    #         'Run Virtual Gating',
+                    #         on_click = self.run_virtual_gating
+                    #     )
 
-                        ui.button(
-                            'Run Virtual Gating From Checkpoint',
-                            on_click = ui.notify('configuring later')
-                        )
+                    #     ui.button(
+                    #         'Run Virtual Gating From Checkpoint',
+                    #         on_click = ui.notify('configuring later')
+                    #     )
 
-                        ui.button(
-                            'Take Snapshot',
-                            on_click = self.run_snapshot
-                        )
+                    #     ui.button(
+                    #         'Take Snapshot',
+                    #         on_click = self.run_snapshot
+                    #     )
 
-                        # ui.button(
-                        #     'Run Plot Test',
-                        #     on_click = run_test_plot
-                        # )
+                    #     # ui.button(
+                    #     #     'Run Plot Test',
+                    #     #     on_click = run_test_plot
+                    #     # )
 
-                        self.debug_status = ui.label('Idle')
+                    #     self.debug_status = ui.label('Idle')
 
             with splitter1.after:
 
@@ -556,70 +568,93 @@ class tuner_gui:
         while not self.bridge.plot_queue.empty():
             try:
                 payload = self.bridge.plot_queue.get_nowait()
-                
                 stage_name = payload.get('stage')
+
                 step_name = payload.get('step_name', 'Process')
-                fig = payload.get('figure_object')
-                plot_data = payload.get('plot_data')
-                results_data = payload.get('results', {})
-                
-                if stage_name in self.tab_containers:
-                    target_container = self.tab_containers[stage_name]
+                plot_id = payload.get('plot_id') or f"{stage_name}:{step_name}:{time.monotonic_ns()}"
 
-                    with target_container:
-                        # Build the container for this specific step at the top of the tab
-                        with ui.expansion(text=step_name, icon='analytics', value=True).classes('w-full min-w-0 border rounded-lg bg-slate-50 my-2 shadow-sm') as expansion_panel:
+                payload['plot_id'] = plot_id
+                self.stage_plot_history.setdefault(stage_name, []).append(payload)
+                self._render_stage_plots(stage_name)
 
-                            # A chart sized by its container, inside a container sized
-                            # by its contents, feeds back on itself and the plot creeps
-                            # wider on every resize. `min-w-0` lets this wrapper shrink
-                            # below its contents (flex children default to min-width
-                            # auto, which is what blocks that), and the fixed height
-                            # plus overflow-hidden give the chart a definite box to
-                            # measure. This is what stops the axis drifting rightwards.
-                            plot_source = plot_data
-                            if plot_source is None and fig is not None:
-                                try:
-                                    plot_source = self.figure_to_plot_data(fig)
-                                except Exception as exc:
-                                    self.logger.warning(
-                                        f"Could not extract data from the Matplotlib "
-                                        f"figure for '{step_name}', falling back to a "
-                                        f"static image: {exc}")
-
-                            if plot_source is not None:
-                                with ui.element('div').classes('w-full min-w-0 overflow-hidden p-2') \
-                                        .style(f'height: {self.PLOT_HEIGHT_PX + 16}px'):
-                                    ui.plotly(self.build_plotly_spec(plot_source)) \
-                                        .classes('w-full min-w-0') \
-                                        .style(f'height: {self.PLOT_HEIGHT_PX}px')
-                            elif fig is not None:
-                                # Static image only: a Matplotlib render cannot zoom
-                                # or report values on hover.
-                                static_plot = ui.pyplot(close=False)
-                                static_plot.fig = fig
-                                static_plot._convert_to_html()
-                                static_plot.classes('w-full min-w-0 p-2')
-                            
-                            # Add an explicit Results section below the plot if data exists
-                            if results_data:
-                                ui.separator().classes('my-2 px-4')
-                                with ui.column().classes('w-full px-6 pb-4'):
-                                    ui.label('Step Results & Parameter Updates:').classes('text-sm font-bold text-slate-700 mb-1')
-                                    
-                                    # Use a responsive grid layout to organize your numbers cleanly
-                                    with ui.grid(columns=2).classes('w-full gap-x-8 gap-y-1 bg-white p-3 border rounded'):
-                                        for key, value in results_data.items():
-                                            ui.label(f"{key}:").classes('text-xs font-semibold text-slate-500')
-                                            ui.label(str(value)).classes('text-xs font-mono text-slate-900 text-right')
-                        
-                else:
-                    self.logger.warning(f"Received plot for unknown stage: {stage_name}")
-                    
-                self.bridge.plot_queue.task_done()
-                
             except Exception as e:
                 self.logger.error(f"Error drawing tuning plot and results: {e}")
+            finally:
+                try:
+                    self.bridge.plot_queue.task_done()
+                except ValueError:
+                    pass
+
+    def _render_stage_plots(self, stage_name: str):
+        """
+        Rebuild the stage from its persisted plot history.
+        """
+        if stage_name not in self.tab_containers:
+            return
+
+        container = self.tab_containers[stage_name]
+        history = self.stage_plot_history.setdefault(stage_name, [])
+        rendered = self.stage_rendered_keys.setdefault(stage_name, set())
+
+        for payload in history:
+            step_name = payload.get('step_name', 'Process')
+            fig = payload.get('figure_object')
+            plot_data = payload.get('plot_data')
+            results_data = payload.get('results', {})
+
+            key = payload.get('plot_id') or f"{stage_name}:{step_name}:{id(payload)}"
+            if key in rendered:
+                continue
+
+            with container:
+                with ui.expansion(text=step_name, icon='analytics', value=True).classes('w-full min-w-0 border rounded-lg bg-slate-50 my-2 shadow-sm') as expansion_panel:
+
+                    # A chart sized by its container, inside a container sized
+                    # by its contents, feeds back on itself and the plot creeps
+                    # wider on every resize. `min-w-0` lets this wrapper shrink
+                    # below its contents (flex children default to min-width
+                    # auto, which is what blocks that), and the fixed height
+                    # plus overflow-hidden give the chart a definite box to
+                    # measure. This is what stops the axis drifting rightwards.
+                    plot_source = plot_data
+                    if plot_source is None and fig is not None:
+                        try:
+                            plot_source = self.figure_to_plot_data(fig)
+                        except Exception as exc:
+                            self.logger.warning(
+                                f"Could not extract data from the Matplotlib "
+                                f"figure for '{step_name}', falling back to a "
+                                f"static image: {exc}")
+
+                    if plot_source is not None:
+                        with ui.element('div').classes('w-full min-w-0 overflow-hidden p-2') \
+                                .style(f'height: {self.PLOT_HEIGHT_PX + 16}px'):
+                            ui.plotly(self.build_plotly_spec(plot_source)) \
+                                .classes('w-full min-w-0') \
+                                .style(f'height: {self.PLOT_HEIGHT_PX}px')
+                    elif fig is not None:
+                        # Static image only: a Matplotlib render cannot zoom
+                        # or report values on hover.
+                        static_plot = ui.pyplot(close=False)
+                        static_plot.fig = fig
+                        static_plot._convert_to_html()
+                        static_plot.classes('w-full min-w-0 p-2')
+                    
+                    # Add an explicit Results section below the plot if data exists
+                    if results_data:
+                        ui.separator().classes('my-2 px-4')
+                        with ui.column().classes('w-full px-6 pb-4'):
+                            ui.label('Step Results & Parameter Updates:').classes('text-sm font-bold text-slate-700 mb-1')
+                            
+                            # Use a responsive grid layout to organize your numbers cleanly
+                            with ui.grid(columns=2).classes('w-full gap-x-8 gap-y-1 bg-white p-3 border rounded'):
+                                for key, value in results_data.items():
+                                    ui.label(f"{key}:").classes('text-xs font-semibold text-slate-500')
+                                    ui.label(str(value)).classes('text-xs font-mono text-slate-900 text-right')
+            rendered.add(key)
+
+    def _render_stage_history(self):
+        pass
 
     def run_test_sweep(self):
 

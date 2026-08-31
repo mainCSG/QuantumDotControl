@@ -693,6 +693,7 @@ class Bootstrapping(Protocol):
             else:
                 turn_on_check.append(False)
 
+
         if all(item is True for item in turn_on_check):
 
             logger.info("Turn-Ons Confirmed Succussfully! Determining Turn-On Voltages...")

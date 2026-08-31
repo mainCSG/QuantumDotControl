@@ -407,7 +407,11 @@ def extract_pinch_off_curve_ranges(x_data: np.array,
         # Flips current sign if SD bias was inversed
         y1 = -y1
 
-    y1_norm = y1/np.max(y1) # Normalizes the data for fitting
+    try:
+        y1_norm = y1/np.max(y1) # Normalizes the data for fitting
+    except Exception:
+        y1_norm = y1
+
 
     # --- Finding Pinch-off Voltage ---
 

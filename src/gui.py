@@ -141,104 +141,102 @@ class tuner_gui:
                     ui.item('Device Information', on_click=lambda : ui.notify("Loading Device Information..."))
 
 
-                stages = ['Debug','Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
+                stages = ['Bootstrapping','Coarse Tuning','Virtual Gating','Charge State Tuning','Fine Tuning']
 
                 with ui.tabs() as tabs:
-                    
+                    ui.tab('Manual Control')
                     for stage in stages:
                         ui.tab(stage)
+                    
 
                 with ui.tab_panels(tabs, value='Home').classes('w-full'):
-
                     for stage_name in stages:
                         with ui.tab_panel(stage_name):
                             ui.label(f'Collecting {stage_name} Information...')
-                            self.tab_containers[stage_name] = ui.column().classes('w-full h-[60vh] overflow-y-auto p-2 min-w-0')
-                            self.stage_plot_history.setdefault(stage_name, [])
-                            self.stage_rendered_keys.setdefault(stage_name, [])
+                            self.tab_containers[stage_name] = ui.column().classes('w-full h-[60vh] overflow-y-auto p-2 min-w-0')                            
                             self._render_stage_plots(stage_name)
-                    # # with ui.tab_panel('Bootstrapping'):
+                    # with ui.tab_panel('Bootstrapping'):
 
-                    # #     ui.label('Collecting Bootstrapping Information...')
-                    # #     self.tab_containers['Bootstrapping'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
-                    # #     self.stage_plot_cache['Bootstrapping'] = {}
+                    #     ui.label('Collecting Bootstrapping Information...')
+                    #     self.tab_containers['Bootstrapping'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
+                    #     self.stage_plot_cache['Bootstrapping'] = {}
 
-                    # # with ui.tab_panel('Coarse Tuning'):
+                    # with ui.tab_panel('Coarse Tuning'):
                         
-                    # #     ui.label('Collecting Coarse Tuning Information...')
-                    # #     self.tab_containers['Coarse Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
+                    #     ui.label('Collecting Coarse Tuning Information...')
+                    #     self.tab_containers['Coarse Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
 
-                    # # with ui.tab_panel('Virtual Gating'):
+                    # with ui.tab_panel('Virtual Gating'):
                         
-                    # #     ui.label('Collecting Virtual Gating Information...')
-                    # #     self.tab_containers['Virtual Gating'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
+                    #     ui.label('Collecting Virtual Gating Information...')
+                    #     self.tab_containers['Virtual Gating'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
 
-                    # # with ui.tab_panel('Charge State Tuning'):
+                    # with ui.tab_panel('Charge State Tuning'):
                         
-                    # #     ui.label('Collecting Charge State Tuning...')
-                    # #     self.tab_containers['Charge State Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
+                    #     ui.label('Collecting Charge State Tuning...')
+                    #     self.tab_containers['Charge State Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
 
-                    # # with ui.tab_panel('Fine Tuning'):
+                    # with ui.tab_panel('Fine Tuning'):
                         
-                    # #     ui.label('Collecting Fine Tuning Information...')
-                    # #     self.tab_containers['Fine Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
+                    #     ui.label('Collecting Fine Tuning Information...')
+                    #     self.tab_containers['Fine Tuning'] = ui.scroll_area().classes('w-full h-[60vh] border p-2')
 
-                    # # with ui.tab_panel('Debug'):
+                    with ui.tab_panel('Manual Control'):
 
-                    #     ui.label('Debug / Manual Controls')
+                        ui.label('Debug / Manual Controls')
 
-                    #     """ ui.button(
-                    #         'Run Test Sweep',
-                    #         on_click=self.run_test_sweep
-                    #     ) """
+                        """ ui.button(
+                            'Run Test Sweep',
+                            on_click=self.run_test_sweep
+                        ) """
                         
-                    #     ui.button(
-                    #         'Run Test Sweep 2',
-                    #         on_click=self.run_test_sweep_2
-                    #     )
+                        ui.button(
+                            'Run Test Sweep 2',
+                            on_click=self.run_test_sweep_2
+                        )
 
-                    #     """ ui.button(
-                    #         'Run Test Sweep 3',
-                    #         on_click=self.run_test_sweep_3
-                    #     ) """
+                        """ ui.button(
+                            'Run Test Sweep 3',
+                            on_click=self.run_test_sweep_3
+                        ) """
 
-                    #     ui.button(
-                    #         'Run Bootstrapping',
-                    #         on_click = self.run_bootstrapping
-                    #     )
+                        ui.button(
+                            'Run Bootstrapping',
+                            on_click = self.run_bootstrapping
+                        )
 
-                    #     ui.button(
-                    #         'Run Global Charge Tuning',
-                    #         on_click = self.run_global_charge_tuning
-                    #     )
+                        ui.button(
+                            'Run Global Charge Tuning',
+                            on_click = self.run_global_charge_tuning
+                        )
 
                         
-                    #     ui.button(
-                    #         'Run Global Charge Tuning From Checkpoint',
-                    #         on_click = self.run_gbt_from_cp
-                    #     )
+                        ui.button(
+                            'Run Global Charge Tuning From Checkpoint',
+                            on_click = self.run_gbt_from_cp
+                        )
 
-                    #     ui.button(
-                    #         'Run Virtual Gating',
-                    #         on_click = self.run_virtual_gating
-                    #     )
+                        ui.button(
+                            'Run Virtual Gating',
+                            on_click = self.run_virtual_gating
+                        )
 
-                    #     ui.button(
-                    #         'Run Virtual Gating From Checkpoint',
-                    #         on_click = ui.notify('configuring later')
-                    #     )
+                        ui.button(
+                            'Run Virtual Gating From Checkpoint',
+                            on_click = ui.notify('configuring later')
+                        )
 
-                    #     ui.button(
-                    #         'Take Snapshot',
-                    #         on_click = self.run_snapshot
-                    #     )
+                        ui.button(
+                            'Take Snapshot',
+                            on_click = self.run_snapshot
+                        )
 
-                    #     # ui.button(
-                    #     #     'Run Plot Test',
-                    #     #     on_click = run_test_plot
-                    #     # )
+                        # ui.button(
+                        #     'Run Plot Test',
+                        #     on_click = run_test_plot
+                        # )
 
-                    #     self.debug_status = ui.label('Idle')
+                        self.debug_status = ui.label('Idle')
 
             with splitter1.after:
 
@@ -652,9 +650,6 @@ class tuner_gui:
                                     ui.label(f"{key}:").classes('text-xs font-semibold text-slate-500')
                                     ui.label(str(value)).classes('text-xs font-mono text-slate-900 text-right')
             rendered.add(key)
-
-    def _render_stage_history(self):
-        pass
 
     def run_test_sweep(self):
 

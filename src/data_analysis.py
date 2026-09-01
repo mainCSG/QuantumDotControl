@@ -27,10 +27,11 @@ import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 from matplotlib.ticker import AutoMinorLocator
 from matplotlib.patches import ConnectionPatch, Rectangle
+from matplotlib.patches import Polygon as MplPolygon, Rectangle
 
 from IPython.display import display
 
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, linprog
 from scipy.special import expit
 from scipy.ndimage import convolve, map_coordinates, gaussian_filter1d, gaussian_filter
 
@@ -4296,3 +4297,641 @@ def run_test_plot():
 
     plt.close(fig)
 
+__all__ = ["extract_specific_charge_states", "extract_virtual_CSD_Range"]
+
+_TRANSITIONS_PER_PLUNGER = 2
+_GRADIENT_PERCENTILE = 75.0
+_BINARY_EDGE_THRESHOLD = 0.2
+_GAUSSIAN_SIGMA = 2.0
+
+def _as_finite_1d(values: np.ndarray, name: str) -> np.ndarray:
+    """Return *values* as a finite one-dimensional floating-point array."""
+    array = np.asarray(values, dtype=float).ravel()
+    if array.size == 0:
+        raise ValueError(f"{name} must not be empty.")
+    if not np.all(np.isfinite(array)):
+        raise ValueError(f"{name} contains NaN or infinite values.")
+    return array
+
+def _rectilinear_grid(
+    plunger_1_data: np.ndarray,
+    plunger_2_data: np.ndarray,
+    current_data: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Convert flattened coordinate samples or axis arrays into a 2-D grid.
+
+    Duplicate coordinate pairs are averaged.  Every point in the Cartesian
+    product of the two unique plunger axes must be represented.
+    """
+    p1_input = np.asarray(plunger_1_data, dtype=float)
+    p2_input = np.asarray(plunger_2_data, dtype=float)
+    current_input = np.asarray(current_data, dtype=float)
+
+    # Common convenient form: separate x/y axes and an already shaped image.
+    if current_input.ndim == 2 and p1_input.ndim == p2_input.ndim == 1:
+        expected_shape = (p2_input.size, p1_input.size)
+        if current_input.shape != expected_shape:
+            raise ValueError(
+                "For one-dimensional plunger axes, current_data must have "
+                f"shape {expected_shape}; received {current_input.shape}."
+            )
+        p1_order = np.argsort(p1_input)
+        p2_order = np.argsort(p2_input)
+        p1_axis = p1_input[p1_order]
+        p2_axis = p2_input[p2_order]
+        grid = current_input[np.ix_(p2_order, p1_order)]
+        if np.unique(p1_axis).size != p1_axis.size or np.unique(p2_axis).size != p2_axis.size:
+            raise ValueError("One-dimensional plunger axes must not contain duplicates.")
+        if not np.all(np.isfinite(grid)):
+            raise ValueError("current_data contains NaN or infinite values.")
+        return p1_axis, p2_axis, grid
+
+    p1 = _as_finite_1d(p1_input, "plunger_1_data")
+    p2 = _as_finite_1d(p2_input, "plunger_2_data")
+    current = _as_finite_1d(current_input, "current_data")
+
+    if not (p1.size == p2.size == current.size):
+        raise ValueError(
+            "Flattened plunger_1_data, plunger_2_data, and current_data "
+            "must contain the same number of samples."
+        )
+
+    p1_axis, p1_indices = np.unique(p1, return_inverse=True)
+    p2_axis, p2_indices = np.unique(p2, return_inverse=True)
+    shape = (p2_axis.size, p1_axis.size)
+
+    sums = np.zeros(shape, dtype=float)
+    counts = np.zeros(shape, dtype=int)
+    np.add.at(sums, (p2_indices, p1_indices), current)
+    np.add.at(counts, (p2_indices, p1_indices), 1)
+
+    if np.any(counts == 0):
+        missing = int(np.count_nonzero(counts == 0))
+        raise ValueError(
+            "The samples do not form a complete rectangular scan: "
+            f"{missing} coordinate pairs are missing."
+        )
+
+    return p1_axis, p2_axis, sums / counts
+
+def _require_uniform_axis(axis: np.ndarray, name: str) -> None:
+    """Reject nonuniform coordinates because Hough detection is pixel based."""
+    spacing = np.diff(axis)
+    reference = float(np.mean(spacing))
+    tolerance = 64.0 * np.finfo(float).eps * max(
+        float(np.max(np.abs(axis))),
+        abs(reference),
+        np.finfo(float).tiny,
+    )
+    if not np.allclose(spacing, reference, rtol=1e-6, atol=tolerance):
+        raise ValueError(
+            f"{name} must be uniformly spaced for gradient and Hough analysis."
+        )
+
+def _largest_axis_aligned_rectangle(
+    matrix: np.ndarray,
+    physical_low: np.ndarray,
+    physical_high: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Find the maximum-area axis-aligned rectangle in the transformed box.
+
+    The transformed physical box is a centrally symmetric parallelogram.  A
+    maximum-area axis-aligned rectangle can be centered at its center.  Its
+    positive half-widths ``s`` obey ``abs(inv(matrix)) @ s <= span / 2``.
+    """
+    inverse = np.linalg.inv(matrix)
+    constraints = np.abs(inverse)
+    limits = (physical_high - physical_low) / 2.0
+    machine_epsilon = np.finfo(float).eps
+    coefficient_scale = float(np.max(constraints))
+    coefficient_tolerance = 32.0 * machine_epsilon * coefficient_scale
+    candidates: list[np.ndarray] = []
+
+    # On one active constraint, x*y is maximal when that constraint's two
+    # terms contribute equally.
+    for coefficients, limit in zip(constraints, limits):
+        a, b = coefficients
+        if a > coefficient_tolerance and b > coefficient_tolerance:
+            candidates.append(np.array([limit / (2.0 * a), limit / (2.0 * b)]))
+
+    # A piecewise optimum can also occur where two constraints intersect.
+    for first in range(len(constraints)):
+        for second in range(first + 1, len(constraints)):
+            pair = constraints[[first, second]]
+            singular_values = np.linalg.svd(pair, compute_uv=False)
+            if singular_values[-1] > 32.0 * machine_epsilon * singular_values[0]:
+                candidates.append(np.linalg.solve(pair, limits[[first, second]]))
+
+    feasibility_tolerance = 128.0 * machine_epsilon * np.maximum(
+        np.abs(limits),
+        np.finfo(float).tiny,
+    )
+    feasible = [
+        candidate
+        for candidate in candidates
+        if np.all(candidate > 0.0)
+        and np.all(constraints @ candidate <= limits + feasibility_tolerance)
+    ]
+    if not feasible:
+        raise RuntimeError("Could not construct a non-empty virtual scan rectangle.")
+
+    half_widths = max(feasible, key=lambda candidate: float(np.prod(candidate)))
+    physical_center = (physical_low + physical_high) / 2.0
+    virtual_center = matrix @ physical_center
+    return virtual_center, half_widths
+
+def extract_virtual_CSD_Range(lever_arm_matrix: np.array, plunger_1_data: np.array, plunger_2_data: np.array, current_data: np.array):
+    """Construct a safe rectangular virtual CSD from a physical two-gate CSD.
+
+    Parameters
+    ----------
+    lever_arm_matrix
+        The 2x2 physical-to-virtual matrix for the two swept plungers.  If the
+        complete device matrix is ``M`` and the swept indices are ``[1, 3]``,
+        pass ``M[np.ix_([1, 3], [1, 3])]``.
+    plunger_1_data, plunger_2_data
+        Either flattened physical coordinates (one value per current sample)
+        or one-dimensional physical axes when ``current_data`` is already 2-D.
+    current_data
+        Current values in any consistent unit.  The function does not rescale
+        them.  Flattened data may be in any acquisition order.
+
+    Returns
+    -------
+    dict
+        ``virtual_plunger_1_data`` and ``virtual_plunger_2_data`` are regular
+        one-dimensional virtual axes. ``virtual_current_data`` is the current
+        interpolated onto their rectangular mesh. ``physical_setpoints_1`` and
+        ``physical_setpoints_2`` are 2-D arrays containing the corresponding
+        safe physical voltages for taking that virtual CSD.  The dictionary
+        also includes the original physical grid, transformed skew grid,
+        matrix, inverse, rectangle center/ranges, and interpolation mask.
+
+    Notes
+    -----
+    The returned virtual rectangle is the maximum-area axis-aligned rectangle
+    inside the transformed physical scan box.  Therefore all returned physical
+    setpoints remain within the supplied physical voltage ranges.
+    """
+    matrix = np.asarray(lever_arm_matrix, dtype=float)
+    if matrix.shape != (2, 2):
+        raise ValueError(
+            "lever_arm_matrix must be the relevant 2x2 submatrix for the two "
+            f"swept plungers; received shape {matrix.shape}."
+        )
+    if not np.all(np.isfinite(matrix)):
+        raise ValueError("lever_arm_matrix contains NaN or infinite values.")
+    singular_values = np.linalg.svd(matrix, compute_uv=False)
+    if singular_values[-1] <= 32.0 * np.finfo(float).eps * singular_values[0]:
+        raise ValueError("lever_arm_matrix must be numerically invertible.")
+
+    p1_axis, p2_axis, physical_current = _rectilinear_grid(
+        plunger_1_data,
+        plunger_2_data,
+        current_data,
+    )
+    if p1_axis.size < 2 or p2_axis.size < 2:
+        raise ValueError("Each plunger must contain at least two distinct values.")
+
+    inverse = np.linalg.inv(matrix)
+    physical_low = np.array([p1_axis[0], p2_axis[0]])
+    physical_high = np.array([p1_axis[-1], p2_axis[-1]])
+    center, half_widths = _largest_axis_aligned_rectangle(
+        matrix,
+        physical_low,
+        physical_high,
+    )
+
+    virtual_p1_axis = np.linspace(
+        center[0] - half_widths[0],
+        center[0] + half_widths[0],
+        p1_axis.size,
+    )
+    virtual_p2_axis = np.linspace(
+        center[1] - half_widths[1],
+        center[1] + half_widths[1],
+        p2_axis.size,
+    )
+    virtual_p1_grid, virtual_p2_grid = np.meshgrid(
+        virtual_p1_axis,
+        virtual_p2_axis,
+    )
+
+    virtual_coordinates = np.stack(
+        [virtual_p1_grid.ravel(), virtual_p2_grid.ravel()]
+    )
+    physical_coordinates = inverse @ virtual_coordinates
+    physical_p1_setpoints = physical_coordinates[0].reshape(virtual_p1_grid.shape)
+    physical_p2_setpoints = physical_coordinates[1].reshape(virtual_p2_grid.shape)
+
+    coordinate_scale = max(
+        float(np.max(np.abs(np.concatenate([physical_low, physical_high])))),
+        float(np.max(physical_high - physical_low)),
+        np.finfo(float).tiny,
+    )
+    bounds_tolerance = 128.0 * np.finfo(float).eps * coordinate_scale
+    in_bounds = (
+        (physical_p1_setpoints >= physical_low[0] - bounds_tolerance)
+        & (physical_p1_setpoints <= physical_high[0] + bounds_tolerance)
+        & (physical_p2_setpoints >= physical_low[1] - bounds_tolerance)
+        & (physical_p2_setpoints <= physical_high[1] + bounds_tolerance)
+    )
+    if not np.all(in_bounds):
+        raise RuntimeError("The computed virtual range produced unsafe physical setpoints.")
+
+    # Return and interpolate the same representably in-range instrument values.
+    physical_p1_setpoints = np.clip(
+        physical_p1_setpoints,
+        physical_low[0],
+        physical_high[0],
+    )
+    physical_p2_setpoints = np.clip(
+        physical_p2_setpoints,
+        physical_low[1],
+        physical_high[1],
+    )
+
+    # scipy's interpolator expects points ordered like grid dimensions: (y, x).
+    interpolator = _RegularGridInterpolator(
+        (p2_axis, p1_axis),
+        physical_current,
+        method="linear",
+        bounds_error=True,
+    )
+    query_points = np.column_stack(
+        [physical_p2_setpoints.ravel(), physical_p1_setpoints.ravel()]
+    )
+    virtual_current = interpolator(query_points).reshape(virtual_p1_grid.shape)
+    interpolation_mask = np.isfinite(virtual_current)
+
+    physical_p1_grid, physical_p2_grid = np.meshgrid(p1_axis, p2_axis)
+    transformed_coordinates = matrix @ np.stack(
+        [physical_p1_grid.ravel(), physical_p2_grid.ravel()]
+    )
+    transformed_p1_grid = transformed_coordinates[0].reshape(physical_p1_grid.shape)
+    transformed_p2_grid = transformed_coordinates[1].reshape(physical_p2_grid.shape)
+
+    return {
+        "lever_arm_matrix": matrix,
+        "inverse_lever_arm_matrix": inverse,
+        "physical_plunger_1_axis": p1_axis,
+        "physical_plunger_2_axis": p2_axis,
+        "physical_current_data": physical_current,
+        "physical_plunger_1_grid": physical_p1_grid,
+        "physical_plunger_2_grid": physical_p2_grid,
+        "transformed_plunger_1_grid": transformed_p1_grid,
+        "transformed_plunger_2_grid": transformed_p2_grid,
+        "virtual_plunger_1_data": virtual_p1_axis,
+        "virtual_plunger_2_data": virtual_p2_axis,
+        "virtual_plunger_1_grid": virtual_p1_grid,
+        "virtual_plunger_2_grid": virtual_p2_grid,
+        "virtual_current_data": virtual_current,
+        "physical_setpoints_1": physical_p1_setpoints,
+        "physical_setpoints_2": physical_p2_setpoints,
+        "interpolation_mask": interpolation_mask,
+        "virtual_center": center,
+        "virtual_half_widths": half_widths,
+        "virtual_plunger_1_range": (virtual_p1_axis[0], virtual_p1_axis[-1]),
+        "virtual_plunger_2_range": (virtual_p2_axis[0], virtual_p2_axis[-1]),
+    }
+
+def _deduplicate_hough_candidates(
+    candidates: list[dict],
+    minimum_distance: int,
+) -> list[dict]:
+    """Cluster nearby Hough detections, retaining the strongest candidate."""
+    if not candidates:
+        return []
+
+    by_strength = sorted(candidates, key=lambda item: item["strength"], reverse=True)
+    kept: list[dict] = []
+    for candidate in by_strength:
+        if all(
+            abs(candidate["pixel_position"] - existing["pixel_position"])
+            >= minimum_distance
+            for existing in kept
+        ):
+            kept.append(candidate)
+    return sorted(kept, key=lambda item: item["pixel_position"])
+
+def _line_coordinates(
+    candidate: dict,
+    p1_axis: np.ndarray,
+    p2_axis: np.ndarray,
+    orientation: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Convert one Hough line from pixel coordinates to virtual voltages."""
+    angle = candidate["angle_radians"]
+    distance = candidate["hough_distance"]
+
+    if orientation == "vertical":
+        y_pixels = np.linspace(0.0, p2_axis.size - 1.0, 500)
+        denominator = np.cos(angle)
+        x_pixels = (distance - y_pixels * np.sin(angle)) / denominator
+    else:
+        x_pixels = np.linspace(0.0, p1_axis.size - 1.0, 500)
+        denominator = np.sin(angle)
+        y_pixels = (distance - x_pixels * np.cos(angle)) / denominator
+
+    valid = (
+        (x_pixels >= 0.0)
+        & (x_pixels <= p1_axis.size - 1.0)
+        & (y_pixels >= 0.0)
+        & (y_pixels <= p2_axis.size - 1.0)
+    )
+    x_pixels = x_pixels[valid]
+    y_pixels = y_pixels[valid]
+    x_values = np.interp(x_pixels, np.arange(p1_axis.size), p1_axis)
+    y_values = np.interp(y_pixels, np.arange(p2_axis.size), p2_axis)
+    return x_values, y_values
+
+def _state_geometry(
+    all_candidates: list[dict],
+    selected_candidates: list[dict],
+    axis: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return state boundaries and label centers in pixels and axis units."""
+    selected_positions = [candidate["pixel_position"] for candidate in selected_candidates]
+    if len(all_candidates) > len(selected_candidates):
+        final_boundary = all_candidates[len(selected_candidates)]["pixel_position"]
+    else:
+        final_boundary = float(axis.size - 1)
+
+    boundaries = np.array([0.0, *selected_positions, final_boundary], dtype=float)
+    boundaries = np.clip(boundaries, 0.0, axis.size - 1.0)
+    centers_pixels = (boundaries[:-1] + boundaries[1:]) / 2.0
+    centers_values = np.interp(centers_pixels, np.arange(axis.size), axis)
+    return boundaries, centers_pixels, centers_values
+
+def extract_specific_charge_states(virtual_plunger_1_data: np.array, virtual_plunger_2_data:np.array, current_data:np.array):
+    """Detect and label the first charge states in a rectangular virtual CSD.
+
+    The detector smooths the current, keeps current decreases along either
+    increasing virtual-plunger direction, thresholds that negative gradient,
+    and uses a Hough transform to identify nearly vertical and horizontal
+    transition lines.  It selects the first two distinct transitions from the
+    low-voltage side of each axis, yielding states 0, 1, and 2 when both are
+    found.
+
+    Parameters
+    ----------
+    virtual_plunger_1_data, virtual_plunger_2_data
+        Flattened virtual coordinate samples, or one-dimensional virtual axes
+        when ``current_data`` is a 2-D array. Each axis must be uniformly
+        spaced because gradient and Hough operations work in pixel space.
+    current_data
+        Flattened or 2-D current values.  Units are preserved.
+
+    Returns
+    -------
+    dict
+        Includes the regular current grid, smoothed current, negative-gradient
+        image, binary edge map, selected transition metadata and line
+        coordinates, integer state maps, string charge-state labels, and
+        suggested label positions.  ``label_positions`` entries contain
+        ``state=(n1, n2)`` and ``coordinate=(virtual_p1, virtual_p2)``.
+
+    Notes
+    -----
+    Detection constants reproduce the supplied workflow: Gaussian sigma 2,
+    the 75th gradient percentile, normalized edge threshold 0.2, and at most
+    two transitions per plunger.
+    """
+    try:
+        from skimage.transform import hough_line, hough_line_peaks
+    except ImportError as error:  # pragma: no cover - depends on environment
+        raise ImportError(
+            "extract_specific_charge_states requires scikit-image. "
+            "Install it with `pip install scikit-image`."
+        ) from error
+
+    p1_axis, p2_axis, current_grid = _rectilinear_grid(
+        virtual_plunger_1_data,
+        virtual_plunger_2_data,
+        current_data,
+    )
+    if p1_axis.size < 3 or p2_axis.size < 3:
+        raise ValueError("Charge-state extraction requires at least 3 points per axis.")
+    _require_uniform_axis(p1_axis, "virtual_plunger_1_data")
+    _require_uniform_axis(p2_axis, "virtual_plunger_2_data")
+
+    smoothed = _gaussian_filter(current_grid, sigma=_GAUSSIAN_SIGMA)
+    gradient_p1 = _sobel(smoothed, axis=1)
+    gradient_p2 = _sobel(smoothed, axis=0)
+    negative_p1 = np.maximum(-gradient_p1, 0.0)
+    negative_p2 = np.maximum(-gradient_p2, 0.0)
+    negative_gradient = np.hypot(negative_p1, negative_p2)
+
+    gradient_threshold = float(
+        np.percentile(negative_gradient, _GRADIENT_PERCENTILE)
+    )
+    filtered_gradient = np.where(
+        negative_gradient > gradient_threshold,
+        negative_gradient,
+        0.0,
+    )
+    maximum = float(filtered_gradient.max())
+    if maximum > 0.0:
+        normalized_gradient = filtered_gradient / maximum
+        edge_map = normalized_gradient > _BINARY_EDGE_THRESHOLD
+    else:
+        normalized_gradient = np.zeros_like(filtered_gradient)
+        edge_map = np.zeros_like(filtered_gradient, dtype=bool)
+
+    minimum_distance_p1 = max(2, round(0.05 * p1_axis.size))
+    minimum_distance_p2 = max(2, round(0.05 * p2_axis.size))
+    tested_angles = np.linspace(-np.pi / 2.0, np.pi / 2.0, 360, endpoint=False)
+
+    vertical_candidates: list[dict] = []
+    horizontal_candidates: list[dict] = []
+    hough_accumulator = np.zeros((tested_angles.size, 1), dtype=np.uint64)
+    hough_angles = tested_angles
+    hough_distances = np.array([0.0])
+
+    if np.any(edge_map):
+        hough_accumulator, hough_angles, hough_distances = hough_line(
+            edge_map,
+            theta=tested_angles,
+        )
+        hough_maximum = float(hough_accumulator.max())
+        peak_strengths, peak_angles, peak_distances = hough_line_peaks(
+            hough_accumulator,
+            hough_angles,
+            hough_distances,
+            min_distance=1,
+            threshold=0.3 * hough_maximum,
+        )
+
+        midpoint_y = (p2_axis.size - 1.0) / 2.0
+        midpoint_x = (p1_axis.size - 1.0) / 2.0
+        spacing_p1 = float(np.mean(np.diff(p1_axis)))
+        spacing_p2 = float(np.mean(np.diff(p2_axis)))
+
+        for strength, angle, distance in zip(
+            peak_strengths,
+            peak_angles,
+            peak_distances,
+        ):
+            cosine = float(np.cos(angle))
+            sine = float(np.sin(angle))
+            normal_p1 = cosine / spacing_p1
+            normal_p2 = sine / spacing_p2
+
+            if abs(normal_p1) >= abs(normal_p2) and abs(cosine) > 1e-9:
+                position = (distance - midpoint_y * sine) / cosine
+                destination = vertical_candidates
+                orientation = "plunger_1"
+            elif abs(sine) > 1e-9:
+                position = (distance - midpoint_x * cosine) / sine
+                destination = horizontal_candidates
+                orientation = "plunger_2"
+            else:
+                continue
+
+            axis_size = p1_axis.size if destination is vertical_candidates else p2_axis.size
+            if 0.0 < position < axis_size - 1.0:
+                destination.append(
+                    {
+                        "pixel_position": float(position),
+                        "angle_radians": float(angle),
+                        "hough_distance": float(distance),
+                        "strength": int(strength),
+                        "orientation": orientation,
+                    }
+                )
+
+    vertical_candidates = _deduplicate_hough_candidates(
+        vertical_candidates,
+        minimum_distance_p1,
+    )
+    horizontal_candidates = _deduplicate_hough_candidates(
+        horizontal_candidates,
+        minimum_distance_p2,
+    )
+    selected_vertical = vertical_candidates[:_TRANSITIONS_PER_PLUNGER]
+    selected_horizontal = horizontal_candidates[:_TRANSITIONS_PER_PLUNGER]
+
+    for candidate in selected_vertical:
+        candidate["virtual_voltage"] = float(
+            np.interp(candidate["pixel_position"], np.arange(p1_axis.size), p1_axis)
+        )
+        candidate["line_virtual_plunger_1"], candidate["line_virtual_plunger_2"] = (
+            _line_coordinates(candidate, p1_axis, p2_axis, "vertical")
+        )
+
+    for candidate in selected_horizontal:
+        candidate["virtual_voltage"] = float(
+            np.interp(candidate["pixel_position"], np.arange(p2_axis.size), p2_axis)
+        )
+        candidate["line_virtual_plunger_1"], candidate["line_virtual_plunger_2"] = (
+            _line_coordinates(candidate, p1_axis, p2_axis, "horizontal")
+        )
+
+    boundaries_p1, centers_p1_pixels, centers_p1 = _state_geometry(
+        vertical_candidates,
+        selected_vertical,
+        p1_axis,
+    )
+    boundaries_p2, centers_p2_pixels, centers_p2 = _state_geometry(
+        horizontal_candidates,
+        selected_horizontal,
+        p2_axis,
+    )
+
+    pixel_p1, pixel_p2 = np.meshgrid(
+        np.arange(p1_axis.size, dtype=float),
+        np.arange(p2_axis.size, dtype=float),
+    )
+    state_plunger_1 = np.zeros(current_grid.shape, dtype=int)
+    state_plunger_2 = np.zeros(current_grid.shape, dtype=int)
+
+    # Count the selected Hough boundaries crossed while moving toward larger
+    # values of the corresponding plunger.  This preserves line slope instead
+    # of flattening each transition at its midpoint crossing.
+    for candidate in selected_vertical:
+        angle = candidate["angle_radians"]
+        signed_distance = (
+            pixel_p1 * np.cos(angle)
+            + pixel_p2 * np.sin(angle)
+            - candidate["hough_distance"]
+        )
+        state_plunger_1 += signed_distance * np.sign(np.cos(angle)) >= 0.0
+
+    for candidate in selected_horizontal:
+        angle = candidate["angle_radians"]
+        signed_distance = (
+            pixel_p1 * np.cos(angle)
+            + pixel_p2 * np.sin(angle)
+            - candidate["hough_distance"]
+        )
+        state_plunger_2 += signed_distance * np.sign(np.sin(angle)) >= 0.0
+
+    charge_state_labels = np.empty(current_grid.shape, dtype=object)
+    for row in range(current_grid.shape[0]):
+        for column in range(current_grid.shape[1]):
+            charge_state_labels[row, column] = (
+                f"({state_plunger_1[row, column]},{state_plunger_2[row, column]})"
+            )
+
+    label_positions = []
+    for p1_state in range(len(selected_vertical) + 1):
+        for p2_state in range(len(selected_horizontal) + 1):
+            region_pixels = np.argwhere(
+                (state_plunger_1 == p1_state) & (state_plunger_2 == p2_state)
+            )
+            if region_pixels.size == 0:
+                continue
+
+            centroid = np.mean(region_pixels, axis=0)
+            representative = region_pixels[
+                np.argmin(np.sum((region_pixels - centroid) ** 2, axis=1))
+            ]
+            row, column = int(representative[0]), int(representative[1])
+            label_positions.append(
+                {
+                    "state": (p1_state, p2_state),
+                    "coordinate": (float(p1_axis[column]), float(p2_axis[row])),
+                    "pixel_coordinate": (float(column), float(row)),
+                }
+            )
+
+    return {
+        "virtual_plunger_1_axis": p1_axis,
+        "virtual_plunger_2_axis": p2_axis,
+        "current_grid": current_grid,
+        "smoothed_current": smoothed,
+        "negative_gradient_plunger_1": negative_p1,
+        "negative_gradient_plunger_2": negative_p2,
+        "negative_gradient_magnitude": negative_gradient,
+        "filtered_negative_gradient": filtered_gradient,
+        "normalized_negative_gradient": normalized_gradient,
+        "gradient_threshold": gradient_threshold,
+        "edge_map": edge_map,
+        "hough_accumulator": hough_accumulator,
+        "hough_angles": hough_angles,
+        "hough_distances": hough_distances,
+        "all_plunger_1_candidates": vertical_candidates,
+        "all_plunger_2_candidates": horizontal_candidates,
+        "plunger_1_transitions": selected_vertical,
+        "plunger_2_transitions": selected_horizontal,
+        "plunger_1_transition_voltages": np.array(
+            [candidate["virtual_voltage"] for candidate in selected_vertical]
+        ),
+        "plunger_2_transition_voltages": np.array(
+            [candidate["virtual_voltage"] for candidate in selected_horizontal]
+        ),
+        "plunger_1_state_boundaries_pixels": boundaries_p1,
+        "plunger_2_state_boundaries_pixels": boundaries_p2,
+        "plunger_1_state_centers_pixels": centers_p1_pixels,
+        "plunger_2_state_centers_pixels": centers_p2_pixels,
+        "plunger_1_state_centers": centers_p1,
+        "plunger_2_state_centers": centers_p2,
+        "plunger_1_state_map": state_plunger_1,
+        "plunger_2_state_map": state_plunger_2,
+        "charge_state_labels": charge_state_labels,
+        "label_positions": label_positions,
+        "minimum_transition_distance_pixels": {
+            "plunger_1": minimum_distance_p1,
+            "plunger_2": minimum_distance_p2,
+        },
+    }

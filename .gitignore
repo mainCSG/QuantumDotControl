@@ -6,6 +6,9 @@ autotuning/fine_tuning/data/*
 autotuning/bootstrapping/data
 !autotuning/data/csd/custom
 
+# ignore vscode settings
+.vscode/*
+
 # ignore all data files
 Data/*       
 *.csv          

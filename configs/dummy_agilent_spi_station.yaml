@@ -1,21 +1,15 @@
 instruments:
   agilent_left:
-    type: qcodes.instrument_drivers.agilent.Agilent_34410A.Agilent34410A
-    address: TCPIP0::169.254.10.10::inst0::INSTR
-  
+    type: dummy_instruments.DummyAgilent
   agilent_right:
-    type: qcodes.instrument_drivers.agilent.Agilent_34410A.Agilent34410A
-    address: TCPIP0::169.254.4.10::inst0::INSTR
-  
+    type: dummy_instruments.DummyAgilent
   spi_rack:
-    type: qblox_instruments.qcodes_drivers.spi_rack.SpiRack             #qcodes.instrument_drivers.SpiRack.spi_rack.SpiRack
-    address: COM3
-
+    type: dummy_instruments.DummySpiRack
 
 device:
 
   characteristics:
-    name: 3D1S_w151_2
+    name: 3D1S_w151_1
     charge_carrier: e
     operation_mode: acc
 
@@ -116,4 +110,3 @@ setup:
   voltage_dividers:
     voltage_divider_triple_dot: 1.0e-2
     voltage_divider_SET: 1.0e-2
-

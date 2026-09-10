@@ -1,0 +1,119 @@
+instruments:
+  agilent_left:
+    type: qcodes.instrument_drivers.agilent.Agilent_34410A.Agilent34410A
+    address: TCPIP0::169.254.10.10::inst0::INSTR
+  
+  agilent_right:
+    type: qcodes.instrument_drivers.agilent.Agilent_34410A.Agilent34410A
+    address: TCPIP0::169.254.4.10::inst0::INSTR
+  
+  spi_rack:
+    type: qblox_instruments.qcodes_drivers.spi_rack.SpiRack             #qcodes.instrument_drivers.SpiRack.spi_rack.SpiRack
+    address: COM3
+
+
+device:
+
+  characteristics:
+    name: 3D1S_w320_1
+    charge_carrier: e
+    operation_mode: acc
+
+  constraints:
+    abs_max_current_triple_dot: 20e-9
+    abs_max_current_SET: 10e-9
+    abs_max_gate_differential: 1.5
+    abs_max_gate_voltage: 1.5
+    abs_max_ohmic_bias: 1e-3
+    screening_initial_voltages: 0.2
+    initial_ohmic_bias: -2e-4
+
+  gates:
+    S0:
+      label: Left Dot Ohmic
+      type: Dot Ohmic
+      channel: spi_rack.module1.dac9.voltage
+    S3:
+      label: Right Sensor Ohmic
+      type: Sensor Ohmic
+      channel: spi_rack.module1.dac4.voltage
+    SG1:
+      label: Horizontal Screening Gate
+      type: Central Screening
+      channel: spi_rack.module2.dac7.voltage
+    CG0a:
+      label: Dot Screening Gate
+      type:  Dot Screening
+      channel: spi_rack.module2.dac6.voltage
+    CG0b:
+      label: Sensor Screening Gate
+      type: Sensor Screening
+      channel: spi_rack.module1.dac3.voltage
+    AC0:
+      label: Left Dot Accumulation Gate
+      type:  Dot Accumulation
+      channel: spi_rack.module2.dac4.voltage
+    AC1:
+      label: Right Dot Accumulation Gate
+      type:  Dot Accumulation
+      channel: spi_rack.module1.dac1.voltage
+    AC2:
+      label: Right Sensor Accumulation Gate
+      type:  Sensor Accumulation
+      channel: spi_rack.module1.dac2.voltage
+    F1 + AC3:
+      label: Left Sensor Accumulation Gate and Flanking Gates
+      type: Sensor Accumulation
+      channel: spi_rack.module2.dac3.voltage
+    B0:
+      label: Left Barrier Gate
+      type: Dot Barrier
+      channel: spi_rack.module2.dac9.voltage
+    B1:
+      label: Dot 1-2 Barrier Gate
+      type: Dot Barrier
+      channel: spi_rack.module2.dac5.voltage
+    B2:
+      label: Dot 2-3 Barrier Gate
+      type: Dot Barrier
+      channel: spi_rack.module1.dac5.voltage
+    B3:
+      label: Right Barrier Gate
+      type: Dot Barrier
+      channel: spi_rack.module2.dac10.voltage
+    B20:
+      label: Left Sensor Barrier Gate
+      type: Sensor Barrier
+      channel: spi_rack.module1.dac8.voltage
+    B21:
+      label: Right Sensor Barrier Gate
+      type: Sensor Barrier
+      channel: spi_rack.module1.dac7.voltage
+    P0:
+      label: Left Dot Plunger
+      type: Dot Plunger
+      channel: spi_rack.module2.dac1.voltage
+    P1:
+      label: Middle Dot Plunger
+      type: Dot Plunger
+      channel: spi_rack.module2.dac0.voltage
+    P2:
+      label: Right Dot Plunger
+      type: Dot Plunger
+      channel: spi_rack.module1.dac0.voltage
+    P20:
+      label: Sensor Plunger
+      type: Sensor Plunger
+      channel: spi_rack.module2.dac2.voltage
+      
+setup:
+  triple_dot_preamp:
+    preamp_bias: 0.0
+    preamp_sensitivity: 1.0e-8
+  SET_preamp:
+    preamp_bias: 0.0
+    preamp_sensitivity: 1.0e-8
+  voltage_dividers:
+    voltage_divider_triple_dot: 1.0e-2
+    voltage_divider_SET: 1.0e-2
+

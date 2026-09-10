@@ -289,6 +289,8 @@ class Bootstrapping(Protocol):
         
         logger.info(f"The Turn On voltages are: {turn_on_voltages}")
 
+#TODO: when either turn on voltages are None break or throw exception error
+        
         # Now, we attempt to pinch-off
 
         pinch_off_voltages, saturation_voltages = self.pinch_off(gate_voltage = self.abs_max_gate_voltage,
@@ -4641,3 +4643,4 @@ class QubitTuning(ChargeStateTuning):
 
     def rabi_oscilations():
         pass
+   
